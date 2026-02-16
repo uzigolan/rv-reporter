@@ -1,0 +1,62 @@
+{% extends "layout.html" %}
+{% block title %}About | RV Reporter{% endblock %}
+{% block content %}
+<section class="panel hero">
+  <h1>About RV Reporter</h1>
+  <p>Schema-first CSV reporting platform that combines deterministic metric computation with optional OpenAI narrative generation.</p>
+</section>
+
+<section class="panel">
+  <h2>What It Produces</h2>
+  <div class="stats-grid">
+    <div class="stat-card">
+      <div class="stat-label">Validated JSON</div>
+      <div class="stat-value">Schema-locked</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">HTML Report</div>
+      <div class="stat-value">Charts + tables</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">PDF Report</div>
+      <div class="stat-value">Browser-rendered</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">OpenAI Raw</div>
+      <div class="stat-value">Debug artifact</div>
+    </div>
+  </div>
+</section>
+
+<section class="panel">
+  <h2>How It Works</h2>
+  <ul>
+    <li><strong>Ingest:</strong> read sample/upload CSV with optional row limit.</li>
+    <li><strong>Profile:</strong> detect columns, data types, and data shape.</li>
+    <li><strong>Compute:</strong> run report-specific metrics pipeline.</li>
+    <li><strong>Generate:</strong> use local or OpenAI provider for narrative/sections.</li>
+    <li><strong>Validate:</strong> enforce output JSON schema from report type config.</li>
+    <li><strong>Render:</strong> write JSON, HTML, and PDF artifacts to history.</li>
+  </ul>
+</section>
+
+<section class="panel">
+  <h2>Built-in Protected Report Types</h2>
+  <div class="chips">
+    {% for rid in protected_report_types %}
+      <span class="chip">{{ rid }}</span>
+    {% endfor %}
+  </div>
+</section>
+
+<section class="panel">
+  <h2>UI Navigation</h2>
+  <ul>
+    <li><strong>Generate:</strong> create a report from CSV.</li>
+    <li><strong>New Type:</strong> define a custom report type YAML.</li>
+    <li><strong>Manage Types:</strong> inspect and delete non-protected types.</li>
+    <li><strong>Reports:</strong> browse report history and open artifacts.</li>
+  </ul>
+  <p class="muted small">OpenAI models currently available in UI: {{ priced_models | join(", ") }}.</p>
+</section>
+{% endblock %}

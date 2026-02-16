@@ -87,6 +87,14 @@ def create_app(config_overrides: dict[str, Any] | None = None) -> Flask:
             priced_models=sorted(MODEL_PRICING_USD.keys()),
         )
 
+    @app.get("/about")
+    def about() -> str:
+        return render_template(
+            "about.html",
+            protected_report_types=sorted(PROTECTED_REPORT_TYPES),
+            priced_models=sorted(MODEL_PRICING_USD.keys()),
+        )
+
     @app.get("/report-types/new")
     def new_report_type() -> str:
         return render_template(
