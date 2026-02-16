@@ -25,3 +25,7 @@ uploads/
 Thumbs.db
 
 src/*.egg-info/
+
+# Session/history artifacts
+history/
+docs/session_handoff_*.md

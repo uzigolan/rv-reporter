@@ -88,6 +88,34 @@ In UI:
 - review cost estimate
 - click `Continue and Generate`
 
+## UI options
+
+Generate page (`/`) fields:
+
+- `Report Type`: choose schema/metrics template
+- `Provider`: `local` or `openai`
+- `Model`: OpenAI model used for `openai` provider
+- `CSV Source`: `sample` or `upload`
+- `Sample CSV` / `Upload CSV`: input dataset
+- `Tone`: `concise`, `executive`, `technical`
+- `Audience`: `leadership`, `engineering`, `customer`
+- `Focus`: `trends`, `anomalies`, `cost`
+- `Threshold Key` + `Threshold Value`: optional metric override
+- `Row Limit`: cap rows processed (cost/performance control)
+- `Output Tokens Budget`: output-size estimate for OpenAI cost preview
+
+Cost confirmation page (`/generate` with `openai`):
+
+- shows `Report Type`, `CSV Source`, `Rows Used`
+- shows `Model`, estimated input/output tokens, and estimated cost
+- actions: `Continue and Generate` or `Abort`
+
+Other UI pages:
+
+- `/reports`: report history with JSON/HTML/PDF/OpenAI-raw links
+- `/report-types/new`: create custom report type YAML
+- `/report-types`: list/delete custom report types (protected types cannot be deleted)
+
 ## CLI examples
 
 ```bash
