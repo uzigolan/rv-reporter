@@ -1,0 +1,9 @@
+{% extends "layout.html" %}
+{% block title %}JSON View | RV Reporter{% endblock %}
+{% block content %}
+<section class="panel">
+  <h1>JSON Report</h1>
+  <p class="muted">{{ file_path }}</p>
+  <pre>{{ payload | tojson(indent=2) }}</pre>
+</section>
+{% endblock %}

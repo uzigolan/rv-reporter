@@ -1,0 +1,20 @@
+{% extends "layout.html" %}
+{% block title %}New Report Type | RV Reporter{% endblock %}
+{% block content %}
+<section class="panel hero">
+  <h1>Create Report Type</h1>
+  <p>Create a new report type config from UI by pasting YAML.</p>
+</section>
+
+<section class="panel">
+  <p class="muted">Supported <code>metrics_profile</code>: {{ supported_metrics_profiles|join(", ") }}</p>
+  <p class="muted"><code>report_type_id</code> can be omitted; it will be auto-generated from <code>title</code>.</p>
+  <form method="post" action="{{ url_for('create_report_type') }}">
+    <label>
+      <span>Report Type YAML</span>
+      <textarea name="report_type_yaml" rows="28" class="code-area">{{ starter_yaml }}</textarea>
+    </label>
+    <button type="submit" class="btn-primary">Save Report Type</button>
+  </form>
+</section>
+{% endblock %}

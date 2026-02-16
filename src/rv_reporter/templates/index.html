@@ -1,0 +1,134 @@
+{% extends "layout.html" %}
+{% block title %}Generate Report | RV Reporter{% endblock %}
+{% block content %}
+<section class="panel hero">
+  <h1>CSV to Structured Report</h1>
+  <p>Generate schema-validated JSON and polished HTML from your dataset.</p>
+</section>
+
+<section class="panel">
+  <form method="post" action="{{ url_for('generate') }}" enctype="multipart/form-data" class="grid" id="generate_form">
+    <label>
+      <span>Report Type</span>
+      <select name="report_type_id" required>
+        {% for rid in report_types %}
+          <option value="{{ rid }}" {% if rid == defaults.report_type_id %}selected{% endif %}>{{ rid }}</option>
+        {% endfor %}
+      </select>
+    </label>
+
+    <label>
+      <span>Provider</span>
+      <select name="provider" required>
+        <option value="local" {% if defaults.provider == "local" %}selected{% endif %}>local</option>
+        <option value="openai">openai</option>
+      </select>
+    </label>
+
+    <label>
+      <span>Model</span>
+      <select name="model">
+        {% for m in priced_models %}
+          <option value="{{ m }}" {% if m == defaults.model %}selected{% endif %}>{{ m }}</option>
+        {% endfor %}
+      </select>
+    </label>
+
+    <label>
+      <span>CSV Source</span>
+      <select name="csv_source" id="csv_source">
+        <option value="sample">sample</option>
+        <option value="upload">upload</option>
+      </select>
+    </label>
+
+    <label id="sample_wrap">
+      <span>Sample CSV</span>
+      <select name="sample_csv">
+        {% for sample in sample_files %}
+          <option value="{{ sample }}">{{ sample }}</option>
+        {% endfor %}
+      </select>
+    </label>
+
+    <label id="upload_wrap" class="hidden">
+      <span>Upload CSV</span>
+      <input type="file" name="csv_upload" accept=".csv" />
+    </label>
+
+    <label>
+      <span>Tone</span>
+      <select name="tone">
+        <option value="concise">concise</option>
+        <option value="executive">executive</option>
+        <option value="technical">technical</option>
+      </select>
+    </label>
+
+    <label>
+      <span>Audience</span>
+      <select name="audience">
+        <option value="leadership">leadership</option>
+        <option value="engineering">engineering</option>
+        <option value="customer">customer</option>
+      </select>
+    </label>
+
+    <label>
+      <span>Focus</span>
+      <select name="focus">
+        <option value="trends">trends</option>
+        <option value="anomalies">anomalies</option>
+        <option value="cost">cost</option>
+      </select>
+    </label>
+
+    <label>
+      <span>Threshold Key (optional)</span>
+      <input name="threshold_name" placeholder="alert_error_rate or variance_alert_pct" />
+    </label>
+
+    <label>
+      <span>Threshold Value (optional)</span>
+      <input name="threshold_value" placeholder="0.05" />
+    </label>
+
+    <label>
+      <span>Row Limit (cost control)</span>
+      <input name="row_limit" type="number" min="1" step="1" value="{{ defaults.row_limit }}" />
+    </label>
+
+    <label>
+      <span>Output Tokens Budget (OpenAI estimate)</span>
+      <input name="output_token_budget" type="number" min="1" step="1" value="1200" />
+    </label>
+
+    <button type="submit" class="btn-primary" id="generate_submit_btn">Generate Report</button>
+    <p id="generate_processing_msg" class="processing-msg hidden">
+      <span class="spinner" aria-hidden="true"></span>
+      Processing request. This may take several seconds...
+    </p>
+  </form>
+</section>
+
+<script>
+  const source = document.getElementById("csv_source");
+  const sampleWrap = document.getElementById("sample_wrap");
+  const uploadWrap = document.getElementById("upload_wrap");
+  source.addEventListener("change", () => {
+    const upload = source.value === "upload";
+    sampleWrap.classList.toggle("hidden", upload);
+    uploadWrap.classList.toggle("hidden", !upload);
+  });
+
+  const generateForm = document.getElementById("generate_form");
+  const generateBtn = document.getElementById("generate_submit_btn");
+  const generateMsg = document.getElementById("generate_processing_msg");
+  generateForm.addEventListener("submit", () => {
+    generateBtn.disabled = true;
+    generateBtn.textContent = "Working...";
+    generateMsg.classList.remove("hidden");
+    generateForm.classList.add("is-loading");
+  });
+</script>
+{% endblock %}

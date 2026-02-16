@@ -1,0 +1,42 @@
+{% extends "layout.html" %}
+{% block title %}Report Generated | RV Reporter{% endblock %}
+{% block content %}
+<section class="panel">
+  <h1>{{ report_type_id }} report generated</h1>
+  <p class="muted">Artifacts are stored on disk and ready to view.</p>
+  <div class="actions">
+    <a class="btn-link" href="{{ url_for('view_json', path=report_json_path) }}">View JSON</a>
+    <a class="btn-link" href="{{ url_for('view_html', path=report_html_path) }}">View HTML</a>
+    {% if report_pdf_path %}
+    <a class="btn-link" href="{{ url_for('view_pdf', path=report_pdf_path) }}">View PDF</a>
+    {% endif %}
+    {% if report_raw_path %}
+    <a class="btn-link" href="{{ url_for('view_raw', path=report_raw_path) }}">View OpenAI Raw</a>
+    {% endif %}
+    <a class="btn-link" href="{{ url_for('reports') }}">All reports</a>
+  </div>
+</section>
+
+<section class="panel">
+  <h2>Summary</h2>
+  <p>{{ report_json.summary }}</p>
+  <div class="chips">
+    {% for key, value in report_json.metadata.items() %}
+      <span class="chip">{{ key }}: {{ value }}</span>
+    {% endfor %}
+  </div>
+</section>
+
+<section class="panel">
+  <h2>Alerts</h2>
+  {% if report_json.alerts %}
+    <ul>
+      {% for alert in report_json.alerts %}
+        <li><strong>{{ alert.severity }}</strong> {{ alert.message }}</li>
+      {% endfor %}
+    </ul>
+  {% else %}
+    <p class="muted">No alerts.</p>
+  {% endif %}
+</section>
+{% endblock %}

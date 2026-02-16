@@ -1,0 +1,6 @@
+{
+  "tone": "technical",
+  "audience": "engineering",
+  "focus": "anomalies",
+  "alert_error_rate": 0.045
+}

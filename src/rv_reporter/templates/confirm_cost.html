@@ -1,0 +1,94 @@
+{% extends "layout.html" %}
+{% block title %}Confirm OpenAI Cost | RV Reporter{% endblock %}
+{% block content %}
+<section class="panel">
+  <h1>OpenAI Cost Estimate</h1>
+  <p class="muted">Review estimated request cost before running report generation.</p>
+  <div class="stats-grid">
+    <div class="stat-card">
+      <div class="stat-label">Report Type</div>
+      <div class="stat-value">{{ report_type_id }}</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">CSV Source</div>
+      <div class="stat-value">{{ csv_source_label }}</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Rows Used</div>
+      <div class="stat-value">{{ rows_used }}</div>
+    </div>
+  </div>
+  <div class="stats-grid" style="margin-top: 0.7rem;">
+    <div class="stat-card">
+      <div class="stat-label">Model</div>
+      <div class="stat-value">{{ estimate.model }}</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Input Tokens (est)</div>
+      <div class="stat-value">{{ estimate.input_tokens_est }}</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Output Tokens (est)</div>
+      <div class="stat-value">{{ estimate.output_tokens_est }}</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Total Cost (USD est)</div>
+      <div class="stat-value">${{ "%.6f"|format(estimate.total_cost_usd_est) }}</div>
+    </div>
+  </div>
+  <p class="small muted" style="margin-top: 0.8rem;">
+    Pricing source: <a href="{{ estimate.pricing_source_url }}" target="_blank">{{ estimate.pricing_source_url }}</a>
+    (verified {{ estimate.pricing_verified_date }}).
+  </p>
+</section>
+
+<section class="panel">
+  <h2>Continue or Abort</h2>
+  <form method="post" action="{{ url_for('generate') }}" id="confirm_generate_form">
+    <input type="hidden" name="confirm_openai" value="1" />
+    <input type="hidden" name="expected_cost_token" value="{{ expected_cost_token }}" />
+    <input type="hidden" name="report_type_id" value="{{ report_type_id }}" />
+    <input type="hidden" name="provider" value="{{ provider }}" />
+    <input type="hidden" name="model" value="{{ model }}" />
+    <input type="hidden" name="csv_source" value="sample" />
+    <input type="hidden" name="existing_csv_path" value="{{ csv_path }}" />
+    <input type="hidden" name="row_limit" value="{{ row_limit }}" />
+    <input type="hidden" name="output_token_budget" value="{{ output_token_budget }}" />
+    <input type="hidden" name="tone" value="{{ prefs.tone }}" />
+    <input type="hidden" name="audience" value="{{ prefs.audience }}" />
+    <input type="hidden" name="focus" value="{{ prefs.focus }}" />
+    {% if prefs.alert_drop_ratio is defined %}
+      <input type="hidden" name="threshold_name" value="alert_drop_ratio" />
+      <input type="hidden" name="threshold_value" value="{{ prefs.alert_drop_ratio }}" />
+    {% elif prefs.alert_error_rate is defined %}
+      <input type="hidden" name="threshold_name" value="alert_error_rate" />
+      <input type="hidden" name="threshold_value" value="{{ prefs.alert_error_rate }}" />
+    {% elif prefs.variance_alert_pct is defined %}
+      <input type="hidden" name="threshold_name" value="variance_alert_pct" />
+      <input type="hidden" name="threshold_value" value="{{ prefs.variance_alert_pct }}" />
+    {% endif %}
+    <button type="submit" class="btn-primary" id="confirm_submit_btn">Continue and Generate</button>
+    <a href="{{ url_for('index') }}" class="btn-link">Abort</a>
+    <a href="{{ url_for('new_report_type') }}" class="btn-link">New Type</a>
+    <a href="{{ url_for('list_report_types_page') }}" class="btn-link">Manage Types</a>
+    <p id="confirm_processing_msg" class="processing-msg hidden">
+      <span class="spinner" aria-hidden="true"></span>
+      Processing request. This may take several seconds...
+    </p>
+  </form>
+</section>
+<script>
+  (function () {
+    const form = document.getElementById("confirm_generate_form");
+    const submitBtn = document.getElementById("confirm_submit_btn");
+    const msg = document.getElementById("confirm_processing_msg");
+    if (!form || !submitBtn || !msg) return;
+    form.addEventListener("submit", () => {
+      submitBtn.disabled = true;
+      submitBtn.textContent = "Generating...";
+      msg.classList.remove("hidden");
+      form.classList.add("is-loading");
+    });
+  })();
+</script>
+{% endblock %}

@@ -1,0 +1,42 @@
+{% extends "layout.html" %}
+{% block title %}Manage Report Types | RV Reporter{% endblock %}
+{% block content %}
+<section class="panel hero">
+  <h1>Manage Report Types</h1>
+  <p>Delete custom report types from UI.</p>
+</section>
+
+<section class="panel">
+  {% if report_types %}
+    <table class="table">
+      <thead>
+        <tr>
+          <th>Report Type</th>
+          <th>Config Path</th>
+          <th>Action</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for item in report_types %}
+          <tr>
+            <td>{{ item.report_type_id }}</td>
+            <td><span class="muted">{{ item.path }}</span></td>
+            <td>
+              {% if item.is_protected %}
+                <span class="muted">protected</span>
+              {% else %}
+                <form method="post" action="{{ url_for('delete_report_type') }}">
+                  <input type="hidden" name="report_type_id" value="{{ item.report_type_id }}" />
+                  <button type="submit" class="btn-link">Delete</button>
+                </form>
+              {% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    <p class="muted">No report types found.</p>
+  {% endif %}
+</section>
+{% endblock %}

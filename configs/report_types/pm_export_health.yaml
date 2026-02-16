@@ -1,0 +1,82 @@
+report_type_id: pm_export_health
+version: "1.0.0"
+title: "PM Export Health Report"
+required_columns: []
+metrics_profile: pm_export_health
+default_prefs:
+  tone: technical
+  audience: engineering
+  focus: anomalies
+  discard_alert_delta: 1000
+  crc_alert_delta: 100
+  cpu_alert_pct: 80
+  memory_alert_pct: 85
+  disk_alert_pct: 85
+prompt_instructions: |
+  Analyze this mixed PM export with repeated table snapshots (ifTable, etherStatsTable, CPU, memory, disk, and related tables).
+  Focus on:
+  - interface discard/error trend and hotspots
+  - CRC/align error growth vs discard-only growth (layer-1 vs queue/policy hints)
+  - system resource pressure (CPU/memory/disk)
+  Provide L2/system root-cause hypotheses with confidence and concrete next checks.
+  Explicitly distinguish observed data from inferred causes.
+output_schema:
+  type: object
+  additionalProperties: false
+  required:
+    - report_type_id
+    - report_title
+    - summary
+    - sections
+    - alerts
+    - recommendations
+    - tables
+    - charts
+    - metadata
+  properties:
+    report_type_id:
+      type: string
+    report_title:
+      type: string
+    summary:
+      type: string
+    sections:
+      type: array
+      items:
+        type: object
+        additionalProperties: false
+        required: [title, body]
+        properties:
+          title: { type: string }
+          body: { type: string }
+    alerts:
+      type: array
+      items:
+        type: object
+        additionalProperties: false
+        required: [severity, message]
+        properties:
+          severity: { type: string }
+          message: { type: string }
+    recommendations:
+      type: array
+      items:
+        type: object
+        additionalProperties: false
+        required: [priority, action]
+        properties:
+          priority: { type: string }
+          action: { type: string }
+    tables:
+      type: array
+      items:
+        type: object
+        additionalProperties: true
+    charts:
+      type: array
+      items:
+        type: object
+        additionalProperties: true
+    metadata:
+      type: object
+      additionalProperties: true

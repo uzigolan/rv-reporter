@@ -1,0 +1,91 @@
+report_type_id: network_queue_congestion
+version: "1.0.0"
+title: "Network Queue Congestion Report"
+required_columns:
+  - NE Name
+  - Resource Name
+  - Queue Block
+  - Queue Number
+  - Time
+  - Dequeued (Bytes)
+  - Dequeued (Frames)
+  - Dropped (Bytes)
+  - Dropped (Frames)
+metrics_profile: network_queue_congestion
+default_prefs:
+  tone: technical
+  audience: engineering
+  focus: anomalies
+  alert_drop_ratio: 0.20
+  alert_min_samples: 3
+  top_n_queues: 10
+  top_n_intervals: 8
+prompt_instructions: |
+  Analyze queue congestion and packet drop behavior from cumulative counters.
+  Use interval deltas, identify top problematic queues and top hotspot intervals.
+  Include L2/QoS interpretation with confidence levels:
+  - dominant queue contribution to dropped bytes
+  - sustained vs bursty congestion behavior
+  - likely queue/policy bottlenecks
+  Clearly state that physical-layer faults cannot be confirmed without CRC/FCS/link-flap counters.
+  Provide concrete next checks (queue scheduling, policer thresholds, class mapping, egress capacity).
+output_schema:
+  type: object
+  additionalProperties: false
+  required:
+    - report_type_id
+    - report_title
+    - summary
+    - sections
+    - alerts
+    - recommendations
+    - tables
+    - charts
+    - metadata
+  properties:
+    report_type_id:
+      type: string
+    report_title:
+      type: string
+    summary:
+      type: string
+    sections:
+      type: array
+      items:
+        type: object
+        additionalProperties: false
+        required: [title, body]
+        properties:
+          title: { type: string }
+          body: { type: string }
+    alerts:
+      type: array
+      items:
+        type: object
+        additionalProperties: false
+        required: [severity, message]
+        properties:
+          severity: { type: string }
+          message: { type: string }
+    recommendations:
+      type: array
+      items:
+        type: object
+        additionalProperties: false
+        required: [priority, action]
+        properties:
+          priority: { type: string }
+          action: { type: string }
+    tables:
+      type: array
+      items:
+        type: object
+        additionalProperties: true
+    charts:
+      type: array
+      items:
+        type: object
+        additionalProperties: true
+    metadata:
+      type: object
+      additionalProperties: true

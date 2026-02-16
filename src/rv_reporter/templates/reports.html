@@ -1,0 +1,48 @@
+{% extends "layout.html" %}
+{% block title %}Reports | RV Reporter{% endblock %}
+{% block content %}
+<section class="panel">
+  <h1>Generated Reports</h1>
+  <p class="muted">History source: <code>{{ output_folder }}</code></p>
+  {% if reports %}
+    <table class="table">
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Date/Time</th>
+          <th>JSON</th>
+          <th>HTML</th>
+          <th>PDF</th>
+          <th>OpenAI Raw</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for item in reports %}
+          <tr>
+            <td>{{ item.name }}</td>
+            <td>{{ item.created_at }}</td>
+            <td><a href="{{ url_for('view_json', path=item.json_path) }}">open</a></td>
+            <td><a href="{{ url_for('view_html', path=item.html_path) }}">open</a></td>
+            <td>
+              {% if item.pdf_path and item.pdf_path %}
+                <a href="{{ url_for('view_pdf', path=item.pdf_path) }}">open</a>
+              {% else %}
+                <span class="muted">-</span>
+              {% endif %}
+            </td>
+            <td>
+              {% if item.raw_path and item.raw_path %}
+                <a href="{{ url_for('view_raw', path=item.raw_path) }}">open</a>
+              {% else %}
+                <span class="muted">-</span>
+              {% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    <p class="muted">No reports yet.</p>
+  {% endif %}
+</section>
+{% endblock %}

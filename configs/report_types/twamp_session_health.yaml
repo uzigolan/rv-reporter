@@ -1,0 +1,84 @@
+report_type_id: twamp_session_health
+version: "1.0.0"
+title: "TWAMP Session Health Report"
+required_columns:
+  - DateTimeUTC
+  - DiscardRatePct_Emulated
+  - YellowTrafficPct_Emulated
+  - FwdTotalPackets_Emulated
+  - ColorDiscardTotalPackets_Emulated
+  - twampReportCurrentDelayAverage
+  - twampReportCurrentIpdvMax
+metrics_profile: twamp_session_health
+default_prefs:
+  tone: technical
+  audience: engineering
+  focus: anomalies
+  alert_discard_rate_pct: 0.15
+  top_n_intervals: 5
+prompt_instructions: |
+  Summarize TWAMP session quality with emphasis on discard rate, yellow traffic behavior,
+  and interval-level hotspots. Interpret results in L2/QoS context using color discard behavior
+  (green/yellow/red), packet-vs-byte discard patterns, and likely congestion/policy causes.
+  Provide confidence levels for hypotheses and clearly state that physical-layer faults cannot be
+  confirmed without direct L2 error counters (CRC/FCS/link-flap).
+output_schema:
+  type: object
+  additionalProperties: false
+  required:
+    - report_type_id
+    - report_title
+    - summary
+    - sections
+    - alerts
+    - recommendations
+    - tables
+    - charts
+    - metadata
+  properties:
+    report_type_id:
+      type: string
+    report_title:
+      type: string
+    summary:
+      type: string
+    sections:
+      type: array
+      items:
+        type: object
+        additionalProperties: false
+        required: [title, body]
+        properties:
+          title: { type: string }
+          body: { type: string }
+    alerts:
+      type: array
+      items:
+        type: object
+        additionalProperties: false
+        required: [severity, message]
+        properties:
+          severity: { type: string }
+          message: { type: string }
+    recommendations:
+      type: array
+      items:
+        type: object
+        additionalProperties: false
+        required: [priority, action]
+        properties:
+          priority: { type: string }
+          action: { type: string }
+    tables:
+      type: array
+      items:
+        type: object
+        additionalProperties: true
+    charts:
+      type: array
+      items:
+        type: object
+        additionalProperties: true
+    metadata:
+      type: object
+      additionalProperties: true
