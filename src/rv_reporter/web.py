@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from flask import Flask, flash, redirect, render_template, request, send_file, url_for
+from flask import Flask, flash, redirect, render_template, request, send_file, session, url_for
 from werkzeug.utils import secure_filename
 import yaml
 
@@ -67,12 +67,19 @@ def create_app(config_overrides: dict[str, Any] | None = None) -> Flask:
             if "network_queue_congestion" in report_types
             else (report_types[0] if report_types else "")
         )
+        default_provider = str(session.get("last_provider", "local"))
+        if default_provider not in {"local", "openai"}:
+            default_provider = "local"
+        default_csv_source = str(session.get("last_csv_source", "sample"))
+        if default_csv_source not in {"sample", "upload"}:
+            default_csv_source = "sample"
         return render_template(
             "index.html",
             report_types=report_types,
             sample_files=_sample_files(),
             defaults={
-                "provider": "local",
+                "provider": default_provider,
+                "csv_source": default_csv_source,
                 "model": "gpt-4.1-mini",
                 "row_limit": 1000,
                 "report_type_id": default_report_type,
@@ -159,6 +166,8 @@ def create_app(config_overrides: dict[str, Any] | None = None) -> Flask:
         output_token_budget = int(request.form.get("output_token_budget", "1200").strip() or "1200")
         row_limit_raw = request.form.get("row_limit", "").strip()
         row_limit = int(row_limit_raw) if row_limit_raw else None
+        session["last_provider"] = provider_name
+        session["last_csv_source"] = csv_source
 
         prefs = {
             "tone": request.form.get("tone", "concise").strip(),

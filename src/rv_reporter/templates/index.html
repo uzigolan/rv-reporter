@@ -19,7 +19,7 @@
 
     <label>
       <span>Provider</span>
-      <select name="provider" required>
+      <select name="provider" id="provider" required>
         <option value="local" {% if defaults.provider == "local" %}selected{% endif %}>local</option>
         <option value="openai">openai</option>
       </select>
@@ -37,23 +37,23 @@
     <label>
       <span>CSV Source</span>
       <select name="csv_source" id="csv_source">
-        <option value="sample">sample</option>
-        <option value="upload">upload</option>
+        <option value="sample" {% if defaults.csv_source == "sample" %}selected{% endif %}>sample</option>
+        <option value="upload" {% if defaults.csv_source == "upload" %}selected{% endif %}>upload</option>
       </select>
     </label>
 
     <label id="sample_wrap">
       <span>Sample CSV</span>
-      <select name="sample_csv">
+      <select name="sample_csv" id="sample_csv">
         {% for sample in sample_files %}
           <option value="{{ sample }}">{{ sample }}</option>
         {% endfor %}
       </select>
     </label>
 
-    <label id="upload_wrap" class="hidden">
+    <label id="upload_wrap">
       <span>Upload CSV</span>
-      <input type="file" name="csv_upload" accept=".csv" />
+      <input type="file" name="csv_upload" id="csv_upload" accept=".csv" />
     </label>
 
     <label>
@@ -113,18 +113,53 @@
 
 <script>
   const source = document.getElementById("csv_source");
+  const provider = document.getElementById("provider");
   const sampleWrap = document.getElementById("sample_wrap");
   const uploadWrap = document.getElementById("upload_wrap");
-  source.addEventListener("change", () => {
+  const sampleInput = document.getElementById("sample_csv");
+  const uploadInput = document.getElementById("csv_upload");
+  const STORAGE_KEY = "rv_reporter.generate_form_state.v1";
+
+  const saveState = () => {
+    const state = {
+      csv_source: source.value,
+      provider: provider.value,
+    };
+    try { sessionStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch (e) {}
+  };
+
+  const restoreState = () => {
+    try {
+      const raw = sessionStorage.getItem(STORAGE_KEY);
+      if (!raw) return;
+      const state = JSON.parse(raw);
+      if (state.csv_source === "sample" || state.csv_source === "upload") {
+        source.value = state.csv_source;
+      }
+      if (state.provider === "local" || state.provider === "openai") {
+        provider.value = state.provider;
+      }
+    } catch (e) {}
+  };
+
+  const syncCsvSourceUi = () => {
     const upload = source.value === "upload";
-    sampleWrap.classList.toggle("hidden", upload);
-    uploadWrap.classList.toggle("hidden", !upload);
-  });
+    sampleWrap.classList.toggle("field-disabled", upload);
+    uploadWrap.classList.toggle("field-disabled", !upload);
+    sampleInput.disabled = upload;
+    uploadInput.disabled = !upload;
+  };
+  source.addEventListener("change", () => { syncCsvSourceUi(); saveState(); });
+  provider.addEventListener("change", saveState);
+  window.addEventListener("pageshow", () => { restoreState(); syncCsvSourceUi(); });
+  restoreState();
+  syncCsvSourceUi();
 
   const generateForm = document.getElementById("generate_form");
   const generateBtn = document.getElementById("generate_submit_btn");
   const generateMsg = document.getElementById("generate_processing_msg");
   generateForm.addEventListener("submit", () => {
+    saveState();
     generateBtn.disabled = true;
     generateBtn.textContent = "Working...";
     generateMsg.classList.remove("hidden");
