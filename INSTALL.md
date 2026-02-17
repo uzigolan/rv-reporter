@@ -8,6 +8,13 @@ This guide installs and runs `rv-reporter` on Windows or Linux/macOS.
 - Internet access (for package install)
 - For charted PDFs: Playwright Chromium
 
+Linux also needs system libraries for `pycairo`:
+
+- `pkg-config`
+- cairo development headers
+- python development headers
+- compiler toolchain
+
 ## Clone repository
 
 ### Windows
@@ -68,6 +75,23 @@ source .venv/bin/activate
 ```
 
 ### 2) Install dependencies
+
+Linux (install system packages first):
+
+Debian/Ubuntu:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y pkg-config libcairo2-dev python3-dev build-essential libffi-dev libjpeg-dev zlib1g-dev
+```
+
+Fedora/RHEL:
+
+```bash
+sudo dnf install -y pkgconf-pkg-config cairo-devel python3-devel gcc gcc-c++ libffi-devel libjpeg-turbo-devel zlib-devel
+```
+
+Then install Python dependencies:
 
 ```bash
 python -m pip install -e ".[dev,openai]"
