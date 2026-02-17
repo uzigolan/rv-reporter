@@ -589,7 +589,7 @@ def main() -> None:
     load_env_profile(profile)
     app = create_app()
     debug = os.getenv("FLASK_DEBUG", "1").lower() in {"1", "true", "yes"}
-    host = os.getenv("FLASK_HOST", "127.0.0.1")
+    host = os.getenv("FLASK_HOST", "0.0.0.0")
     port = int(os.getenv("FLASK_PORT", "5000"))
     app.run(debug=debug, host=host, port=port)
 
