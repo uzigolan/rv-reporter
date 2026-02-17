@@ -1163,7 +1163,8 @@ def _body_to_html(text: str) -> str:
         parts: list[str] = []
         for line in non_bullet_lines:
             parts.append(f"<p>{_inline_format(line)}</p>")
-        items = "".join(f"<li>{_inline_format(re.sub(r'^[-*]\\s+', '', line))}</li>" for line in bullet_lines)
+        clean_bullets = [re.sub(r"^[-*]\s+", "", line) for line in bullet_lines]
+        items = "".join(f"<li>{_inline_format(line)}</li>" for line in clean_bullets)
         parts.append(f"<ul>{items}</ul>")
         return "".join(parts)
 
