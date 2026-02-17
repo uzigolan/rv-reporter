@@ -180,6 +180,6 @@ Default UI output root: `outputs/web`.
 
 ## More docs
 
-- `INSTALL.md`
-- `docs/architecture.md`
-- `docs/UI_GUIDE.md`
+- [INSTALL.md](INSTALL.md)
+- [docs/architecture.md](docs/architecture.md)
+- [docs/UI_GUIDE.md](docs/UI_GUIDE.md)
