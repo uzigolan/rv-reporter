@@ -1,5 +1,6 @@
 from pathlib import Path
 import io
+import json
 
 from rv_reporter.web import create_app
 
@@ -13,11 +14,12 @@ def test_index_renders() -> None:
 
 
 def test_generate_from_sample(tmp_path: Path) -> None:
+    output_root = tmp_path / "outputs"
     app = create_app(
         {
             "TESTING": True,
             "UPLOAD_FOLDER": str(tmp_path / "uploads"),
-            "OUTPUT_FOLDER": str(tmp_path / "outputs"),
+            "OUTPUT_FOLDER": str(output_root),
         }
     )
     client = app.test_client()
@@ -39,6 +41,11 @@ def test_generate_from_sample(tmp_path: Path) -> None:
     )
     assert response.status_code == 200
     assert b"report generated" in response.data.lower()
+    report_files = sorted((output_root / "network_queue_congestion").glob("*.report.json"))
+    assert report_files
+    payload = json.loads(report_files[-1].read_text(encoding="utf-8"))
+    metadata = payload.get("metadata", {})
+    assert "generation_duration_seconds" in metadata
 
 
 def test_openai_generate_shows_cost_confirmation(tmp_path: Path) -> None:

@@ -4,16 +4,28 @@
 <section class="panel">
   <h1>Generated Reports</h1>
   <p class="muted">History source: <code>{{ output_folder }}</code></p>
+  <p class="muted icon-legend">
+    Legend:
+    <span class="legend-item">
+      <span class="icon-action-link legend-icon" aria-hidden="true"><span class="icon-open">↗</span></span>
+      open
+    </span>
+    <span class="legend-item">
+      <span class="icon-action-link legend-icon" aria-hidden="true"><span class="icon-download">⤓</span></span>
+      download
+    </span>
+  </p>
   {% if reports %}
     <table class="table reports-table">
       <thead>
         <tr>
           <th class="name-col">Name</th>
-          <th>Date/Time</th>
+          <th class="datetime-col">Date/Time</th>
           <th>Engine</th>
           <th class="model-col">Model</th>
           <th class="source-col">Source</th>
           <th>Rows</th>
+          <th>Time Took</th>
           <th>JSON</th>
           <th>HTML</th>
           <th>PDF</th>
@@ -27,7 +39,7 @@
             <td class="name-col">
               <span class="cell-ellipsis" title="{{ item.name }}">{{ item.name }}</span>
             </td>
-            <td>{{ item.created_at }}</td>
+            <td class="datetime-col"><span class="datetime-value">{{ item.created_at }}</span></td>
             <td>{{ item.backend }}</td>
             <td class="model-col">
               <span class="cell-ellipsis" title="{{ item.model }}">{{ item.model }}</span>
@@ -39,18 +51,37 @@
               {% endif %}
             </td>
             <td>{{ item.source_rows_used }}</td>
-            <td><a href="{{ url_for('view_json', path=item.json_path) }}">open</a></td>
-            <td><a href="{{ url_for('view_html', path=item.html_path) }}">open</a></td>
-            <td>
+            <td>{{ item.generation_duration_seconds }}</td>
+            <td class="artifact-actions">
+              <a class="icon-action-link" href="{{ url_for('view_json', path=item.json_path) }}" title="Open JSON" aria-label="Open JSON">
+                <span class="icon-open" aria-hidden="true">↗</span>
+              </a>
+            </td>
+            <td class="artifact-actions">
+              <a class="icon-action-link" href="{{ url_for('view_html', path=item.html_path) }}" title="Open HTML" aria-label="Open HTML">
+                <span class="icon-open" aria-hidden="true">↗</span>
+              </a>
+              <a class="icon-action-link" href="{{ url_for('view_html', path=item.html_path, download=1) }}" title="Download HTML" aria-label="Download HTML">
+                <span class="icon-download" aria-hidden="true">⤓</span>
+              </a>
+            </td>
+            <td class="artifact-actions">
               {% if item.pdf_path and item.pdf_path %}
-                <a href="{{ url_for('view_pdf', path=item.pdf_path) }}">open</a>
+                <a class="icon-action-link" href="{{ url_for('view_pdf', path=item.pdf_path) }}" title="Open PDF" aria-label="Open PDF">
+                  <span class="icon-open" aria-hidden="true">↗</span>
+                </a>
+                <a class="icon-action-link" href="{{ url_for('view_pdf', path=item.pdf_path, download=1) }}" title="Download PDF" aria-label="Download PDF">
+                  <span class="icon-download" aria-hidden="true">⤓</span>
+                </a>
               {% else %}
                 <span class="muted">-</span>
               {% endif %}
             </td>
-            <td>
+            <td class="artifact-actions">
               {% if item.raw_path and item.raw_path %}
-                <a href="{{ url_for('view_raw', path=item.raw_path) }}">open</a>
+                <a class="icon-action-link" href="{{ url_for('view_raw', path=item.raw_path) }}" title="Open OpenAI Raw" aria-label="Open OpenAI Raw">
+                  <span class="icon-open" aria-hidden="true">↗</span>
+                </a>
               {% else %}
                 <span class="muted">-</span>
               {% endif %}

@@ -256,7 +256,12 @@
       }
     }
   });
-  window.addEventListener("pageshow", () => { restoreState(); syncCsvSourceUi(); syncProviderUi(); });
+  window.addEventListener("pageshow", () => {
+    restoreState();
+    syncCsvSourceUi();
+    syncProviderUi();
+    resetGenerateUi();
+  });
   restoreState();
   syncCsvSourceUi();
   syncProviderUi();
@@ -267,6 +272,12 @@
   const generateForm = document.getElementById("generate_form");
   const generateBtn = document.getElementById("generate_submit_btn");
   const generateMsg = document.getElementById("generate_processing_msg");
+  const resetGenerateUi = () => {
+    generateBtn.disabled = false;
+    generateBtn.textContent = "Generate Report";
+    generateMsg.classList.add("hidden");
+    generateForm.classList.remove("is-loading");
+  };
   const helpPopup = document.getElementById("help_popup");
   const helpPopupTitle = document.getElementById("help_popup_title");
   const helpPopupBody = document.getElementById("help_popup_body");
@@ -319,6 +330,7 @@
     }
   };
   setupHelpToggles();
+  resetGenerateUi();
   generateForm.addEventListener("submit", () => {
     saveState();
     generateBtn.disabled = true;

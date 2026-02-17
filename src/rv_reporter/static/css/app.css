@@ -208,8 +208,14 @@ select:focus, input:focus { outline: 2px solid #bfdbfe; border-color: #93c5fd; }
 .table td:last-child { border-left: none; border-radius: 0 10px 10px 0; }
 .reports-table { table-layout: fixed; }
 .reports-table .name-col { width: 20%; }
+.reports-table .datetime-col { width: 12%; }
 .reports-table .model-col { width: 10%; }
 .reports-table .source-col { width: 12%; }
+.datetime-value {
+  display: inline-block;
+  white-space: nowrap;
+  font-size: .82rem;
+}
 .cell-ellipsis {
   display: block;
   white-space: nowrap;
@@ -221,6 +227,53 @@ select:focus, input:focus { outline: 2px solid #bfdbfe; border-color: #93c5fd; }
   border: 1px solid #fecaca;
   color: #b91c1c;
   cursor: pointer;
+}
+.icon-action-link {
+  display: inline-flex;
+  align-items: center;
+  gap: .2rem;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  margin-right: .45rem;
+  text-decoration: none;
+  color: #1e40af;
+  border: 1px solid #c7d2e3;
+  border-radius: 8px;
+  background: #f8fbff;
+}
+.icon-action-link:hover {
+  background: #eaf2ff;
+  border-color: #93c5fd;
+}
+.icon-open,
+.icon-download {
+  font-size: 1.25rem;
+  line-height: 1;
+  font-weight: 700;
+}
+.artifact-actions {
+  white-space: nowrap;
+}
+.artifact-actions .icon-action-link:last-child {
+  margin-right: 0;
+}
+.icon-legend {
+  display: flex;
+  align-items: center;
+  gap: .65rem;
+  flex-wrap: wrap;
+}
+.legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: .25rem;
+}
+.legend-icon {
+  width: 26px;
+  height: 26px;
+  margin-right: .15rem;
+  pointer-events: none;
 }
 
 .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: .7rem; }

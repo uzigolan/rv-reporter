@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from datetime import datetime, timezone
 from pathlib import Path
+from time import perf_counter
 from typing import Any
 
 from rv_reporter.providers.base import ReportProvider
@@ -48,6 +49,7 @@ def run_pipeline(
     sheet_name: str | None = None,
     generation_context: dict[str, Any] | None = None,
 ) -> tuple[Path, Path]:
+    start_time = perf_counter()
     definition, prefs, csv_profile, metrics = prepare_pipeline_inputs(
         csv_path=csv_path,
         report_type_id=report_type_id,
@@ -66,8 +68,11 @@ def run_pipeline(
     output_path.mkdir(parents=True, exist_ok=True)
     generated_at = datetime.now(timezone.utc)
     run_id = generated_at.strftime("%y%m%d_%H%M_%f")
+    elapsed_seconds = int(round(perf_counter() - start_time))
     _stamp_report_metadata(report_json, run_id=run_id, generated_at=generated_at)
-    _stamp_generation_metadata(report_json, generation_context or {})
+    context = dict(generation_context or {})
+    context["generation_duration_seconds"] = elapsed_seconds
+    _stamp_generation_metadata(report_json, context)
     validate_report_schema(report_json, definition.output_schema)
     json_content = json.dumps(report_json, indent=2)
     html_content = render_html(report_json)
@@ -138,6 +143,12 @@ def _stamp_generation_metadata(report_json: dict[str, Any], generation_context: 
         metadata["source_sheet"] = str(generation_context["source_sheet"])
     if generation_context.get("source_rows_used") is not None:
         metadata["source_rows_used"] = int(generation_context["source_rows_used"])
+    duration = generation_context.get("generation_duration_seconds")
+    if duration is not None:
+        try:
+            metadata["generation_duration_seconds"] = int(round(float(duration)))
+        except (TypeError, ValueError):
+            pass
 
 
 def _ensure_metrics_payload_for_charted_reports(

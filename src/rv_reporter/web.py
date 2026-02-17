@@ -427,6 +427,9 @@ def create_app(config_overrides: dict[str, Any] | None = None) -> Flask:
                     "source_csv": str(metadata.get("source_csv", "-")),
                     "source_sheet": str(metadata.get("source_sheet", "")),
                     "source_rows_used": metadata.get("source_rows_used", "-"),
+                    "generation_duration_seconds": _format_duration_seconds(
+                        metadata.get("generation_duration_seconds")
+                    ),
                 }
             )
         items.sort(key=lambda i: i["created_epoch"], reverse=True)
@@ -473,11 +476,12 @@ def create_app(config_overrides: dict[str, Any] | None = None) -> Flask:
     @app.get("/reports/html")
     def view_html() -> Any:
         html_path = request.args.get("path", "")
+        download = request.args.get("download", "0") == "1"
         path = _validate_report_artifact_path(html_path, Path(app.config["OUTPUT_FOLDER"]))
         if not path.exists():
             flash(f"File not found: {path}", "danger")
             return redirect(url_for("reports"))
-        return send_file(path)
+        return send_file(path, as_attachment=download, download_name=path.name)
 
     @app.get("/reports/raw")
     def view_raw() -> Any:
@@ -491,11 +495,12 @@ def create_app(config_overrides: dict[str, Any] | None = None) -> Flask:
     @app.get("/reports/pdf")
     def view_pdf() -> Any:
         pdf_path = request.args.get("path", "")
+        download = request.args.get("download", "0") == "1"
         path = _validate_report_artifact_path(pdf_path, Path(app.config["OUTPUT_FOLDER"]))
         if not path.exists():
             flash(f"PDF file not found: {path}", "danger")
             return redirect(url_for("reports"))
-        return send_file(path)
+        return send_file(path, as_attachment=download, download_name=path.name)
 
     return app
 
@@ -674,7 +679,29 @@ def _iso_to_utc(iso_text: str) -> datetime:
 
 
 def _display_local_time(dt_utc: datetime) -> str:
-    return dt_utc.astimezone().strftime("%y-%m-%d %H:%M")
+    return dt_utc.astimezone().strftime("%y-%m-%d, %H:%M")
+
+
+def _format_duration_seconds(value: Any) -> str:
+    if value is None or value == "":
+        return "-"
+    try:
+        total_seconds = int(round(float(value)))
+    except (TypeError, ValueError):
+        return "-"
+    if total_seconds < 0:
+        return "-"
+    if total_seconds < 60:
+        return f"{total_seconds} sec"
+    minutes, seconds = divmod(total_seconds, 60)
+    if minutes < 60:
+        if seconds == 0:
+            return f"{minutes} min"
+        return f"{minutes} min {seconds} sec"
+    hours, minutes = divmod(minutes, 60)
+    if seconds == 0:
+        return f"{hours} hr {minutes} min"
+    return f"{hours} hr {minutes} min {seconds} sec"
 
 
 def _normalize_report_type_payload(payload: dict[str, Any], report_types_dir: Path) -> dict[str, Any]:
