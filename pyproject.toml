@@ -21,6 +21,7 @@ dependencies = [
   "xlrd>=2.0.1",
   "playwright>=1.50.0",
   "xhtml2pdf>=0.2.15",
+  "markdown>=3.7",
 ]
 
 [project.optional-dependencies]

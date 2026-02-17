@@ -9,6 +9,8 @@ from typing import Any
 from uuid import uuid4
 
 from flask import Flask, flash, jsonify, redirect, render_template, request, send_file, session, url_for
+from markupsafe import Markup
+import markdown
 from werkzeug.utils import secure_filename
 import yaml
 
@@ -27,6 +29,11 @@ from rv_reporter.services.ingest import list_excel_sheets
 
 PROTECTED_REPORT_TYPES = {"network_queue_congestion", "twamp_session_health", "pm_export_health"}
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
+DOC_PAGES = {
+    "install": ("INSTALL.md", "Install Guide"),
+    "architecture": ("docs/architecture.md", "Architecture"),
+    "ui-guide": ("docs/UI_GUIDE.md", "UI Guide"),
+}
 
 
 def load_env_profile(profile: str = "sandbox") -> None:
@@ -90,6 +97,7 @@ def create_app(config_overrides: dict[str, Any] | None = None) -> Flask:
                 "report_type_id": default_report_type,
             },
             priced_models=sorted(MODEL_PRICING_USD.keys()),
+            model_options=_model_options_with_cost_ratio(),
         )
 
     @app.get("/api/excel-sheets")
@@ -130,6 +138,27 @@ def create_app(config_overrides: dict[str, Any] | None = None) -> Flask:
             "about.html",
             protected_report_types=sorted(PROTECTED_REPORT_TYPES),
             priced_models=sorted(MODEL_PRICING_USD.keys()),
+            doc_pages={doc_id: {"title": title} for doc_id, (_, title) in DOC_PAGES.items()},
+        )
+
+    @app.get("/docs/<doc_id>")
+    def view_doc(doc_id: str) -> Any:
+        if doc_id not in DOC_PAGES:
+            flash(f"Unknown documentation page: {doc_id}", "danger")
+            return redirect(url_for("about"))
+        rel_path, title = DOC_PAGES[doc_id]
+        path = _absolute_path(rel_path)
+        if not path.exists():
+            flash(f"Documentation file not found: {rel_path}", "danger")
+            return redirect(url_for("about"))
+
+        text = path.read_text(encoding="utf-8")
+        rendered = markdown.markdown(text, extensions=["fenced_code", "tables"])
+        return render_template(
+            "doc_view.html",
+            doc_title=title,
+            doc_source=rel_path,
+            doc_html=Markup(rendered),
         )
 
     @app.get("/report-types/new")
@@ -258,6 +287,7 @@ def create_app(config_overrides: dict[str, Any] | None = None) -> Flask:
                             "report_type_id": report_type_id,
                         },
                         priced_models=sorted(MODEL_PRICING_USD.keys()),
+                        model_options=_model_options_with_cost_ratio(),
                     )
                 if len(sheets) == 1:
                     sheet_name = sheets[0]
@@ -702,6 +732,42 @@ def _format_duration_seconds(value: Any) -> str:
     if seconds == 0:
         return f"{hours} hr {minutes} min"
     return f"{hours} hr {minutes} min {seconds} sec"
+
+
+def _model_options_with_cost_ratio() -> list[dict[str, str]]:
+    baseline_model = "gpt-4.1-mini"
+    baseline = MODEL_PRICING_USD.get(baseline_model)
+    if baseline is None:
+        return [{"value": model, "label": model} for model in sorted(MODEL_PRICING_USD.keys())]
+
+    def _calc_reference_cost(input_per_1m: float, output_per_1m: float) -> float:
+        return (1000 / 1_000_000) * input_per_1m + (100 / 1_000_000) * output_per_1m
+
+    baseline_cost = _calc_reference_cost(baseline.input_per_1m, baseline.output_per_1m)
+    if baseline_cost <= 0:
+        return [{"value": model, "label": model} for model in sorted(MODEL_PRICING_USD.keys())]
+
+    def _ratio_text(ratio: float) -> str:
+        if ratio >= 10:
+            return f"{ratio:.0f}x"
+        if ratio >= 1:
+            text = f"{ratio:.1f}".rstrip("0").rstrip(".")
+            return f"{text}x"
+        text = f"{ratio:.2f}".rstrip("0").rstrip(".")
+        return f"{text}x"
+
+    options: list[dict[str, str]] = []
+    for model in sorted(MODEL_PRICING_USD.keys()):
+        pricing = MODEL_PRICING_USD[model]
+        model_cost = _calc_reference_cost(pricing.input_per_1m, pricing.output_per_1m)
+        ratio = model_cost / baseline_cost
+        options.append(
+            {
+                "value": model,
+                "label": f"{model} / {_ratio_text(ratio)}",
+            }
+        )
+    return options
 
 
 def _normalize_report_type_payload(payload: dict[str, Any], report_types_dir: Path) -> dict[str, Any]:

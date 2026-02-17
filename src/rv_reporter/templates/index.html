@@ -29,13 +29,13 @@
     </label>
 
     <label id="model_wrap">
-      <span>Model</span>
+      <span>Model / cost ratio</span>
       <select name="model" id="model_select">
-        {% for m in priced_models %}
-          <option value="{{ m }}" {% if m == defaults.model %}selected{% endif %}>{{ m }}</option>
+        {% for opt in model_options %}
+          <option value="{{ opt.value }}" {% if opt.value == defaults.model %}selected{% endif %}>{{ opt.label }}</option>
         {% endfor %}
       </select>
-      <span class="field-help">Pick the LLM used for openai generation. Larger models may improve reasoning quality but increase cost and latency.</span>
+      <span class="field-help">Defines which OpenAI model generates report narrative and insights.<br>Ratio uses gpt-4.1-mini as 1x baseline, estimated from 1000 input + 100 output tokens.</span>
     </label>
 
     <label>

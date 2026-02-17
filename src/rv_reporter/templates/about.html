@@ -59,4 +59,14 @@
   </ul>
   <p class="muted small">OpenAI models currently available in UI: {{ priced_models | join(", ") }}.</p>
 </section>
+
+<section class="panel">
+  <h2>Documentation</h2>
+  <p class="muted">Open these docs in browser-rendered markdown:</p>
+  <div class="actions">
+    <a class="btn-link" href="{{ url_for('view_doc', doc_id='install') }}">INSTALL.md</a>
+    <a class="btn-link" href="{{ url_for('view_doc', doc_id='architecture') }}">docs/architecture.md</a>
+    <a class="btn-link" href="{{ url_for('view_doc', doc_id='ui-guide') }}">docs/UI_GUIDE.md</a>
+  </div>
+</section>
 {% endblock %}

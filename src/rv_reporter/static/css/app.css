@@ -331,3 +331,53 @@ pre {
   .topbar { padding: .85rem .8rem; }
   .cost-context-grid { grid-template-columns: 1fr; }
 }
+
+.markdown-doc h1,
+.markdown-doc h2,
+.markdown-doc h3,
+.markdown-doc h4 {
+  margin-top: 1rem;
+  margin-bottom: .6rem;
+}
+.markdown-doc p,
+.markdown-doc li {
+  line-height: 1.55;
+}
+.markdown-doc ul,
+.markdown-doc ol {
+  padding-left: 1.2rem;
+}
+.markdown-doc code {
+  background: #eef2ff;
+  border: 1px solid #dbe3ef;
+  border-radius: 6px;
+  padding: .08rem .3rem;
+  font-family: Consolas, "Courier New", monospace;
+  font-size: .86rem;
+}
+.markdown-doc pre {
+  margin: .7rem 0;
+  background: #0f172a;
+  color: #e2e8f0;
+  border-radius: 12px;
+  padding: .9rem;
+  overflow: auto;
+}
+.markdown-doc pre code {
+  background: transparent;
+  border: 0;
+  padding: 0;
+  color: inherit;
+}
+.markdown-doc table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: .7rem 0;
+}
+.markdown-doc th,
+.markdown-doc td {
+  border: 1px solid #dbe3ef;
+  padding: .45rem .55rem;
+  text-align: left;
+  vertical-align: top;
+}

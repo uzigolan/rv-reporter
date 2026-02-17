@@ -13,6 +13,24 @@ def test_index_renders() -> None:
     assert b"Tabular File to Structured Report" in response.data
 
 
+def test_about_includes_doc_links() -> None:
+    app = create_app({"TESTING": True})
+    client = app.test_client()
+    response = client.get("/about")
+    assert response.status_code == 200
+    assert b"/docs/install" in response.data
+    assert b"/docs/architecture" in response.data
+    assert b"/docs/ui-guide" in response.data
+
+
+def test_doc_view_renders_markdown() -> None:
+    app = create_app({"TESTING": True})
+    client = app.test_client()
+    response = client.get("/docs/ui-guide")
+    assert response.status_code == 200
+    assert b"UI Guide" in response.data
+
+
 def test_generate_from_sample(tmp_path: Path) -> None:
     output_root = tmp_path / "outputs"
     app = create_app(

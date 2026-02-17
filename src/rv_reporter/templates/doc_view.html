@@ -1,0 +1,12 @@
+{% extends "layout.html" %}
+{% block title %}{{ doc_title }} | RV Reporter{% endblock %}
+{% block content %}
+<section class="panel hero">
+  <h1>{{ doc_title }}</h1>
+  <p class="muted">Source: <code>{{ doc_source }}</code></p>
+</section>
+
+<section class="panel markdown-doc">
+  {{ doc_html }}
+</section>
+{% endblock %}
