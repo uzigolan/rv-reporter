@@ -5,13 +5,13 @@
   <h1>{{ report_type_id }} report generated</h1>
   <p class="muted">Artifacts are stored on disk and ready to view.</p>
   <div class="actions">
-    <a class="btn-link" href="{{ url_for('view_json', path=report_json_path) }}">View JSON</a>
-    <a class="btn-link" href="{{ url_for('view_html', path=report_html_path) }}">View HTML</a>
+    <a class="btn-link" href="{{ url_for('view_json', path=report_json_path) }}" target="_blank" rel="noopener noreferrer">View JSON</a>
+    <a class="btn-link" href="{{ url_for('view_html', path=report_html_path) }}" target="_blank" rel="noopener noreferrer">View HTML</a>
     {% if report_pdf_path %}
-    <a class="btn-link" href="{{ url_for('view_pdf', path=report_pdf_path) }}">View PDF</a>
+    <a class="btn-link" href="{{ url_for('view_pdf', path=report_pdf_path) }}" target="_blank" rel="noopener noreferrer">View PDF</a>
     {% endif %}
     {% if report_raw_path %}
-    <a class="btn-link" href="{{ url_for('view_raw', path=report_raw_path) }}">View OpenAI Raw</a>
+    <a class="btn-link" href="{{ url_for('view_raw', path=report_raw_path) }}" target="_blank" rel="noopener noreferrer">View OpenAI Raw</a>
     {% endif %}
     <a class="btn-link" href="{{ url_for('reports') }}">All reports</a>
   </div>
