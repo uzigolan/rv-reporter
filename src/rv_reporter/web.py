@@ -27,7 +27,7 @@ from rv_reporter.services.cost_estimator import MODEL_PRICING_USD, estimate_open
 from rv_reporter.orchestrator import prepare_pipeline_inputs
 from rv_reporter.services.ingest import list_excel_sheets
 
-PROTECTED_REPORT_TYPES = {"network_queue_congestion", "twamp_session_health", "pm_export_health"}
+PROTECTED_REPORT_TYPES = {"network_queue_congestion", "twamp_session_health", "pm_export_health", "jira_issue_portfolio"}
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DOC_PAGES = {
     "install": ("INSTALL.md", "Install Guide"),
