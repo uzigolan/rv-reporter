@@ -25,6 +25,7 @@ _HTML_TEMPLATE = """
       }
       body { font-family: "Segoe UI", Tahoma, sans-serif; background: radial-gradient(circle at 10% -20%, #dbeafe 0%, #eef2ff 35%, var(--bg) 70%, #ecfeff 100%); color: var(--text); margin: 0; }
       main { max-width: 1120px; margin: 2rem auto; padding: 1rem; }
+      body.ms-biomarker-wide main { max-width: 96vw; }
       section { background: rgba(255,255,255,0.9); border: 1px solid #dbe3ef; border-radius: 16px; box-shadow: 0 16px 36px rgba(15,23,42,0.09); padding: 1rem 1.25rem; margin-bottom: 1rem; backdrop-filter: blur(4px); }
       h1, h2 { margin: 0 0 0.75rem; }
       .summary { color: var(--muted); }
@@ -56,7 +57,7 @@ _HTML_TEMPLATE = """
       @media (max-width: 900px) { .chart-grid { grid-template-columns: 1fr; } }
     </style>
   </head>
-  <body>
+  <body class="{% if is_ms_biomarker %}ms-biomarker-wide{% endif %}">
     <main>
       <section>
         <h1>{{ report.report_title }}</h1>
@@ -701,9 +702,201 @@ _HTML_TEMPLATE = """
       </section>
       {% endif %}
 
+      {% if is_ms_biomarker %}
+      <section>
+        <h2>MS Registry Summary</h2>
+        <div class="stats-grid">
+          <div class="stat-card">
+            <div class="stat-label">Rows</div>
+            <div class="stat-value">{{ ms.summary.get('rows', 0) }}</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Unique Patients</div>
+            <div class="stat-value">{{ ms.summary.get('unique_patients', 0) }}</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Biomarker Columns Used</div>
+            <div class="stat-value">{{ ms.summary.get('biomarker_columns_used', 0) }}</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">High Sparse Biomarkers</div>
+            <div class="stat-value {% if ms.summary.get('high_sparse_biomarkers', 0) > 0 %}alert{% endif %}">
+              {{ ms.summary.get('high_sparse_biomarkers', 0) }}
+            </div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">EDSS Comparable Pairs</div>
+            <div class="stat-value">{{ ms.summary.get('edss_pairs', 0) }}</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">EDSS Worsened Ratio</div>
+            <div class="stat-value {% if ms.summary.get('edss_worsened_ratio', 0) >= 0.4 %}alert{% endif %}">
+              {{ "%.2f"|format(ms.summary.get('edss_worsened_ratio', 0) * 100) }}%
+            </div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Strong EDSS Contributors</div>
+            <div class="stat-value {% if ms.summary.get('strong_contributors', 0) == 0 %}alert{% endif %}">
+              {{ ms.summary.get('strong_contributors', 0) }}
+            </div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Weak/Non-contributing</div>
+            <div class="stat-value info">
+              {{ ms.summary.get('weak_contributors', 0) }}
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <h2>Clinical Progression Snapshot</h2>
+        <div class="chart-grid">
+          <div class="chart-wrap">
+            <div class="chart-head">
+              <div class="chart-title">EDSS Progression (Improved / Stable / Worsened)</div>
+              <button type="button" class="chart-export-btn" data-canvas-id="msEdssProgressionChart" data-file-prefix="{{ report.metadata.get('report_id', report.report_type_id) }}">Export PNG</button>
+            </div>
+            <canvas id="msEdssProgressionChart"></canvas>
+          </div>
+          <div class="chart-wrap">
+            <div class="chart-head">
+              <div class="chart-title">Course Distribution (Sample vs Last)</div>
+              <button type="button" class="chart-export-btn" data-canvas-id="msCourseDistributionChart" data-file-prefix="{{ report.metadata.get('report_id', report.report_type_id) }}">Export PNG</button>
+            </div>
+            <canvas id="msCourseDistributionChart"></canvas>
+          </div>
+          <div class="chart-wrap">
+            <div class="chart-head">
+              <div class="chart-title">Biomarker vs Last EDSS Correlation</div>
+              <button type="button" class="chart-export-btn" data-canvas-id="msBiomarkerEdssCorrChart" data-file-prefix="{{ report.metadata.get('report_id', report.report_type_id) }}">Export PNG</button>
+            </div>
+            <canvas id="msBiomarkerEdssCorrChart"></canvas>
+          </div>
+          <div class="chart-wrap">
+            <div class="chart-head">
+              <div class="chart-title">Biomarker-to-Biomarker Correlation</div>
+              <button type="button" class="chart-export-btn" data-canvas-id="msBiomarkerPairCorrChart" data-file-prefix="{{ report.metadata.get('report_id', report.report_type_id) }}">Export PNG</button>
+            </div>
+            <canvas id="msBiomarkerPairCorrChart"></canvas>
+          </div>
+          <div class="chart-wrap">
+            <div class="chart-head">
+              <div class="chart-title">Top Sparse Biomarkers (Missing %)</div>
+              <button type="button" class="chart-export-btn" data-canvas-id="msSparseBiomarkersChart" data-file-prefix="{{ report.metadata.get('report_id', report.report_type_id) }}">Export PNG</button>
+            </div>
+            <canvas id="msSparseBiomarkersChart"></canvas>
+          </div>
+          <div class="chart-wrap">
+            <div class="chart-head">
+              <div class="chart-title">SID Distribution</div>
+              <button type="button" class="chart-export-btn" data-canvas-id="msSidDistributionChart" data-file-prefix="{{ report.metadata.get('report_id', report.report_type_id) }}">Export PNG</button>
+            </div>
+            <canvas id="msSidDistributionChart"></canvas>
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <h2>Data Completeness and Follow-up</h2>
+        <div class="table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>Field</th>
+                <th>Missing %</th>
+                <th>Non-null Rows</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in ms.key_missingness %}
+              <tr>
+                <td>{{ row.column }}</td>
+                <td>{{ "%.2f"|format(row.missing_pct * 100) }}</td>
+                <td>{{ row.non_null }}</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        <p class="muted small">
+          Follow-up pairs: {{ ms.followup_summary.get('pairs', 0) }},
+          median: {{ ms.followup_summary.get('median_days', 0) }} days,
+          p90: {{ ms.followup_summary.get('p90_days', 0) }} days,
+          invalid date pairs: {{ ms.followup_summary.get('invalid_pairs', 0) }}.
+        </p>
+      </section>
+
+      <section>
+        <h2>Biomarkers Related to Last EDSS</h2>
+        {% if ms.biomarker_last_edss_corr %}
+        <div class="table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>Biomarker</th>
+                <th>Spearman Corr (Last EDSS)</th>
+                <th>Abs Corr</th>
+                <th>Direction</th>
+                <th>Paired Rows</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in ms.biomarker_last_edss_corr %}
+              <tr>
+                <td>{{ row.biomarker }}</td>
+                <td>{{ "%.4f"|format(row.corr) }}</td>
+                <td>{{ "%.4f"|format(row.abs_corr) }}</td>
+                <td>{{ row.direction }}</td>
+                <td>{{ row.paired_rows }}</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% else %}
+        <p class="muted">Not enough paired data to estimate biomarker-to-Last-EDSS correlations.</p>
+        {% endif %}
+      </section>
+
+      <section>
+        <h2>Biomarker Inter-correlation</h2>
+        {% if ms.biomarker_pair_corr %}
+        <div class="table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>Left Biomarker</th>
+                <th>Right Biomarker</th>
+                <th>Spearman Corr</th>
+                <th>Abs Corr</th>
+                <th>Paired Rows</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in ms.biomarker_pair_corr %}
+              <tr>
+                <td>{{ row.left_biomarker }}</td>
+                <td>{{ row.right_biomarker }}</td>
+                <td>{{ "%.4f"|format(row.corr) }}</td>
+                <td>{{ "%.4f"|format(row.abs_corr) }}</td>
+                <td>{{ row.paired_rows }}</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% else %}
+        <p class="muted">Not enough paired coverage for robust biomarker-to-biomarker correlation estimation.</p>
+        {% endif %}
+        <h3 style="margin-top:0.9rem;">Correlation Matrix (Spearman)</h3>
+        <div class="table-scroll" id="msCorrMatrixTable"></div>
+      </section>
+      {% endif %}
+
       <section>
         <h2>Tables</h2>
-        {% if is_network_queue or is_twamp or is_pm or is_jira %}
+        {% if is_network_queue or is_twamp or is_pm or is_jira or is_ms_biomarker %}
           <p class="muted">Detailed metric payload is available in the JSON artifact for this report.</p>
         {% else %}
         {% for t in report.tables %}
@@ -1387,6 +1580,248 @@ _HTML_TEMPLATE = """
       })();
     </script>
     {% endif %}
+    {% if is_ms_biomarker %}
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+    <script>
+      (function() {
+        if (!window.Chart) return;
+        Chart.defaults.font.family = "'Segoe UI', Tahoma, sans-serif";
+        Chart.defaults.font.size = 13;
+        Chart.defaults.color = "#334155";
+
+        const summary = {{ ms.summary_json | safe }};
+        const sid = {{ ms.sid_distribution_json | safe }};
+        const sparse = {{ ms.sparse_biomarkers_json | safe }};
+        const courses = {{ ms.course_distribution_json | safe }};
+        const progression = {{ ms.edss_progression_json | safe }};
+        const edssCorr = {{ ms.biomarker_last_edss_corr_json | safe }};
+        const pairCorr = {{ ms.biomarker_pair_corr_json | safe }};
+        const corrMatrix = {{ ms.correlation_matrix_json | safe }};
+
+        const createChart = (id, cfg) => {
+          const el = document.getElementById(id);
+          if (!el) return;
+          new Chart(el, cfg);
+        };
+
+        createChart("msEdssProgressionChart", {
+          type: "bar",
+          data: {
+            labels: ["Improved", "Stable", "Worsened"],
+            datasets: [{
+              label: "Patients",
+              data: [
+                Number(progression.improved || 0),
+                Number(progression.stable || 0),
+                Number(progression.worsened || 0),
+              ],
+              borderRadius: 8,
+              backgroundColor: ["#16a34a", "#64748b", "#dc2626"],
+            }]
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            scales: {
+              x: { title: { display: true, text: "EDSS Change Category" } },
+              y: { title: { display: true, text: "Count" }, beginAtZero: true }
+            },
+            plugins: { legend: { display: true } }
+          }
+        });
+
+        createChart("msCourseDistributionChart", {
+          type: "bar",
+          data: {
+            labels: Array.isArray(courses) ? courses.map((r) => String(r.course || "")) : [],
+            datasets: [
+              {
+                label: "Sample Course",
+                data: Array.isArray(courses) ? courses.map((r) => Number(r.sample_count || 0)) : [],
+                backgroundColor: "#1d4ed8",
+                borderRadius: 6,
+              },
+              {
+                label: "Last Course",
+                data: Array.isArray(courses) ? courses.map((r) => Number(r.last_count || 0)) : [],
+                backgroundColor: "#0f766e",
+                borderRadius: 6,
+              },
+            ],
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            scales: {
+              x: { stacked: false, title: { display: true, text: "Course" } },
+              y: { stacked: false, beginAtZero: true, title: { display: true, text: "Count" } }
+            },
+            plugins: { legend: { display: true } }
+          }
+        });
+
+        const corrTop = Array.isArray(edssCorr) ? edssCorr.slice(0, 15) : [];
+        createChart("msBiomarkerEdssCorrChart", {
+          type: "bar",
+          data: {
+            labels: corrTop.map((r) => String(r.biomarker || "")),
+            datasets: [{
+              label: "Spearman Corr with Last EDSS",
+              data: corrTop.map((r) => Number(r.corr || 0)),
+              borderRadius: 8,
+              backgroundColor: corrTop.map((r) => Number(r.corr || 0) >= 0 ? "#dc2626" : "#1d4ed8"),
+            }]
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            scales: {
+              x: { title: { display: true, text: "Biomarker" } },
+              y: { min: -1, max: 1, title: { display: true, text: "Correlation" } }
+            },
+            plugins: { legend: { display: true } }
+          }
+        });
+
+        const pairTop = Array.isArray(pairCorr) ? pairCorr.slice(0, 12) : [];
+        createChart("msBiomarkerPairCorrChart", {
+          type: "bar",
+          data: {
+            labels: pairTop.map((r) => `${String(r.left_biomarker || "")} <> ${String(r.right_biomarker || "")}`),
+            datasets: [{
+              label: "Spearman Corr",
+              data: pairTop.map((r) => Number(r.corr || 0)),
+              borderRadius: 8,
+              backgroundColor: pairTop.map((r) => Number(r.corr || 0) >= 0 ? "#0f766e" : "#7c3aed"),
+            }]
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            indexAxis: "y",
+            scales: {
+              x: { min: -1, max: 1, title: { display: true, text: "Correlation" } },
+              y: { title: { display: true, text: "Biomarker Pair" } }
+            },
+            plugins: { legend: { display: true } }
+          }
+        });
+
+        const sparseTop = Array.isArray(sparse) ? sparse.slice(0, 12) : [];
+        createChart("msSparseBiomarkersChart", {
+          type: "bar",
+          data: {
+            labels: sparseTop.map((r) => String(r.biomarker || "")),
+            datasets: [{
+              label: "Missing %",
+              data: sparseTop.map((r) => Number(r.missing_pct || 0)),
+              borderRadius: 8,
+              backgroundColor: "#f97316",
+            }]
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            indexAxis: "y",
+            scales: {
+              x: { beginAtZero: true, max: 100, title: { display: true, text: "Missing %" } },
+              y: { title: { display: true, text: "Biomarker" } }
+            },
+            plugins: { legend: { display: true } }
+          }
+        });
+
+        createChart("msSidDistributionChart", {
+          type: "doughnut",
+          data: {
+            labels: Array.isArray(sid) ? sid.map((r) => `SID ${r.sid}`) : [],
+            datasets: [{
+              label: "Rows",
+              data: Array.isArray(sid) ? sid.map((r) => Number(r.count || 0)) : [],
+              borderColor: "#ffffff",
+              borderWidth: 2,
+              backgroundColor: ["#1d4ed8", "#0f766e", "#7c3aed", "#ea580c", "#334155"],
+            }]
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: { legend: { position: "bottom" } },
+            cutout: "58%"
+          }
+        });
+
+        const renderCorrMatrix = () => {
+          const host = document.getElementById("msCorrMatrixTable");
+          if (!host) return;
+          const columns = Array.isArray(corrMatrix.columns) ? corrMatrix.columns : [];
+          const rows = Array.isArray(corrMatrix.rows) ? corrMatrix.rows : [];
+          if (!columns.length || !rows.length) {
+            host.innerHTML = '<p class="muted">Matrix unavailable: insufficient paired data.</p>';
+            return;
+          }
+          const gradeColor = (absV, isSelf) => {
+            if (isSelf) return "#d1d5db"; // self-correlation on diagonal
+            if (absV >= 0.8) return "#166534"; // 100% ~ dark green
+            if (absV >= 0.6) return "#4d9d2d";
+            if (absV >= 0.4) return "#facc15"; // around 50% ~ yellow
+            if (absV >= 0.2) return "#fef08a";
+            return "#ffffff"; // none ~ white
+          };
+          let html = '<table class="ms-corr-matrix"><thead><tr><th style="font-size:11px;">Biomarker</th>';
+          for (const col of columns) {
+            html += `<th style="font-size:11px;white-space:nowrap;">${String(col)}</th>`;
+          }
+          html += "</tr></thead><tbody>";
+          for (const row of rows) {
+            const rowName = String(row.name || "");
+            html += `<tr><td style="font-size:11px;white-space:nowrap;"><strong>${rowName}</strong></td>`;
+            (row.values || []).forEach((value, idx) => {
+              const n = (value === null || value === undefined) ? null : Number(value);
+              const absV = (n === null || Number.isNaN(n)) ? 0 : Math.min(1, Math.abs(n));
+              const colName = String(columns[idx] || "");
+              const isSelf = rowName === colName;
+              const bg = gradeColor(absV, isSelf);
+              const title = (n === null || Number.isNaN(n))
+                ? `${rowName} x ${colName}: no correlation value`
+                : `${rowName} x ${colName}: corr=${n.toFixed(4)} (|corr| ${(absV * 100).toFixed(0)}%)`;
+              html += `<td style="background:${bg};text-align:center;min-width:18px;height:16px;" title="${title}"></td>`;
+            });
+            html += "</tr>";
+          }
+          html += "</tbody></table>";
+          html += `
+            <div class="muted small" style="margin-top:0.55rem;display:flex;gap:0.65rem;align-items:center;flex-wrap:wrap;">
+              <span><strong>Legend:</strong></span>
+              <span style="display:inline-flex;align-items:center;gap:0.2rem;"><i style="display:inline-block;width:14px;height:14px;background:#166534;border:1px solid #d1d5db;"></i>100%</span>
+              <span style="display:inline-flex;align-items:center;gap:0.2rem;"><i style="display:inline-block;width:14px;height:14px;background:#4d9d2d;border:1px solid #d1d5db;"></i>75%</span>
+              <span style="display:inline-flex;align-items:center;gap:0.2rem;"><i style="display:inline-block;width:14px;height:14px;background:#facc15;border:1px solid #d1d5db;"></i>50%</span>
+              <span style="display:inline-flex;align-items:center;gap:0.2rem;"><i style="display:inline-block;width:14px;height:14px;background:#fef08a;border:1px solid #d1d5db;"></i>25%</span>
+              <span style="display:inline-flex;align-items:center;gap:0.2rem;"><i style="display:inline-block;width:14px;height:14px;background:#ffffff;border:1px solid #d1d5db;"></i>None</span>
+              <span style="display:inline-flex;align-items:center;gap:0.2rem;"><i style="display:inline-block;width:14px;height:14px;background:#d1d5db;border:1px solid #9ca3af;"></i>Self</span>
+            </div>
+          `;
+          host.innerHTML = html;
+        };
+        renderCorrMatrix();
+
+        document.querySelectorAll(".chart-export-btn").forEach((btn) => {
+          btn.addEventListener("click", () => {
+            const canvasId = btn.getAttribute("data-canvas-id");
+            const prefix = btn.getAttribute("data-file-prefix") || "report";
+            const canvas = document.getElementById(canvasId);
+            if (!canvas) return;
+            const a = document.createElement("a");
+            a.href = canvas.toDataURL("image/png");
+            a.download = `${prefix}.${canvasId}.png`;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+          });
+        });
+      })();
+    </script>
+    {% endif %}
   </body>
 </html>
 """.strip()
@@ -1401,16 +1836,19 @@ def render_html(report: dict) -> str:
     twamp = _extract_twamp_metrics(report)
     pm = _extract_pm_metrics(report)
     jira = _extract_jira_metrics(report)
+    ms = _extract_ms_biomarker_metrics(report)
     return template.render(
         report=report_view,
         is_network_queue=report.get("report_type_id") == "network_queue_congestion" and network is not None,
         is_twamp=report.get("report_type_id") == "twamp_session_health" and twamp is not None,
         is_pm=report.get("report_type_id") == "pm_export_health" and pm is not None,
         is_jira=report.get("report_type_id") == "jira_issue_portfolio" and jira is not None,
+        is_ms_biomarker=report.get("report_type_id") == "ms_biomarker_registry_health" and ms is not None,
         network=network or {},
         twamp=twamp or {},
         pm=pm or {},
         jira=jira or {},
+        ms=ms or {},
     )
 
 
@@ -1641,4 +2079,81 @@ def _normalize_jira_metrics(
         "responsible_workload": responsible_workload or [],
         "responsible_workload_json": json.dumps(responsible_workload or []),
         "oldest_open_issues": oldest_open_issues or [],
+    }
+
+
+def _extract_ms_biomarker_metrics(report: dict) -> dict | None:
+    if report.get("report_type_id") != "ms_biomarker_registry_health":
+        return None
+    tables = report.get("tables", [])
+    for table in tables:
+        if table.get("name") == "metrics_payload" and table.get("rows"):
+            payload = table["rows"][0]
+            return _normalize_ms_biomarker_metrics(
+                payload.get("summary", {}),
+                payload.get("sid_distribution", []),
+                payload.get("key_missingness", []),
+                payload.get("sparse_biomarkers", []),
+                payload.get("edss_progression", {}),
+                payload.get("course_distribution", []),
+                payload.get("followup_summary", {}),
+                payload.get("biomarker_last_edss_corr", []),
+                payload.get("biomarker_pair_corr", []),
+                payload.get("correlation_matrix", {}),
+            )
+    return _normalize_ms_biomarker_metrics({}, [], [], [], {}, [], {}, [], [], {})
+
+
+def _normalize_ms_biomarker_metrics(
+    summary: dict,
+    sid_distribution: list,
+    key_missingness: list,
+    sparse_biomarkers: list,
+    edss_progression: dict,
+    course_distribution: list,
+    followup_summary: dict,
+    biomarker_last_edss_corr: list,
+    biomarker_pair_corr: list,
+    correlation_matrix: dict,
+) -> dict:
+    normalized_summary = {
+        "rows": int(summary.get("rows", 0) or 0),
+        "unique_patients": int(summary.get("unique_patients", 0) or 0),
+        "biomarker_columns_used": int(summary.get("biomarker_columns_used", 0) or 0),
+        "high_sparse_biomarkers": int(summary.get("high_sparse_biomarkers", 0) or 0),
+        "strong_contributors": int(summary.get("strong_contributors", 0) or 0),
+        "weak_contributors": int(summary.get("weak_contributors", 0) or 0),
+        "edss_pairs": int(summary.get("edss_pairs", 0) or 0),
+        "edss_worsened_ratio": float(summary.get("edss_worsened_ratio", 0.0) or 0.0),
+    }
+    normalized_edss = {
+        "improved": int(edss_progression.get("improved", 0) or 0),
+        "stable": int(edss_progression.get("stable", 0) or 0),
+        "worsened": int(edss_progression.get("worsened", 0) or 0),
+    }
+    normalized_followup = {
+        "pairs": int(followup_summary.get("pairs", 0) or 0),
+        "median_days": int(followup_summary.get("median_days", 0) or 0),
+        "p90_days": int(followup_summary.get("p90_days", 0) or 0),
+        "invalid_pairs": int(followup_summary.get("invalid_pairs", 0) or 0),
+    }
+    return {
+        "summary": normalized_summary,
+        "summary_json": json.dumps(normalized_summary),
+        "sid_distribution": sid_distribution or [],
+        "sid_distribution_json": json.dumps(sid_distribution or []),
+        "key_missingness": key_missingness or [],
+        "sparse_biomarkers": sparse_biomarkers or [],
+        "sparse_biomarkers_json": json.dumps(sparse_biomarkers or []),
+        "edss_progression": normalized_edss,
+        "edss_progression_json": json.dumps(normalized_edss),
+        "course_distribution": course_distribution or [],
+        "course_distribution_json": json.dumps(course_distribution or []),
+        "followup_summary": normalized_followup,
+        "biomarker_last_edss_corr": biomarker_last_edss_corr or [],
+        "biomarker_last_edss_corr_json": json.dumps(biomarker_last_edss_corr or []),
+        "biomarker_pair_corr": biomarker_pair_corr or [],
+        "biomarker_pair_corr_json": json.dumps(biomarker_pair_corr or []),
+        "correlation_matrix": correlation_matrix or {"columns": [], "rows": []},
+        "correlation_matrix_json": json.dumps(correlation_matrix or {"columns": [], "rows": []}),
     }

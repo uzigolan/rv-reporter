@@ -24,6 +24,7 @@ def prepare_pipeline_inputs(
     registry: ReportTypeRegistry | None = None,
     row_limit: int | None = None,
     sheet_name: str | None = None,
+    ignore_columns: list[str] | None = None,
 ) -> tuple[Any, dict[str, Any], dict[str, Any], dict[str, Any]]:
     report_registry = registry or ReportTypeRegistry()
     definition = report_registry.get(report_type_id)
@@ -32,6 +33,10 @@ def prepare_pipeline_inputs(
     prefs.update(user_prefs or {})
 
     df = load_csv_with_limit(csv_path, row_limit=row_limit, sheet_name=sheet_name)
+    if ignore_columns:
+        cols = [c for c in ignore_columns if c in df.columns]
+        if cols:
+            df = df.drop(columns=cols)
     validate_required_columns(df, definition.required_columns)
     csv_profile = profile_dataframe(df)
     metrics = compute_metrics(definition.metrics_profile, df, prefs)
@@ -47,6 +52,7 @@ def run_pipeline(
     provider: ReportProvider | None = None,
     row_limit: int | None = None,
     sheet_name: str | None = None,
+    ignore_columns: list[str] | None = None,
     generation_context: dict[str, Any] | None = None,
 ) -> tuple[Path, Path]:
     start_time = perf_counter()
@@ -57,6 +63,7 @@ def run_pipeline(
         registry=registry,
         row_limit=row_limit,
         sheet_name=sheet_name,
+        ignore_columns=ignore_columns,
     )
 
     report_provider = provider or MockProvider()
@@ -143,6 +150,9 @@ def _stamp_generation_metadata(report_json: dict[str, Any], generation_context: 
         metadata["source_sheet"] = str(generation_context["source_sheet"])
     if generation_context.get("source_rows_used") is not None:
         metadata["source_rows_used"] = int(generation_context["source_rows_used"])
+    ignored_columns = generation_context.get("source_ignored_columns")
+    if isinstance(ignored_columns, list):
+        metadata["source_ignored_columns"] = [str(c) for c in ignored_columns]
     duration = generation_context.get("generation_duration_seconds")
     if duration is not None:
         try:
@@ -167,6 +177,7 @@ def _ensure_metrics_payload_for_charted_reports(
         "twamp_session_health",
         "pm_export_health",
         "jira_issue_portfolio",
+        "ms_biomarker_registry_health",
     }:
         return
     tables = report_json.get("tables")

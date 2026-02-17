@@ -5,6 +5,41 @@ from pathlib import Path
 import pandas as pd
 
 
+def describe_tabular_source(path: str | Path, sheet_name: str | None = None) -> dict[str, object]:
+    data_path = Path(path)
+    suffix = data_path.suffix.lower()
+    if suffix == ".csv":
+        header = pd.read_csv(data_path, nrows=0)
+        return {
+            "file_type": "csv",
+            "sheets": [],
+            "selected_sheet": "",
+            "columns": [str(c) for c in header.columns],
+        }
+    if suffix in {".xlsx", ".xls"}:
+        workbook = pd.ExcelFile(data_path)
+        sheets = list(workbook.sheet_names)
+        selected_sheet = (sheet_name or "").strip()
+        if not selected_sheet and len(sheets) == 1:
+            selected_sheet = sheets[0]
+        columns: list[str] = []
+        if selected_sheet:
+            header = pd.read_excel(data_path, sheet_name=selected_sheet, nrows=0)
+            columns = [str(c) for c in header.columns]
+        return {
+            "file_type": "excel",
+            "sheets": sheets,
+            "selected_sheet": selected_sheet,
+            "columns": columns,
+        }
+    return {
+        "file_type": "unknown",
+        "sheets": [],
+        "selected_sheet": "",
+        "columns": [],
+    }
+
+
 def list_excel_sheets(path: str | Path) -> list[str]:
     data_path = Path(path)
     if data_path.suffix.lower() not in {".xlsx", ".xls"}:

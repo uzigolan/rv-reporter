@@ -9,12 +9,45 @@
 <section class="panel">
   <p class="muted">Supported <code>metrics_profile</code>: {{ supported_metrics_profiles|join(", ") }}</p>
   <p class="muted"><code>report_type_id</code> can be omitted; it will be auto-generated from <code>title</code>.</p>
+  <div class="actions" style="margin-bottom: .8rem;">
+    <label>
+      <span>Clone From Existing Type</span>
+      <select id="clone_source_type">
+        <option value="">Choose report type...</option>
+        {% for rid in report_types %}
+          <option value="{{ rid }}">{{ rid }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <button type="button" class="btn-link" id="load_clone_btn">Load YAML</button>
+  </div>
   <form method="post" action="{{ url_for('create_report_type') }}">
     <label>
       <span>Report Type YAML</span>
-      <textarea name="report_type_yaml" rows="28" class="code-area">{{ starter_yaml }}</textarea>
+      <textarea name="report_type_yaml" rows="28" class="code-area" id="report_type_yaml">{{ starter_yaml }}</textarea>
     </label>
     <button type="submit" class="btn-primary">Save Report Type</button>
   </form>
 </section>
+
+<script>
+  (function () {
+    const source = document.getElementById("clone_source_type");
+    const loadBtn = document.getElementById("load_clone_btn");
+    const yamlBox = document.getElementById("report_type_yaml");
+    if (!source || !loadBtn || !yamlBox) return;
+    loadBtn.addEventListener("click", async () => {
+      const rid = source.value;
+      if (!rid) return;
+      try {
+        const response = await fetch(`{{ url_for('report_type_yaml') }}?report_type_id=${encodeURIComponent(rid)}`);
+        if (!response.ok) return;
+        const payload = await response.json();
+        if (payload && payload.yaml) {
+          yamlBox.value = payload.yaml;
+        }
+      } catch (e) {}
+    });
+  })();
+</script>
 {% endblock %}

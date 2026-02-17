@@ -1,0 +1,99 @@
+report_type_id: ms_biomarker_registry_health
+version: "1.0.0"
+title: "MS Biomarker Registry Health Report"
+required_columns:
+  - PID
+  - SID
+  - Sample Date
+  - Last Date
+  - Sample EDSS
+  - Last EDSS
+  - Sample Cours
+  - Last Cours
+metrics_profile: ms_biomarker_registry_health
+default_prefs:
+  tone: technical
+  audience: leadership
+  focus: trends
+  high_missing_threshold: 0.60
+  severe_missing_threshold: 0.85
+  edss_worsened_alert_ratio: 0.40
+  top_n_sparse_biomarkers: 12
+  top_n_course_transitions: 12
+  corr_min_pairs: 30
+  strong_corr_threshold: 0.35
+  weak_corr_threshold: 0.10
+  top_n_corr_biomarkers: 15
+  top_n_biomarker_pairs: 12
+prompt_instructions: |
+  Analyze this MS registry dataset with strong attention to data quality and longitudinal signal.
+  Must include:
+  - participant coverage (unique PID, SID distribution, missingness profile)
+  - handling of empty cells and impact on confidence
+  - EDSS progression signal (improved / stable / worsened, with ratio)
+  - biomarker-to-Last-EDSS correlations (state contributing vs weak/non-contributing markers)
+  - strongest biomarker-to-biomarker correlations and what clusters may indicate
+  - disease-course transitions (sample vs last course)
+  - biomarker panel completeness and which markers are too sparse for reliable inference
+  Separate observed facts from inferred risk.
+  Recommend practical next steps for data cleaning and follow-up analysis readiness.
+output_schema:
+  type: object
+  additionalProperties: false
+  required:
+    - report_type_id
+    - report_title
+    - summary
+    - sections
+    - alerts
+    - recommendations
+    - tables
+    - charts
+    - metadata
+  properties:
+    report_type_id:
+      type: string
+    report_title:
+      type: string
+    summary:
+      type: string
+    sections:
+      type: array
+      items:
+        type: object
+        additionalProperties: false
+        required: [title, body]
+        properties:
+          title: { type: string }
+          body: { type: string }
+    alerts:
+      type: array
+      items:
+        type: object
+        additionalProperties: false
+        required: [severity, message]
+        properties:
+          severity: { type: string }
+          message: { type: string }
+    recommendations:
+      type: array
+      items:
+        type: object
+        additionalProperties: false
+        required: [priority, action]
+        properties:
+          priority: { type: string }
+          action: { type: string }
+    tables:
+      type: array
+      items:
+        type: object
+        additionalProperties: true
+    charts:
+      type: array
+      items:
+        type: object
+        additionalProperties: true
+    metadata:
+      type: object
+      additionalProperties: true

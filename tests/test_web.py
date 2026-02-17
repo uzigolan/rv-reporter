@@ -31,6 +31,29 @@ def test_doc_view_renders_markdown() -> None:
     assert b"UI Guide" in response.data
 
 
+def test_report_type_yaml_api_returns_yaml(tmp_path: Path) -> None:
+    report_types_dir = tmp_path / "report_types"
+    report_types_dir.mkdir(parents=True, exist_ok=True)
+    yaml_path = report_types_dir / "demo_type.yaml"
+    yaml_path.write_text(
+        "report_type_id: demo_type\nversion: '1.0.0'\ntitle: Demo\nrequired_columns: []\nmetrics_profile: ops_kpi\noutput_schema: {type: object}\n",
+        encoding="utf-8",
+    )
+    app = create_app(
+        {
+            "TESTING": True,
+            "REPORT_TYPES_DIR": str(report_types_dir),
+            "UPLOAD_FOLDER": str(tmp_path / "uploads"),
+            "OUTPUT_FOLDER": str(tmp_path / "outputs"),
+        }
+    )
+    client = app.test_client()
+    response = client.get("/api/report-type-yaml?report_type_id=demo_type")
+    assert response.status_code == 200
+    assert "yaml" in response.json
+    assert "report_type_id: demo_type" in response.json["yaml"]
+
+
 def test_generate_from_sample(tmp_path: Path) -> None:
     output_root = tmp_path / "outputs"
     app = create_app(

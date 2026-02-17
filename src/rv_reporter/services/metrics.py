@@ -18,6 +18,8 @@ def compute_metrics(profile: str, df: pd.DataFrame, prefs: dict[str, Any]) -> di
         return _compute_pm_export_health(df, prefs)
     if profile == "jira_issue_portfolio":
         return _compute_jira_issue_portfolio(df, prefs)
+    if profile == "ms_biomarker_registry_health":
+        return _compute_ms_biomarker_registry_health(df, prefs)
     raise ValueError(f"Unsupported metrics profile '{profile}'.")
 
 
@@ -1236,3 +1238,385 @@ def _compute_jira_issue_portfolio(df: pd.DataFrame, prefs: dict[str, Any]) -> di
         "oldest_open_issues": oldest_open_issues,
         "alerts": alerts,
     }
+
+
+def _compute_ms_biomarker_registry_health(df: pd.DataFrame, prefs: dict[str, Any]) -> dict[str, Any]:
+    working = df.copy()
+    working["PID"] = pd.to_numeric(working.get("PID"), errors="coerce")
+    working["SID"] = pd.to_numeric(working.get("SID"), errors="coerce")
+    working["Sample EDSS"] = pd.to_numeric(working.get("Sample EDSS"), errors="coerce")
+    working["Last EDSS"] = pd.to_numeric(working.get("Last EDSS"), errors="coerce")
+    working["Left samples"] = pd.to_numeric(working.get("Left samples"), errors="coerce")
+    working["sample_course_norm"] = _normalize_course_series(working.get("Sample Cours"))
+    working["last_course_norm"] = _normalize_course_series(working.get("Last Cours"))
+    working["sample_date_norm"] = _parse_sample_dates(working.get("Sample Date"))
+    working["last_date_norm"] = _parse_last_dates(working.get("Last Date"))
+
+    required = {"PID", "SID", "Sample Date", "Last Date", "Sample EDSS", "Last EDSS", "Sample Cours", "Last Cours"}
+    base_skip = required | {"PID_SID", "Left samples", "sample_course_norm", "last_course_norm", "sample_date_norm", "last_date_norm"}
+    biomarker_candidates = [c for c in working.columns if c not in base_skip]
+    biomarker_columns: list[str] = []
+    for col in biomarker_candidates:
+        numeric_col = pd.to_numeric(working[col], errors="coerce")
+        if numeric_col.notna().sum() == 0:
+            continue
+        biomarker_columns.append(col)
+        working[col] = numeric_col
+
+    total_rows = int(len(working))
+    unique_patients = int(working["PID"].dropna().nunique())
+    sid_counts = (
+        working["SID"].dropna().astype(int).value_counts().sort_index().to_dict()
+        if "SID" in working.columns
+        else {}
+    )
+
+    high_missing_threshold = float(prefs.get("high_missing_threshold", 0.60))
+    severe_missing_threshold = float(prefs.get("severe_missing_threshold", 0.85))
+    top_n_sparse = int(prefs.get("top_n_sparse_biomarkers", 12))
+    top_n_transitions = int(prefs.get("top_n_course_transitions", 12))
+    edss_worsened_alert_ratio = float(prefs.get("edss_worsened_alert_ratio", 0.40))
+    corr_min_pairs = int(prefs.get("corr_min_pairs", 30))
+    strong_corr_threshold = float(prefs.get("strong_corr_threshold", 0.35))
+    weak_corr_threshold = float(prefs.get("weak_corr_threshold", 0.10))
+    top_n_corr_biomarkers = int(prefs.get("top_n_corr_biomarkers", 15))
+    top_n_biomarker_pairs = int(prefs.get("top_n_biomarker_pairs", 12))
+
+    missingness_rows = []
+    for col in required:
+        if col not in working.columns:
+            continue
+        pct = float(working[col].isna().mean())
+        missingness_rows.append({"column": col, "missing_pct": round(pct, 4), "non_null": int(working[col].notna().sum())})
+    missingness_rows = sorted(missingness_rows, key=lambda x: x["missing_pct"], reverse=True)
+
+    sparse_biomarkers = []
+    severe_sparse_count = 0
+    high_sparse_count = 0
+    for col in biomarker_columns:
+        s = pd.to_numeric(working[col], errors="coerce")
+        coverage = float(s.notna().mean())
+        missing = 1.0 - coverage
+        if missing >= high_missing_threshold:
+            high_sparse_count += 1
+            if missing >= severe_missing_threshold:
+                severe_sparse_count += 1
+            sparse_biomarkers.append(
+                {
+                    "biomarker": str(col),
+                    "coverage_pct": round(coverage * 100, 2),
+                    "missing_pct": round(missing * 100, 2),
+                    "non_null": int(s.notna().sum()),
+                }
+            )
+    sparse_biomarkers = sorted(sparse_biomarkers, key=lambda x: x["missing_pct"], reverse=True)[:top_n_sparse]
+
+    edss_valid = working[working["Sample EDSS"].notna() & working["Last EDSS"].notna()].copy()
+    edss_delta = edss_valid["Last EDSS"] - edss_valid["Sample EDSS"] if not edss_valid.empty else pd.Series(dtype=float)
+    worsened = int((edss_delta > 0).sum())
+    improved = int((edss_delta < 0).sum())
+    stable = int((edss_delta == 0).sum())
+    total_edss_pairs = int(edss_delta.shape[0])
+    worsened_ratio = (worsened / total_edss_pairs) if total_edss_pairs else 0.0
+
+    transitions: list[dict[str, Any]] = []
+    transition_frame = working[
+        working["sample_course_norm"].notna() & working["last_course_norm"].notna()
+    ][["sample_course_norm", "last_course_norm"]].copy()
+    if not transition_frame.empty:
+        grouped = (
+            transition_frame.groupby(["sample_course_norm", "last_course_norm"])
+            .size()
+            .reset_index(name="count")
+            .sort_values("count", ascending=False)
+        )
+        for _, row in grouped.head(top_n_transitions).iterrows():
+            transitions.append(
+                {
+                    "from_course": str(row["sample_course_norm"]),
+                    "to_course": str(row["last_course_norm"]),
+                    "count": int(row["count"]),
+                }
+            )
+
+    course_distribution = []
+    all_courses = sorted(
+        {
+            str(x)
+            for x in pd.concat([working["sample_course_norm"], working["last_course_norm"]], ignore_index=True).dropna().unique()
+        }
+    )
+    for course in all_courses:
+        sample_count = int((working["sample_course_norm"] == course).sum())
+        last_count = int((working["last_course_norm"] == course).sum())
+        course_distribution.append({"course": course, "sample_count": sample_count, "last_count": last_count})
+
+    followup_days = (working["last_date_norm"] - working["sample_date_norm"]).dt.days
+    valid_followup = followup_days[(followup_days >= 0) & (followup_days <= 36500)].dropna()
+    invalid_followup_rows = int(((followup_days < 0) | (followup_days > 36500)).sum())
+    followup_summary = {
+        "pairs": int(valid_followup.shape[0]),
+        "median_days": int(valid_followup.median()) if not valid_followup.empty else 0,
+        "p90_days": int(valid_followup.quantile(0.9)) if not valid_followup.empty else 0,
+        "max_days": int(valid_followup.max()) if not valid_followup.empty else 0,
+        "invalid_pairs": invalid_followup_rows,
+    }
+
+    biomarker_last_edss_corr = _compute_biomarker_to_last_edss_correlations(
+        working=working,
+        biomarker_columns=biomarker_columns,
+        min_pairs=corr_min_pairs,
+        top_n=top_n_corr_biomarkers,
+    )
+    strong_contributors = [row for row in biomarker_last_edss_corr if abs(float(row["corr"])) >= strong_corr_threshold]
+    weak_contributors = [row for row in biomarker_last_edss_corr if abs(float(row["corr"])) <= weak_corr_threshold]
+    biomarker_pair_corr = _compute_biomarker_pair_correlations(
+        working=working,
+        biomarker_columns=biomarker_columns,
+        min_pairs=max(20, corr_min_pairs),
+        top_n=top_n_biomarker_pairs,
+    )
+    correlation_matrix = _compute_biomarker_correlation_matrix(
+        working=working,
+        biomarker_columns=biomarker_columns,
+        min_pairs=corr_min_pairs,
+    )
+
+    alerts: list[dict[str, str]] = []
+    if total_edss_pairs >= 20 and worsened_ratio >= edss_worsened_alert_ratio:
+        alerts.append(
+            {
+                "severity": "medium",
+                "message": (
+                    f"EDSS worsened in {worsened_ratio:.2%} of comparable rows "
+                    f"({worsened}/{total_edss_pairs}), above {edss_worsened_alert_ratio:.2%}."
+                ),
+            }
+        )
+    if high_sparse_count > 0:
+        alerts.append(
+            {
+                "severity": "high" if severe_sparse_count >= 5 else "medium",
+                "message": (
+                    f"{high_sparse_count} biomarkers exceed {high_missing_threshold:.0%} missingness; "
+                    f"{severe_sparse_count} exceed {severe_missing_threshold:.0%}."
+                ),
+            }
+        )
+    if invalid_followup_rows > 0:
+        alerts.append(
+            {
+                "severity": "low",
+                "message": (
+                    f"{invalid_followup_rows} rows have non-sensical follow-up date order or range; "
+                    "date normalization was applied before interval analysis."
+                ),
+            }
+        )
+    if not strong_contributors:
+        alerts.append(
+            {
+                "severity": "low",
+                "message": (
+                    f"No biomarker reached |corr(Last EDSS)| >= {strong_corr_threshold:.2f} "
+                    f"with at least {corr_min_pairs} paired rows."
+                ),
+            }
+        )
+    if weak_contributors and len(weak_contributors) >= 5:
+        alerts.append(
+            {
+                "severity": "medium",
+                "message": (
+                    f"{len(weak_contributors)} biomarkers show weak |corr(Last EDSS)| <= {weak_corr_threshold:.2f}; "
+                    "these are likely non-contributing for EDSS signal in current data."
+                ),
+            }
+        )
+
+    return {
+        "summary": {
+            "rows": total_rows,
+            "unique_patients": unique_patients,
+            "biomarker_columns_used": int(len(biomarker_columns)),
+            "high_sparse_biomarkers": int(high_sparse_count),
+            "severe_sparse_biomarkers": int(severe_sparse_count),
+            "edss_pairs": int(total_edss_pairs),
+            "edss_worsened_ratio": round(worsened_ratio, 4),
+            "followup_pairs_valid": int(followup_summary["pairs"]),
+            "corr_min_pairs": int(corr_min_pairs),
+            "strong_contributors": int(len(strong_contributors)),
+            "weak_contributors": int(len(weak_contributors)),
+        },
+        "sid_distribution": [{"sid": int(k), "count": int(v)} for k, v in sid_counts.items()],
+        "key_missingness": missingness_rows,
+        "sparse_biomarkers": sparse_biomarkers,
+        "edss_progression": {
+            "improved": improved,
+            "stable": stable,
+            "worsened": worsened,
+            "mean_delta": round(float(edss_delta.mean()), 4) if total_edss_pairs else 0.0,
+            "median_delta": round(float(edss_delta.median()), 4) if total_edss_pairs else 0.0,
+        },
+        "course_distribution": course_distribution,
+        "course_transitions": transitions,
+        "followup_summary": followup_summary,
+        "biomarker_last_edss_corr": biomarker_last_edss_corr,
+        "strong_biomarker_contributors": strong_contributors,
+        "weak_biomarker_contributors": weak_contributors,
+        "biomarker_pair_corr": biomarker_pair_corr,
+        "correlation_matrix": correlation_matrix,
+        "alerts": alerts,
+    }
+
+
+def _normalize_course_series(series: pd.Series | None) -> pd.Series:
+    if series is None:
+        return pd.Series(dtype=object)
+    clean = series.fillna("").astype(str).str.strip().str.upper()
+    clean = clean.replace(
+        {
+            "RR--MS": "RRMS",
+            "RR- MS": "RRMS",
+            "RR MS": "RRMS",
+            "REMS": "RRMS",
+            "SUS MS": "SUS-MS",
+            "SUS-MS": "SUS-MS",
+            "NAN": "",
+        }
+    )
+    clean = clean.replace("", pd.NA)
+    return clean
+
+
+def _parse_sample_dates(series: pd.Series | None) -> pd.Series:
+    if series is None:
+        return pd.Series(dtype="datetime64[ns]")
+    as_str = series.fillna("").astype(str).str.strip()
+    parsed = pd.to_datetime(as_str, format="%d.%m.%y", errors="coerce")
+    for fmt in ("%d.%m.%Y", "%Y-%m-%d", "%d/%m/%Y", "%m/%d/%Y"):
+        missing = parsed.isna() & as_str.ne("")
+        if not missing.any():
+            break
+        parsed.loc[missing] = pd.to_datetime(as_str[missing], format=fmt, errors="coerce")
+    return parsed
+
+
+def _parse_last_dates(series: pd.Series | None) -> pd.Series:
+    if series is None:
+        return pd.Series(dtype="datetime64[ns]")
+    raw = series.copy()
+    numeric = pd.to_numeric(raw, errors="coerce")
+    numeric_text = numeric.dropna().astype("Int64").astype(str)
+    parsed_numeric = pd.to_datetime(numeric_text, format="%Y%m%d", errors="coerce")
+    parsed = pd.Series(pd.NaT, index=raw.index, dtype="datetime64[ns]")
+    parsed.loc[numeric_text.index] = parsed_numeric
+    remaining = parsed.isna()
+    if remaining.any():
+        fallback = pd.to_datetime(raw[remaining], errors="coerce", dayfirst=True)
+        parsed.loc[remaining] = fallback
+    return parsed
+
+
+def _compute_biomarker_to_last_edss_correlations(
+    working: pd.DataFrame,
+    biomarker_columns: list[str],
+    min_pairs: int,
+    top_n: int,
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    target = pd.to_numeric(working.get("Last EDSS"), errors="coerce")
+    for col in biomarker_columns:
+        x = pd.to_numeric(working[col], errors="coerce")
+        pair = pd.DataFrame({"x": x, "y": target}).dropna()
+        n = int(len(pair))
+        if n < min_pairs:
+            continue
+        if pair["x"].nunique() <= 1 or pair["y"].nunique() <= 1:
+            continue
+        corr = pair["x"].rank(method="average").corr(pair["y"].rank(method="average"), method="pearson")
+        if pd.isna(corr):
+            continue
+        corr_value = float(corr)
+        rows.append(
+            {
+                "biomarker": str(col),
+                "corr": round(corr_value, 4),
+                "abs_corr": round(abs(corr_value), 4),
+                "paired_rows": n,
+                "direction": "positive" if corr_value >= 0 else "negative",
+            }
+        )
+    rows.sort(key=lambda r: (r["abs_corr"], r["paired_rows"]), reverse=True)
+    return rows[:top_n]
+
+
+def _compute_biomarker_pair_correlations(
+    working: pd.DataFrame,
+    biomarker_columns: list[str],
+    min_pairs: int,
+    top_n: int,
+) -> list[dict[str, Any]]:
+    candidate = []
+    for col in biomarker_columns:
+        s = pd.to_numeric(working[col], errors="coerce")
+        if int(s.notna().sum()) < min_pairs:
+            continue
+        if s.nunique(dropna=True) <= 1:
+            continue
+        candidate.append(col)
+
+    rows: list[dict[str, Any]] = []
+    for i, left in enumerate(candidate):
+        for right in candidate[i + 1 :]:
+            pair = pd.DataFrame(
+                {"l": pd.to_numeric(working[left], errors="coerce"), "r": pd.to_numeric(working[right], errors="coerce")}
+            ).dropna()
+            n = int(len(pair))
+            if n < min_pairs:
+                continue
+            if pair["l"].nunique() <= 1 or pair["r"].nunique() <= 1:
+                continue
+            corr = pair["l"].rank(method="average").corr(pair["r"].rank(method="average"), method="pearson")
+            if pd.isna(corr):
+                continue
+            corr_value = float(corr)
+            rows.append(
+                {
+                    "left_biomarker": str(left),
+                    "right_biomarker": str(right),
+                    "corr": round(corr_value, 4),
+                    "abs_corr": round(abs(corr_value), 4),
+                    "paired_rows": n,
+                }
+            )
+    rows.sort(key=lambda r: (r["abs_corr"], r["paired_rows"]), reverse=True)
+    return rows[:top_n]
+
+
+def _compute_biomarker_correlation_matrix(
+    working: pd.DataFrame,
+    biomarker_columns: list[str],
+    min_pairs: int,
+) -> dict[str, Any]:
+    eligible = []
+    for col in ["Last EDSS"] + biomarker_columns:
+        s = pd.to_numeric(working.get(col), errors="coerce")
+        if int(s.notna().sum()) < min_pairs:
+            continue
+        if s.nunique(dropna=True) <= 1:
+            continue
+        eligible.append(col)
+    if len(eligible) < 2:
+        return {"columns": [], "rows": []}
+
+    frame = pd.DataFrame({col: pd.to_numeric(working[col], errors="coerce") for col in eligible})
+    corr = frame.rank(method="average").corr(method="pearson", min_periods=min_pairs)
+    rows = []
+    for row_name in corr.index:
+        values = []
+        for col_name in corr.columns:
+            v = corr.loc[row_name, col_name]
+            values.append(None if pd.isna(v) else round(float(v), 4))
+        rows.append({"name": str(row_name), "values": values})
+    return {"columns": [str(c) for c in corr.columns], "rows": rows}

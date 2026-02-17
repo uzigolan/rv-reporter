@@ -88,4 +88,11 @@ def _recommendations_for(metrics_profile: str, metrics: dict[str, Any]) -> list[
             {"priority": "high", "action": "Triage oldest active issues and assign closure owners with deadlines."},
             {"priority": "medium", "action": "Balance assignee workload where responsibility concentration is high."},
         ]
+    if metrics_profile == "ms_biomarker_registry_health":
+        return [
+            {"priority": "high", "action": "Stabilize biomarker capture for columns with highest missingness before inference."},
+            {"priority": "high", "action": "Prioritize follow-up completion for participants with baseline-only records."},
+            {"priority": "medium", "action": "Standardize disease-course labels to reduce taxonomy drift (e.g., RRMS variants)."},
+            {"priority": "medium", "action": "Validate date fields and enforce consistent date formats at ingestion."},
+        ]
     return [{"priority": "medium", "action": "Review computed metrics with domain owner."}]

@@ -25,9 +25,15 @@ from rv_reporter.rendering.pdf_renderer import render_pdf
 from rv_reporter.report_types.registry import ReportTypeRegistry
 from rv_reporter.services.cost_estimator import MODEL_PRICING_USD, estimate_openai_cost
 from rv_reporter.orchestrator import prepare_pipeline_inputs
-from rv_reporter.services.ingest import list_excel_sheets
+from rv_reporter.services.ingest import describe_tabular_source, list_excel_sheets
 
-PROTECTED_REPORT_TYPES = {"network_queue_congestion", "twamp_session_health", "pm_export_health", "jira_issue_portfolio"}
+PROTECTED_REPORT_TYPES = {
+    "network_queue_congestion",
+    "twamp_session_health",
+    "pm_export_health",
+    "jira_issue_portfolio",
+    "ms_biomarker_registry_health",
+}
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DOC_PAGES = {
     "install": ("INSTALL.md", "Install Guide"),
@@ -113,6 +119,17 @@ def create_app(config_overrides: dict[str, Any] | None = None) -> Flask:
         sheets = list_excel_sheets(path)
         return jsonify({"sheets": sheets})
 
+    @app.get("/api/source-metadata")
+    def source_metadata() -> Any:
+        path_value = request.args.get("path", "").strip()
+        sheet_name = request.args.get("sheet_name", "").strip()
+        if not path_value:
+            return jsonify({"file_type": "unknown", "sheets": [], "selected_sheet": "", "columns": []})
+        path = _absolute_path(path_value)
+        if not path.exists():
+            return jsonify({"file_type": "unknown", "sheets": [], "selected_sheet": "", "columns": []})
+        return jsonify(describe_tabular_source(path, sheet_name=sheet_name or None))
+
     @app.post("/api/upload-excel-sheets")
     def upload_excel_sheets() -> Any:
         uploaded_file = request.files.get("file")
@@ -131,6 +148,25 @@ def create_app(config_overrides: dict[str, Any] | None = None) -> Flask:
 
         sheets = list_excel_sheets(destination)
         return jsonify({"sheets": sheets, "path": str(destination)})
+
+    @app.post("/api/upload-source-metadata")
+    def upload_source_metadata() -> Any:
+        uploaded_file = request.files.get("file")
+        if uploaded_file is None or not uploaded_file.filename:
+            return jsonify({"path": "", "error": "No file uploaded."}), 400
+        filename = secure_filename(uploaded_file.filename)
+        if not filename.lower().endswith((".csv", ".xlsx", ".xls")):
+            return jsonify({"path": "", "error": "Supported: .csv, .xlsx, .xls"}), 400
+
+        upload_dir = Path(app.config["UPLOAD_FOLDER"])
+        stem = Path(filename).stem
+        suffix = Path(filename).suffix
+        stored_name = f"{stem}_{uuid4().hex[:8]}{suffix}"
+        destination = upload_dir / stored_name
+        uploaded_file.save(destination)
+
+        metadata = describe_tabular_source(destination)
+        return jsonify({"path": str(destination), **metadata})
 
     @app.get("/about")
     def about() -> str:
@@ -163,11 +199,23 @@ def create_app(config_overrides: dict[str, Any] | None = None) -> Flask:
 
     @app.get("/report-types/new")
     def new_report_type() -> str:
+        registry = ReportTypeRegistry(config_dir=Path(app.config["REPORT_TYPES_DIR"]))
         return render_template(
             "new_report_type.html",
             starter_yaml=_starter_report_type_yaml(),
             supported_metrics_profiles=sorted(_supported_metrics_profiles()),
+            report_types=registry.list_report_types(),
         )
+
+    @app.get("/api/report-type-yaml")
+    def report_type_yaml() -> Any:
+        report_type_id = request.args.get("report_type_id", "").strip()
+        if not report_type_id:
+            return jsonify({"error": "Missing report_type_id"}), 400
+        path = Path(app.config["REPORT_TYPES_DIR"]) / f"{report_type_id}.yaml"
+        if not path.exists():
+            return jsonify({"error": f"Unknown report_type_id: {report_type_id}"}), 404
+        return jsonify({"report_type_id": report_type_id, "yaml": path.read_text(encoding="utf-8")})
 
     @app.get("/report-types")
     def list_report_types_page() -> str:
@@ -197,10 +245,12 @@ def create_app(config_overrides: dict[str, Any] | None = None) -> Flask:
             path.write_text(yaml.safe_dump(parsed, sort_keys=False), encoding="utf-8")
         except Exception as exc:  # noqa: BLE001
             flash(f"Failed to save report type: {exc}", "danger")
+            registry = ReportTypeRegistry(config_dir=Path(app.config["REPORT_TYPES_DIR"]))
             return render_template(
                 "new_report_type.html",
                 starter_yaml=yaml_text or _starter_report_type_yaml(),
                 supported_metrics_profiles=sorted(_supported_metrics_profiles()),
+                report_types=registry.list_report_types(),
             )
 
         flash(f"Saved report type '{report_type_id}'.", "success")
@@ -275,11 +325,11 @@ def create_app(config_overrides: dict[str, Any] | None = None) -> Flask:
                     report_types = registry.list_report_types()
                     return render_template(
                         "index.html",
-                        report_types=report_types,
-                        sample_files=_sample_files(),
-                        sheet_options=sheets,
-                        selected_sheet="",
-                        existing_csv_path=csv_path,
+                    report_types=report_types,
+                    sample_files=_sample_files(),
+                    sheet_options=sheets,
+                    selected_sheet="",
+                    existing_csv_path=csv_path,
                         defaults={
                             "provider": provider_name,
                             "csv_source": csv_source,
@@ -671,6 +721,7 @@ def _supported_metrics_profiles() -> set[str]:
         "twamp_session_health",
         "pm_export_health",
         "jira_issue_portfolio",
+        "ms_biomarker_registry_health",
     }
 
 
@@ -809,12 +860,12 @@ def _normalize_report_type_payload(payload: dict[str, Any], report_types_dir: Pa
     if not report_type_id:
         report_type_id = "custom_report"
 
-    candidate = report_type_id
-    i = 1
-    while (report_types_dir / f"{candidate}.yaml").exists():
-        candidate = f"{report_type_id}_{i}"
-        i += 1
-    normalized["report_type_id"] = candidate
+    if (report_types_dir / f"{report_type_id}.yaml").exists():
+        raise ValueError(
+            f"report_type_id '{report_type_id}' already exists. "
+            "Please change report_type_id before saving."
+        )
+    normalized["report_type_id"] = report_type_id
     return normalized
 
 
