@@ -8,6 +8,22 @@ This guide installs and runs `rv-reporter` on Windows or Linux/macOS.
 - Internet access (for package install)
 - For charted PDFs: Playwright Chromium
 
+## Clone repository
+
+### Windows
+
+```powershell
+git clone https://github.com/uzigolan/rv-reporter.git
+cd rv-reporter
+```
+
+### Linux/macOS
+
+```bash
+git clone https://github.com/uzigolan/rv-reporter.git
+cd rv-reporter
+```
+
 ## Option A: Sandbox launcher (recommended)
 
 ### Windows
