@@ -6,8 +6,9 @@ import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
-from flask import Flask, flash, redirect, render_template, request, send_file, session, url_for
+from flask import Flask, flash, jsonify, redirect, render_template, request, send_file, session, url_for
 from werkzeug.utils import secure_filename
 import yaml
 
@@ -22,6 +23,7 @@ from rv_reporter.rendering.pdf_renderer import render_pdf
 from rv_reporter.report_types.registry import ReportTypeRegistry
 from rv_reporter.services.cost_estimator import MODEL_PRICING_USD, estimate_openai_cost
 from rv_reporter.orchestrator import prepare_pipeline_inputs
+from rv_reporter.services.ingest import list_excel_sheets
 
 PROTECTED_REPORT_TYPES = {"network_queue_congestion", "twamp_session_health", "pm_export_health"}
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -77,6 +79,9 @@ def create_app(config_overrides: dict[str, Any] | None = None) -> Flask:
             "index.html",
             report_types=report_types,
             sample_files=_sample_files(),
+            sheet_options=[],
+            selected_sheet="",
+            existing_csv_path="",
             defaults={
                 "provider": default_provider,
                 "csv_source": default_csv_source,
@@ -86,6 +91,38 @@ def create_app(config_overrides: dict[str, Any] | None = None) -> Flask:
             },
             priced_models=sorted(MODEL_PRICING_USD.keys()),
         )
+
+    @app.get("/api/excel-sheets")
+    def excel_sheets() -> Any:
+        path_value = request.args.get("path", "").strip()
+        if not path_value:
+            return jsonify({"sheets": []})
+        path = _absolute_path(path_value)
+        if not path.exists():
+            return jsonify({"sheets": []})
+        if path.suffix.lower() not in {".xlsx", ".xls"}:
+            return jsonify({"sheets": []})
+        sheets = list_excel_sheets(path)
+        return jsonify({"sheets": sheets})
+
+    @app.post("/api/upload-excel-sheets")
+    def upload_excel_sheets() -> Any:
+        uploaded_file = request.files.get("file")
+        if uploaded_file is None or not uploaded_file.filename:
+            return jsonify({"sheets": [], "path": "", "error": "No file uploaded."}), 400
+        filename = secure_filename(uploaded_file.filename)
+        if not filename.lower().endswith((".xlsx", ".xls")):
+            return jsonify({"sheets": [], "path": "", "error": "Supported: .xlsx, .xls"}), 400
+
+        upload_dir = Path(app.config["UPLOAD_FOLDER"])
+        stem = Path(filename).stem
+        suffix = Path(filename).suffix
+        stored_name = f"{stem}_{uuid4().hex[:8]}{suffix}"
+        destination = upload_dir / stored_name
+        uploaded_file.save(destination)
+
+        sheets = list_excel_sheets(destination)
+        return jsonify({"sheets": sheets, "path": str(destination)})
 
     @app.get("/about")
     def about() -> str:
@@ -169,6 +206,7 @@ def create_app(config_overrides: dict[str, Any] | None = None) -> Flask:
         expected_cost_token = request.form.get("expected_cost_token", "").strip()
         csv_source = request.form.get("csv_source", "sample")
         sample_csv = request.form.get("sample_csv", "").strip()
+        sheet_name = request.form.get("sheet_name", "").strip()
         uploaded_file = request.files.get("csv_upload")
         existing_csv_path = request.form.get("existing_csv_path", "").strip()
         output_token_budget = int(request.form.get("output_token_budget", "1200").strip() or "1200")
@@ -199,11 +237,37 @@ def create_app(config_overrides: dict[str, Any] | None = None) -> Flask:
                 Path(app.config["UPLOAD_FOLDER"]),
                 existing_csv_path=existing_csv_path,
             )
+            if Path(csv_path).suffix.lower() in {".xlsx", ".xls"} and not sheet_name:
+                sheets = list_excel_sheets(csv_path)
+                if len(sheets) > 1:
+                    flash("Excel file has multiple sheets. Choose a sheet and submit again.", "warning")
+                    registry = ReportTypeRegistry(config_dir=Path(app.config["REPORT_TYPES_DIR"]))
+                    report_types = registry.list_report_types()
+                    return render_template(
+                        "index.html",
+                        report_types=report_types,
+                        sample_files=_sample_files(),
+                        sheet_options=sheets,
+                        selected_sheet="",
+                        existing_csv_path=csv_path,
+                        defaults={
+                            "provider": provider_name,
+                            "csv_source": csv_source,
+                            "model": model,
+                            "row_limit": row_limit if row_limit is not None else 1000,
+                            "report_type_id": report_type_id,
+                        },
+                        priced_models=sorted(MODEL_PRICING_USD.keys()),
+                    )
+                if len(sheets) == 1:
+                    sheet_name = sheets[0]
+
             definition, effective_prefs, csv_profile, metrics = prepare_pipeline_inputs(
                 csv_path=csv_path,
                 report_type_id=report_type_id,
                 user_prefs=prefs,
                 row_limit=row_limit,
+                sheet_name=sheet_name or None,
             )
 
             if provider_name == "openai" and not confirm_openai:
@@ -226,11 +290,13 @@ def create_app(config_overrides: dict[str, Any] | None = None) -> Flask:
                     "confirm_cost.html",
                     estimate=estimate,
                     report_type_id=report_type_id,
-                    csv_source_label=Path(csv_path).name,
+                    csv_source_label=Path(csv_path).name + (f" (sheet: {sheet_name})" if sheet_name else ""),
+                    csv_source=csv_source,
                     rows_used=csv_profile.get("row_count", 0),
                     provider=provider_name,
                     model=model,
                     csv_path=csv_path,
+                    sheet_name=sheet_name,
                     row_limit=row_limit_raw,
                     output_token_budget=output_token_budget,
                     prefs=effective_prefs,
@@ -265,6 +331,7 @@ def create_app(config_overrides: dict[str, Any] | None = None) -> Flask:
                 "backend": provider_name,
                 "model": model if provider_name != "local" else "local-metrics",
                 "source_csv": Path(csv_path).name,
+                "source_sheet": sheet_name,
                 "source_rows_used": csv_profile.get("row_count"),
             }
             report_json_path, report_html_path = run_pipeline(
@@ -274,6 +341,7 @@ def create_app(config_overrides: dict[str, Any] | None = None) -> Flask:
                 output_dir=output_dir,
                 provider=provider,
                 row_limit=row_limit,
+                sheet_name=sheet_name or None,
                 generation_context=generation_context,
             )
         except Exception as exc:  # noqa: BLE001
@@ -357,6 +425,7 @@ def create_app(config_overrides: dict[str, Any] | None = None) -> Flask:
                     "backend": str(metadata.get("generation_backend", "unknown")),
                     "model": str(metadata.get("generation_model", "-")),
                     "source_csv": str(metadata.get("source_csv", "-")),
+                    "source_sheet": str(metadata.get("source_sheet", "")),
                     "source_rows_used": metadata.get("source_rows_used", "-"),
                 }
             )
@@ -433,7 +502,8 @@ def create_app(config_overrides: dict[str, Any] | None = None) -> Flask:
 
 def _sample_files() -> list[str]:
     sample_dir = _absolute_path("samples")
-    return sorted(str(path) for path in sample_dir.glob("*.csv"))
+    files = list(sample_dir.glob("*.csv")) + list(sample_dir.glob("*.xlsx")) + list(sample_dir.glob("*.xls"))
+    return sorted(str(path) for path in files)
 
 
 def _resolve_csv_path(
@@ -451,19 +521,19 @@ def _resolve_csv_path(
 
     if csv_source == "upload":
         if uploaded_file is None or not uploaded_file.filename:
-            raise ValueError("Upload mode selected but no CSV file was provided.")
+            raise ValueError("Upload mode selected but no data file was provided.")
         filename = secure_filename(uploaded_file.filename)
-        if not filename.lower().endswith(".csv"):
-            raise ValueError("Only .csv uploads are supported.")
+        if not filename.lower().endswith((".csv", ".xlsx", ".xls")):
+            raise ValueError("Supported uploads: .csv, .xlsx, .xls")
         destination = upload_dir / filename
         uploaded_file.save(destination)
         return str(destination)
 
     if not sample_csv:
-        raise ValueError("Sample mode selected but no sample CSV was chosen.")
+        raise ValueError("Sample mode selected but no sample file was chosen.")
     sample_path = _absolute_path(sample_csv)
     if not sample_path.exists():
-        raise ValueError(f"Sample CSV not found: {sample_csv}")
+        raise ValueError(f"Sample file not found: {sample_csv}")
     return str(sample_path)
 
 

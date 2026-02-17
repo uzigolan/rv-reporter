@@ -22,6 +22,7 @@ def prepare_pipeline_inputs(
     user_prefs: dict[str, Any] | None = None,
     registry: ReportTypeRegistry | None = None,
     row_limit: int | None = None,
+    sheet_name: str | None = None,
 ) -> tuple[Any, dict[str, Any], dict[str, Any], dict[str, Any]]:
     report_registry = registry or ReportTypeRegistry()
     definition = report_registry.get(report_type_id)
@@ -29,7 +30,7 @@ def prepare_pipeline_inputs(
     prefs = dict(definition.default_prefs)
     prefs.update(user_prefs or {})
 
-    df = load_csv_with_limit(csv_path, row_limit=row_limit)
+    df = load_csv_with_limit(csv_path, row_limit=row_limit, sheet_name=sheet_name)
     validate_required_columns(df, definition.required_columns)
     csv_profile = profile_dataframe(df)
     metrics = compute_metrics(definition.metrics_profile, df, prefs)
@@ -44,6 +45,7 @@ def run_pipeline(
     registry: ReportTypeRegistry | None = None,
     provider: ReportProvider | None = None,
     row_limit: int | None = None,
+    sheet_name: str | None = None,
     generation_context: dict[str, Any] | None = None,
 ) -> tuple[Path, Path]:
     definition, prefs, csv_profile, metrics = prepare_pipeline_inputs(
@@ -52,6 +54,7 @@ def run_pipeline(
         user_prefs=user_prefs,
         registry=registry,
         row_limit=row_limit,
+        sheet_name=sheet_name,
     )
 
     report_provider = provider or MockProvider()
@@ -131,6 +134,8 @@ def _stamp_generation_metadata(report_json: dict[str, Any], generation_context: 
         metadata["generation_model"] = str(generation_context["model"])
     if generation_context.get("source_csv"):
         metadata["source_csv"] = str(generation_context["source_csv"])
+    if generation_context.get("source_sheet"):
+        metadata["source_sheet"] = str(generation_context["source_sheet"])
     if generation_context.get("source_rows_used") is not None:
         metadata["source_rows_used"] = int(generation_context["source_rows_used"])
 

@@ -1,4 +1,5 @@
 from pathlib import Path
+import io
 
 from rv_reporter.web import create_app
 
@@ -8,7 +9,7 @@ def test_index_renders() -> None:
     client = app.test_client()
     response = client.get("/")
     assert response.status_code == 200
-    assert b"CSV to Structured Report" in response.data
+    assert b"Tabular File to Structured Report" in response.data
 
 
 def test_generate_from_sample(tmp_path: Path) -> None:
@@ -272,3 +273,72 @@ def test_delete_protected_report_type_is_blocked(tmp_path: Path) -> None:
     )
     assert response.status_code == 200
     assert (report_types_dir / "twamp_session_health.yaml").exists()
+
+
+def test_excel_sheets_api_for_non_excel_returns_empty() -> None:
+    app = create_app({"TESTING": True})
+    client = app.test_client()
+    response = client.get("/api/excel-sheets?path=samples/network_queues.csv")
+    assert response.status_code == 200
+    assert response.json == {"sheets": []}
+
+
+def test_generate_upload_excel_without_sheet_prompts_sheet_selection(tmp_path: Path, monkeypatch) -> None:
+    app = create_app(
+        {
+            "TESTING": True,
+            "UPLOAD_FOLDER": str(tmp_path / "uploads"),
+            "OUTPUT_FOLDER": str(tmp_path / "outputs"),
+        }
+    )
+    client = app.test_client()
+
+    def _fake_sheet_list(_path: str) -> list[str]:
+        return ["Sheet1", "Sheet2"]
+
+    monkeypatch.setattr("rv_reporter.web.list_excel_sheets", _fake_sheet_list)
+
+    response = client.post(
+        "/generate",
+        data={
+            "report_type_id": "network_queue_congestion",
+            "provider": "local",
+            "model": "gpt-4.1-mini",
+            "csv_source": "upload",
+            "csv_upload": (io.BytesIO(b"dummy"), "test.xlsx"),
+            "tone": "technical",
+            "audience": "engineering",
+            "focus": "anomalies",
+        },
+        content_type="multipart/form-data",
+        follow_redirects=True,
+    )
+    assert response.status_code == 200
+    assert b"Excel file has multiple sheets" in response.data
+    assert b"Sheet1" in response.data
+    assert b"Sheet2" in response.data
+
+
+def test_upload_excel_sheets_api_returns_sheets(tmp_path: Path, monkeypatch) -> None:
+    app = create_app(
+        {
+            "TESTING": True,
+            "UPLOAD_FOLDER": str(tmp_path / "uploads"),
+            "OUTPUT_FOLDER": str(tmp_path / "outputs"),
+        }
+    )
+    client = app.test_client()
+
+    def _fake_sheet_list(_path: str) -> list[str]:
+        return ["Main", "Summary"]
+
+    monkeypatch.setattr("rv_reporter.web.list_excel_sheets", _fake_sheet_list)
+
+    response = client.post(
+        "/api/upload-excel-sheets",
+        data={"file": (io.BytesIO(b"dummy"), "book.xlsx")},
+        content_type="multipart/form-data",
+    )
+    assert response.status_code == 200
+    assert response.json["sheets"] == ["Main", "Summary"]
+    assert response.json["path"]

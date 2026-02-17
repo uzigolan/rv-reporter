@@ -32,8 +32,11 @@
             <td class="model-col">
               <span class="cell-ellipsis" title="{{ item.model }}">{{ item.model }}</span>
             </td>
-            <td>
+            <td class="source-col">
               <div class="cell-ellipsis" title="{{ item.source_csv }}">{{ item.source_csv }}</div>
+              {% if item.source_sheet %}
+                <div class="muted small cell-ellipsis" title="{{ item.source_sheet }}">sheet: {{ item.source_sheet }}</div>
+              {% endif %}
             </td>
             <td>{{ item.source_rows_used }}</td>
             <td><a href="{{ url_for('view_json', path=item.json_path) }}">open</a></td>

@@ -25,13 +25,14 @@ def list_report_types(config_dir: str = "configs/report_types") -> None:
 
 @app.command("build-report")
 def build_report(
-    csv: str = typer.Option(..., help="Path to input CSV"),
+    csv: str = typer.Option(..., help="Path to input file (.csv/.xlsx/.xls)"),
     report_type: str = typer.Option(..., help="Report type id"),
     prefs: Optional[str] = typer.Option(None, help="Path to user prefs JSON"),
     output_dir: str = typer.Option("outputs", help="Output directory"),
     provider: str = typer.Option("local", help="local|openai (legacy: mock)"),
     model: str = typer.Option("gpt-4.1-mini", help="Model for openai provider"),
     row_limit: Optional[int] = typer.Option(None, help="Optional max number of rows to load from CSV"),
+    sheet_name: Optional[str] = typer.Option(None, help="Excel sheet name for .xlsx/.xls inputs"),
 ) -> None:
     user_prefs = {}
     if prefs:
@@ -50,6 +51,7 @@ def build_report(
         output_dir=output_dir,
         provider=provider_impl,
         row_limit=row_limit,
+        sheet_name=sheet_name,
     )
     print(f"[green]Report JSON:[/green] {report_json_file}")
     print(f"[green]Report HTML:[/green] {report_html_file}")

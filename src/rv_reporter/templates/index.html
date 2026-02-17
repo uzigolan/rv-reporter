@@ -2,12 +2,13 @@
 {% block title %}Generate Report | RV Reporter{% endblock %}
 {% block content %}
 <section class="panel hero">
-  <h1>CSV to Structured Report</h1>
+  <h1>Tabular File to Structured Report</h1>
   <p>Generate schema-validated JSON and polished HTML from your dataset.</p>
 </section>
 
 <section class="panel">
   <form method="post" action="{{ url_for('generate') }}" enctype="multipart/form-data" class="grid" id="generate_form">
+    <input type="hidden" name="existing_csv_path" id="existing_csv_path" value="{{ existing_csv_path or '' }}" />
     <label>
       <span>Report Type</span>
       <select name="report_type_id" required>
@@ -15,6 +16,7 @@
           <option value="{{ rid }}" {% if rid == defaults.report_type_id %}selected{% endif %}>{{ rid }}</option>
         {% endfor %}
       </select>
+      <span class="field-help">Select the analysis blueprint. Each report type defines required columns, computed metrics, and the final output structure.</span>
     </label>
 
     <label>
@@ -23,15 +25,17 @@
         <option value="local" {% if defaults.provider == "local" %}selected{% endif %}>local</option>
         <option value="openai">openai</option>
       </select>
+      <span class="field-help">Use local for deterministic metric-based output with no API cost. Use openai to generate richer narrative and interpretation.</span>
     </label>
 
-    <label>
+    <label id="model_wrap">
       <span>Model</span>
-      <select name="model">
+      <select name="model" id="model_select">
         {% for m in priced_models %}
           <option value="{{ m }}" {% if m == defaults.model %}selected{% endif %}>{{ m }}</option>
         {% endfor %}
       </select>
+      <span class="field-help">Pick the LLM used for openai generation. Larger models may improve reasoning quality but increase cost and latency.</span>
     </label>
 
     <label>
@@ -40,20 +44,36 @@
         <option value="sample" {% if defaults.csv_source == "sample" %}selected{% endif %}>sample</option>
         <option value="upload" {% if defaults.csv_source == "upload" %}selected{% endif %}>upload</option>
       </select>
+      <span class="field-help">Choose where input data comes from. `sample` uses bundled files; `upload` lets you analyze your own file.</span>
     </label>
 
     <label id="sample_wrap">
-      <span>Sample CSV</span>
+      <span>Sample File</span>
       <select name="sample_csv" id="sample_csv">
         {% for sample in sample_files %}
           <option value="{{ sample }}">{{ sample }}</option>
         {% endfor %}
       </select>
+      <span class="field-help">Select one of the included example datasets. Useful for testing report types and UI behavior quickly.</span>
     </label>
 
     <label id="upload_wrap">
-      <span>Upload CSV</span>
-      <input type="file" name="csv_upload" id="csv_upload" accept=".csv" />
+      <span>Upload File</span>
+      <input type="file" name="csv_upload" id="csv_upload" accept=".csv,.xlsx,.xls" />
+      <span class="field-help">Upload your dataset in CSV or Excel format. For Excel files, sheet names are discovered automatically after selection.</span>
+    </label>
+
+    <label>
+      <span>Sheet (for .xlsx/.xls)</span>
+      <select name="sheet_name" id="sheet_name">
+        {% if not sheet_options %}
+          <option value="">Auto / not needed</option>
+        {% endif %}
+        {% for sheet in sheet_options %}
+          <option value="{{ sheet }}" {% if selected_sheet == sheet %}selected{% endif %}>{{ sheet }}</option>
+        {% endfor %}
+      </select>
+      <span class="field-help">For Excel inputs, choose the sheet to analyze. If only one sheet exists, it is selected automatically.</span>
     </label>
 
     <label>
@@ -63,6 +83,7 @@
         <option value="executive">executive</option>
         <option value="technical">technical</option>
       </select>
+      <span class="field-help">Defines writing style and depth.<br><strong>concise:</strong> short and direct summary.<br><strong>executive:</strong> business impact and decisions.<br><strong>technical:</strong> deeper analysis and details.</span>
     </label>
 
     <label>
@@ -72,6 +93,7 @@
         <option value="engineering">engineering</option>
         <option value="customer">customer</option>
       </select>
+      <span class="field-help">Defines who the report is written for.<br><strong>leadership:</strong> risk, impact, and priorities.<br><strong>engineering:</strong> root cause and actions.<br><strong>customer:</strong> service quality and outcomes.</span>
     </label>
 
     <label>
@@ -81,26 +103,31 @@
         <option value="anomalies">anomalies</option>
         <option value="cost">cost</option>
       </select>
+      <span class="field-help">Defines what the report emphasizes most.<br><strong>trends:</strong> long-term behavior over time.<br><strong>anomalies:</strong> spikes and unusual intervals.<br><strong>cost:</strong> waste, efficiency, and savings.</span>
     </label>
 
     <label>
       <span>Threshold Key (optional)</span>
       <input name="threshold_name" placeholder="alert_error_rate or variance_alert_pct" />
+      <span class="field-help">Optional preference key to override default alert logic. Use only known keys supported by this report type.</span>
     </label>
 
     <label>
       <span>Threshold Value (optional)</span>
       <input name="threshold_value" placeholder="0.05" />
+      <span class="field-help">Numeric override for the selected threshold key. Example: `0.2` for 20% when the metric is ratio-based.</span>
     </label>
 
     <label>
       <span>Row Limit (cost control)</span>
       <input name="row_limit" type="number" min="1" step="1" value="{{ defaults.row_limit }}" />
+      <span class="field-help">Maximum number of rows loaded from input. Lower values reduce cost and time; higher values improve coverage.</span>
     </label>
 
     <label>
       <span>Output Tokens Budget (OpenAI estimate)</span>
       <input name="output_token_budget" type="number" min="1" step="1" value="1200" />
+      <span class="field-help">Estimated response size used for cost preview. Increase if you expect longer reports with more narrative.</span>
     </label>
 
     <button type="submit" class="btn-primary" id="generate_submit_btn">Generate Report</button>
@@ -110,14 +137,24 @@
     </p>
   </form>
 </section>
+<div id="help_popup" class="help-popup hidden" role="tooltip" aria-live="polite">
+  <div class="help-popup-card">
+    <h3 id="help_popup_title">Field Help</h3>
+    <p id="help_popup_body" class="help-popup-body"></p>
+  </div>
+</div>
 
 <script>
   const source = document.getElementById("csv_source");
   const provider = document.getElementById("provider");
+  const modelWrap = document.getElementById("model_wrap");
+  const modelSelect = document.getElementById("model_select");
   const sampleWrap = document.getElementById("sample_wrap");
   const uploadWrap = document.getElementById("upload_wrap");
   const sampleInput = document.getElementById("sample_csv");
   const uploadInput = document.getElementById("csv_upload");
+  const sheetInput = document.getElementById("sheet_name");
+  const existingCsvPathInput = document.getElementById("existing_csv_path");
   const STORAGE_KEY = "rv_reporter.generate_form_state.v1";
 
   const saveState = () => {
@@ -149,15 +186,139 @@
     sampleInput.disabled = upload;
     uploadInput.disabled = !upload;
   };
-  source.addEventListener("change", () => { syncCsvSourceUi(); saveState(); });
-  provider.addEventListener("change", saveState);
-  window.addEventListener("pageshow", () => { restoreState(); syncCsvSourceUi(); });
+  const syncProviderUi = () => {
+    const isLocal = provider.value === "local";
+    modelWrap.classList.toggle("field-disabled", isLocal);
+    modelSelect.disabled = isLocal;
+  };
+  const populateSheetOptions = (sheets) => {
+    const current = sheetInput.value;
+    const list = sheets || [];
+    sheetInput.innerHTML = "";
+    if (list.length === 0) {
+      sheetInput.innerHTML = '<option value="">Auto / not needed</option>';
+      return;
+    }
+    for (const sheet of list) {
+      const option = document.createElement("option");
+      option.value = sheet;
+      option.textContent = sheet;
+      if (sheet === current) {
+        option.selected = true;
+      }
+      sheetInput.appendChild(option);
+    }
+    if (!current && list.length > 0) {
+      sheetInput.value = list[0];
+    }
+  };
+  const refreshSampleSheets = async () => {
+    if (source.value !== "sample") return;
+    const selected = sampleInput.value;
+    if (!selected) return;
+    try {
+      const response = await fetch(`{{ url_for('excel_sheets') }}?path=${encodeURIComponent(selected)}`);
+      if (!response.ok) return;
+      const payload = await response.json();
+      populateSheetOptions(payload.sheets || []);
+      if ((payload.sheets || []).length <= 1) {
+        sheetInput.value = "";
+      }
+      if ((payload.sheets || []).length > 0) {
+        existingCsvPathInput.value = "";
+      }
+    } catch (e) {}
+  };
+  source.addEventListener("change", () => { syncCsvSourceUi(); refreshSampleSheets(); saveState(); });
+  provider.addEventListener("change", () => { syncProviderUi(); saveState(); });
+  sampleInput.addEventListener("change", () => { refreshSampleSheets(); saveState(); });
+  uploadInput.addEventListener("change", () => {
+    if (uploadInput.files && uploadInput.files.length > 0) {
+      existingCsvPathInput.value = "";
+      const selectedFile = uploadInput.files[0];
+      const name = (selectedFile.name || "").toLowerCase();
+      if (name.endsWith(".xlsx") || name.endsWith(".xls")) {
+        const data = new FormData();
+        data.append("file", selectedFile);
+        fetch("{{ url_for('upload_excel_sheets') }}", { method: "POST", body: data })
+          .then((response) => response.json())
+          .then((payload) => {
+            if (payload && Array.isArray(payload.sheets)) {
+              populateSheetOptions(payload.sheets);
+              if (payload.path) {
+                existingCsvPathInput.value = payload.path;
+              }
+            }
+          })
+          .catch(() => {});
+      } else {
+        populateSheetOptions([]);
+      }
+    }
+  });
+  window.addEventListener("pageshow", () => { restoreState(); syncCsvSourceUi(); syncProviderUi(); });
   restoreState();
   syncCsvSourceUi();
+  syncProviderUi();
+  if (source.value === "sample" && !existingCsvPathInput.value) {
+    refreshSampleSheets();
+  }
 
   const generateForm = document.getElementById("generate_form");
   const generateBtn = document.getElementById("generate_submit_btn");
   const generateMsg = document.getElementById("generate_processing_msg");
+  const helpPopup = document.getElementById("help_popup");
+  const helpPopupTitle = document.getElementById("help_popup_title");
+  const helpPopupBody = document.getElementById("help_popup_body");
+  const showHelpPopup = (anchorEl, title, text) => {
+    helpPopupTitle.textContent = title || "Field Help";
+        helpPopupBody.innerHTML = text || "";
+    helpPopup.classList.remove("hidden");
+    const rect = anchorEl.getBoundingClientRect();
+    const top = window.scrollY + rect.bottom + 8;
+    const left = window.scrollX + rect.left - 12;
+    helpPopup.style.top = `${top}px`;
+    helpPopup.style.left = `${Math.max(12, left)}px`;
+  };
+  const hideHelpPopup = () => {
+    helpPopup.classList.add("hidden");
+  };
+  const setupHelpToggles = () => {
+    const labels = Array.from(generateForm.querySelectorAll("label"));
+    for (const label of labels) {
+      const help = label.querySelector(".field-help");
+      if (!help) continue;
+      const titleSpan = label.querySelector("span:not(.field-help)");
+      if (!titleSpan) continue;
+      titleSpan.classList.add("label-row");
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "help-toggle";
+      button.textContent = "?";
+      button.setAttribute("aria-label", "Show field help");
+      button.setAttribute("aria-expanded", "false");
+      const title = (titleSpan.childNodes[0] && titleSpan.childNodes[0].nodeValue ? titleSpan.childNodes[0].nodeValue : "Field Help").trim();
+      const text = help.innerHTML.trim();
+      button.addEventListener("mouseenter", () => {
+        showHelpPopup(button, title, text);
+        button.setAttribute("aria-expanded", "true");
+      });
+      button.addEventListener("mouseleave", () => {
+        hideHelpPopup();
+        button.setAttribute("aria-expanded", "false");
+      });
+      button.addEventListener("focus", () => {
+        showHelpPopup(button, title, text);
+        button.setAttribute("aria-expanded", "true");
+      });
+      button.addEventListener("blur", () => {
+        hideHelpPopup();
+        button.setAttribute("aria-expanded", "false");
+      });
+      titleSpan.appendChild(button);
+    }
+  };
+  setupHelpToggles();
   generateForm.addEventListener("submit", () => {
     saveState();
     generateBtn.disabled = true;
