@@ -16,6 +16,8 @@ def compute_metrics(profile: str, df: pd.DataFrame, prefs: dict[str, Any]) -> di
         return _compute_twamp_session_health(df, prefs)
     if profile == "pm_export_health":
         return _compute_pm_export_health(df, prefs)
+    if profile == "jira_issue_portfolio":
+        return _compute_jira_issue_portfolio(df, prefs)
     raise ValueError(f"Unsupported metrics profile '{profile}'.")
 
 
@@ -969,3 +971,268 @@ def _pm_hypotheses(
             }
         )
     return hypotheses
+
+
+def _compute_jira_issue_portfolio(df: pd.DataFrame, prefs: dict[str, Any]) -> dict[str, Any]:
+    working = df.copy()
+    for col in [
+        "Project key",
+        "Project name",
+        "Project lead",
+        "Status",
+        "Assignee",
+        "Issue key",
+        "Issue Type",
+        "Created",
+        "Updated",
+    ]:
+        if col not in working.columns:
+            working[col] = ""
+    working["Project key"] = working["Project key"].fillna("").astype(str).str.strip()
+    working["Project name"] = working["Project name"].fillna("").astype(str).str.strip()
+    working["Project lead"] = working["Project lead"].fillna("Unassigned").astype(str).str.strip()
+    working["Status"] = working["Status"].fillna("").astype(str).str.strip()
+    working["Assignee"] = working["Assignee"].fillna("Unassigned").astype(str).str.strip()
+    working["Issue key"] = working["Issue key"].fillna("").astype(str).str.strip()
+    working["Issue Type"] = working["Issue Type"].fillna("Unknown").astype(str).str.strip()
+
+    open_statuses = {s.lower() for s in prefs.get("open_statuses", ["Open", "To Do", "Backlog", "New"])}
+    closed_statuses = {s.lower() for s in prefs.get("closed_statuses", ["Closed", "Done", "Resolved"])}
+    in_progress_statuses = {
+        s.lower()
+        for s in prefs.get(
+            "in_progress_statuses",
+            ["Working", "Known bug", "In Progress", "In Review", "Testing", "Reopened"],
+        )
+    }
+
+    def status_bucket(status: str) -> str:
+        normalized = status.lower().strip()
+        if normalized in closed_statuses:
+            return "closed"
+        if normalized in open_statuses:
+            return "open"
+        if normalized in in_progress_statuses:
+            return "in_progress"
+        return "other"
+
+    working["status_bucket"] = working["Status"].map(status_bucket)
+
+    total_issues = int(len(working))
+    bucket_counts = working["status_bucket"].value_counts().to_dict()
+    open_count = int(bucket_counts.get("open", 0))
+    in_progress_count = int(bucket_counts.get("in_progress", 0))
+    closed_count = int(bucket_counts.get("closed", 0))
+    other_count = int(bucket_counts.get("other", 0))
+
+    if total_issues == 0:
+        return {
+            "summary": {
+                "total_issues": 0,
+                "projects": 0,
+                "open_issues": 0,
+                "in_progress_issues": 0,
+                "closed_issues": 0,
+                "other_status_issues": 0,
+                "closure_ratio": 0.0,
+            },
+            "project_status_breakdown": [],
+            "status_distribution": [],
+            "top_assignees": [],
+            "responsible_workload": [],
+            "issue_type_distribution": [],
+            "oldest_open_issues": [],
+            "alerts": [],
+        }
+
+    project_group = (
+        working.groupby(["Project key", "Project name", "status_bucket"])
+        .size()
+        .reset_index(name="issues")
+        .pivot_table(
+            index=["Project key", "Project name"],
+            columns="status_bucket",
+            values="issues",
+            aggfunc="sum",
+            fill_value=0,
+        )
+        .reset_index()
+    )
+    for col in ["open", "in_progress", "closed", "other"]:
+        if col not in project_group.columns:
+            project_group[col] = 0
+    project_group["total_issues"] = (
+        project_group["open"] + project_group["in_progress"] + project_group["closed"] + project_group["other"]
+    )
+    project_group["closure_ratio"] = project_group["closed"] / project_group["total_issues"].replace(0, pd.NA)
+    project_group["closure_ratio"] = project_group["closure_ratio"].fillna(0.0)
+    project_group["attention_score"] = (
+        (project_group["open"] * 1.2) + (project_group["in_progress"] * 0.8) - (project_group["closed"] * 0.5)
+    )
+
+    project_status_breakdown = []
+    non_closed_for_owner = working[working["status_bucket"] != "closed"].copy()
+    project_lead_map = (
+        working.groupby(["Project key", "Project name"])["Project lead"]
+        .agg(lambda s: s.mode().iat[0] if not s.mode().empty else (s.iloc[0] if len(s) else "Unassigned"))
+        .to_dict()
+    )
+    owner_map: dict[tuple[str, str], tuple[str, int]] = {}
+    if not non_closed_for_owner.empty:
+        owner_frame = (
+            non_closed_for_owner.groupby(["Project key", "Project name", "Assignee"])
+            .size()
+            .reset_index(name="active_issues")
+            .sort_values("active_issues", ascending=False)
+        )
+        for (project_key, project_name), grp in owner_frame.groupby(["Project key", "Project name"]):
+            top = grp.iloc[0]
+            owner_map[(str(project_key), str(project_name))] = (str(top["Assignee"]), int(top["active_issues"]))
+
+    for _, row in project_group.sort_values(["attention_score", "total_issues"], ascending=[False, False]).iterrows():
+        total = int(row["total_issues"])
+        pkey = str(row["Project key"]) or "UNKNOWN"
+        pname = str(row["Project name"]) or "Unknown"
+        project_lead = str(project_lead_map.get((pkey, pname), "Unassigned"))
+        owner_name, owner_issues = owner_map.get((pkey, pname), ("Unassigned", 0))
+        project_status_breakdown.append(
+            {
+                "project_key": pkey,
+                "project_name": pname,
+                "project_lead": project_lead,
+                "top_active_assignee": owner_name,
+                "top_active_assignee_issues": owner_issues,
+                "total_issues": total,
+                "open_issues": int(row["open"]),
+                "in_progress_issues": int(row["in_progress"]),
+                "closed_issues": int(row["closed"]),
+                "other_status_issues": int(row["other"]),
+                "closure_ratio": round(float(row["closure_ratio"]), 4),
+                "attention_score": round(float(row["attention_score"]), 2),
+            }
+        )
+
+    assignee_group = (
+        working.groupby("Assignee")
+        .size()
+        .reset_index(name="issues")
+        .sort_values("issues", ascending=False)
+        .head(int(prefs.get("top_n_assignees", 10)))
+    )
+    top_assignees = [{"assignee": str(r["Assignee"]), "issues": int(r["issues"])} for _, r in assignee_group.iterrows()]
+    responsible_workload = []
+    active_by_assignee = (
+        working[working["status_bucket"] != "closed"]
+        .groupby("Assignee")
+        .size()
+        .reset_index(name="active_issues")
+        .sort_values("active_issues", ascending=False)
+        .head(int(prefs.get("top_n_responsibles", 10)))
+    )
+    for _, row in active_by_assignee.iterrows():
+        responsible_workload.append(
+            {
+                "assignee": str(row["Assignee"]),
+                "active_issues": int(row["active_issues"]),
+            }
+        )
+
+    issue_type_group = (
+        working.groupby("Issue Type")
+        .size()
+        .reset_index(name="issues")
+        .sort_values("issues", ascending=False)
+    )
+    issue_type_distribution = [
+        {"issue_type": str(r["Issue Type"]), "issues": int(r["issues"])} for _, r in issue_type_group.iterrows()
+    ]
+
+    created = pd.to_datetime(working["Created"], errors="coerce", format="%d/%b/%y %I:%M %p")
+    working["created_dt"] = created
+
+    now = pd.Timestamp.utcnow().tz_localize(None)
+    non_closed = working[working["status_bucket"] != "closed"].copy()
+    non_closed = non_closed.dropna(subset=["created_dt"])
+    non_closed["age_days"] = (now - non_closed["created_dt"]).dt.days
+    oldest_open_issues = []
+    for _, row in (
+        non_closed.sort_values("age_days", ascending=False)
+        .head(int(prefs.get("top_n_oldest_issues", 10)))
+        .iterrows()
+    ):
+        oldest_open_issues.append(
+            {
+                "issue_key": str(row["Issue key"]),
+                "project_key": str(row["Project key"]) or "UNKNOWN",
+                "status": str(row["Status"]),
+                "assignee": str(row["Assignee"]) or "Unassigned",
+                "age_days": int(row["age_days"]),
+                "created": str(row["Created"]),
+            }
+        )
+
+    closure_ratio = closed_count / total_issues if total_issues > 0 else 0.0
+    alerts: list[dict[str, str]] = []
+    closure_ratio_alert = float(prefs.get("closure_ratio_alert", 0.08))
+    if closure_ratio < closure_ratio_alert:
+        alerts.append(
+            {
+                "severity": "high",
+                "message": (
+                    f"Overall closure ratio is {closure_ratio:.2%}, below target {closure_ratio_alert:.2%}."
+                ),
+            }
+        )
+    oldest_age_alert_days = int(prefs.get("oldest_age_alert_days", 120))
+    if oldest_open_issues and oldest_open_issues[0]["age_days"] >= oldest_age_alert_days:
+        alerts.append(
+            {
+                "severity": "medium",
+                "message": (
+                    f"Oldest active issue age is {oldest_open_issues[0]['age_days']} days "
+                    f"(threshold {oldest_age_alert_days})."
+                ),
+            }
+        )
+
+    for project in project_status_breakdown[:5]:
+        if project["total_issues"] < int(prefs.get("project_min_issues_for_alert", 20)):
+            continue
+        backlog_ratio = (project["open_issues"] + project["in_progress_issues"]) / max(project["total_issues"], 1)
+        if backlog_ratio >= float(prefs.get("project_backlog_ratio_alert", 0.9)):
+            alerts.append(
+                {
+                    "severity": "medium",
+                    "message": (
+                        f"{project['project_key']}: backlog ratio {(backlog_ratio):.2%} is high "
+                        f"({project['open_issues']} open, {project['in_progress_issues']} in progress)."
+                    ),
+                }
+            )
+
+    status_distribution = [
+        {"status_bucket": "open", "issues": open_count},
+        {"status_bucket": "in_progress", "issues": in_progress_count},
+        {"status_bucket": "closed", "issues": closed_count},
+        {"status_bucket": "other", "issues": other_count},
+    ]
+
+    return {
+        "summary": {
+            "total_issues": total_issues,
+            "projects": int(project_group.shape[0]),
+            "open_issues": open_count,
+            "in_progress_issues": in_progress_count,
+            "closed_issues": closed_count,
+            "other_status_issues": other_count,
+            "closure_ratio": round(float(closure_ratio), 4),
+            "avg_issues_per_project": round(total_issues / max(int(project_group.shape[0]), 1), 2),
+        },
+        "project_status_breakdown": project_status_breakdown,
+        "status_distribution": status_distribution,
+        "top_assignees": top_assignees,
+        "responsible_workload": responsible_workload,
+        "issue_type_distribution": issue_type_distribution,
+        "oldest_open_issues": oldest_open_issues,
+        "alerts": alerts,
+    }

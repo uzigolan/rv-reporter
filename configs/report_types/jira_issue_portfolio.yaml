@@ -1,0 +1,96 @@
+report_type_id: jira_issue_portfolio
+version: "1.0.0"
+title: "Jira Issue Portfolio Report"
+required_columns:
+  - Issue key
+  - Status
+  - Project key
+  - Project name
+  - Created
+  - Assignee
+metrics_profile: jira_issue_portfolio
+default_prefs:
+  tone: executive
+  audience: leadership
+  focus: trends
+  closure_ratio_alert: 0.08
+  oldest_age_alert_days: 120
+  project_min_issues_for_alert: 20
+  project_backlog_ratio_alert: 0.9
+  top_n_assignees: 10
+  top_n_responsibles: 10
+  top_n_oldest_issues: 10
+  open_statuses: [Open, To Do, Backlog, New]
+  in_progress_statuses: [Working, Known bug, In Progress, In Review, Testing, Reopened]
+  closed_statuses: [Closed, Done, Resolved]
+prompt_instructions: |
+  Analyze Jira portfolio health across projects.
+  Must include:
+  - opened / in-progress / closed issue counts by project
+  - who is responsible (project lead + top active assignee per project)
+  - assignees with highest active backlog and low closure contribution (with counts)
+  - project-level backlog pressure and closure ratio
+  - top assignee workload concentration
+  - oldest active (non-closed) issues and aging risk
+  Distinguish observed facts from inferred risk.
+  Provide practical actions for triage and closure acceleration.
+output_schema:
+  type: object
+  additionalProperties: false
+  required:
+    - report_type_id
+    - report_title
+    - summary
+    - sections
+    - alerts
+    - recommendations
+    - tables
+    - charts
+    - metadata
+  properties:
+    report_type_id:
+      type: string
+    report_title:
+      type: string
+    summary:
+      type: string
+    sections:
+      type: array
+      items:
+        type: object
+        additionalProperties: false
+        required: [title, body]
+        properties:
+          title: { type: string }
+          body: { type: string }
+    alerts:
+      type: array
+      items:
+        type: object
+        additionalProperties: false
+        required: [severity, message]
+        properties:
+          severity: { type: string }
+          message: { type: string }
+    recommendations:
+      type: array
+      items:
+        type: object
+        additionalProperties: false
+        required: [priority, action]
+        properties:
+          priority: { type: string }
+          action: { type: string }
+    tables:
+      type: array
+      items:
+        type: object
+        additionalProperties: true
+    charts:
+      type: array
+      items:
+        type: object
+        additionalProperties: true
+    metadata:
+      type: object
+      additionalProperties: true

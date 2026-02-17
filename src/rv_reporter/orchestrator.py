@@ -149,6 +149,12 @@ def _stamp_generation_metadata(report_json: dict[str, Any], generation_context: 
             metadata["generation_duration_seconds"] = int(round(float(duration)))
         except (TypeError, ValueError):
             pass
+    cost = generation_context.get("generation_cost_usd_est")
+    if cost is not None:
+        try:
+            metadata["generation_cost_usd_est"] = round(float(cost), 6)
+        except (TypeError, ValueError):
+            pass
 
 
 def _ensure_metrics_payload_for_charted_reports(
@@ -156,7 +162,12 @@ def _ensure_metrics_payload_for_charted_reports(
     report_type_id: str,
     metrics: dict[str, Any],
 ) -> None:
-    if report_type_id not in {"network_queue_congestion", "twamp_session_health", "pm_export_health"}:
+    if report_type_id not in {
+        "network_queue_congestion",
+        "twamp_session_health",
+        "pm_export_health",
+        "jira_issue_portfolio",
+    }:
         return
     tables = report_json.get("tables")
     if not isinstance(tables, list):

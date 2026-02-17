@@ -81,4 +81,11 @@ def _recommendations_for(metrics_profile: str, metrics: dict[str, Any]) -> list[
             {"priority": "high", "action": "If CRC errors grow, run physical link checks (optic/cable/port health)."},
             {"priority": "medium", "action": "Review CPU/memory/disk headroom to reduce operational risk."},
         ]
+    if metrics_profile == "jira_issue_portfolio":
+        return [
+            {"priority": "high", "action": "Prioritize projects with high backlog ratio and low closure ratio."},
+            {"priority": "high", "action": "Escalate assignees with highest active issue counts and stale unresolved items."},
+            {"priority": "high", "action": "Triage oldest active issues and assign closure owners with deadlines."},
+            {"priority": "medium", "action": "Balance assignee workload where responsibility concentration is high."},
+        ]
     return [{"priority": "medium", "action": "Review computed metrics with domain owner."}]

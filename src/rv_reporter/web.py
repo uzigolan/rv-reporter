@@ -241,6 +241,7 @@ def create_app(config_overrides: dict[str, Any] | None = None) -> Flask:
         output_token_budget = int(request.form.get("output_token_budget", "1200").strip() or "1200")
         row_limit_raw = request.form.get("row_limit", "").strip()
         row_limit = int(row_limit_raw) if row_limit_raw else None
+        generation_cost_usd_est: float | None = 0.0
         session["last_provider"] = provider_name
         session["last_csv_source"] = csv_source
 
@@ -353,8 +354,10 @@ def create_app(config_overrides: dict[str, Any] | None = None) -> Flask:
                 if expected_cost_token and expected_cost_token != fresh_token:
                     flash("Cost estimate changed after input update. Please review and confirm again.", "danger")
                     return redirect(url_for("index"))
+                generation_cost_usd_est = float(fresh_estimate.get("total_cost_usd_est", 0.0))
             else:
                 provider = MockProvider()
+                generation_cost_usd_est = 0.0
 
             output_dir = Path(app.config["OUTPUT_FOLDER"]) / report_type_id
             generation_context = {
@@ -363,6 +366,7 @@ def create_app(config_overrides: dict[str, Any] | None = None) -> Flask:
                 "source_csv": Path(csv_path).name,
                 "source_sheet": sheet_name,
                 "source_rows_used": csv_profile.get("row_count"),
+                "generation_cost_usd_est": generation_cost_usd_est,
             }
             report_json_path, report_html_path = run_pipeline(
                 csv_path=csv_path,
@@ -459,6 +463,9 @@ def create_app(config_overrides: dict[str, Any] | None = None) -> Flask:
                     "source_rows_used": metadata.get("source_rows_used", "-"),
                     "generation_duration_seconds": _format_duration_seconds(
                         metadata.get("generation_duration_seconds")
+                    ),
+                    "generation_cost_usd_est": _format_cost_usd(
+                        metadata.get("generation_cost_usd_est")
                     ),
                 }
             )
@@ -657,7 +664,14 @@ def _starter_report_type_yaml() -> str:
 
 
 def _supported_metrics_profiles() -> set[str]:
-    return {"ops_kpi", "finance_variance", "network_queue_congestion", "twamp_session_health", "pm_export_health"}
+    return {
+        "ops_kpi",
+        "finance_variance",
+        "network_queue_congestion",
+        "twamp_session_health",
+        "pm_export_health",
+        "jira_issue_portfolio",
+    }
 
 
 def _validate_report_type_yaml(payload: dict[str, Any] | None) -> None:
@@ -732,6 +746,15 @@ def _format_duration_seconds(value: Any) -> str:
     if seconds == 0:
         return f"{hours} hr {minutes} min"
     return f"{hours} hr {minutes} min {seconds} sec"
+
+
+def _format_cost_usd(value: Any) -> str:
+    if value is None or value == "":
+        return "-"
+    try:
+        return f"${float(value):.2f}"
+    except (TypeError, ValueError):
+        return "-"
 
 
 def _model_options_with_cost_ratio() -> list[dict[str, str]]:

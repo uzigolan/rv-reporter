@@ -38,6 +38,8 @@ _HTML_TEMPLATE = """
       .stat-label { color: var(--muted); font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.04em; }
       .stat-value { font-size: 1.35rem; font-weight: 700; margin-top: 0.2rem; }
       .stat-value.alert { color: #b91c1c; }
+      .stat-value.info { color: #1d4ed8; }
+      .stat-value.ok { color: #15803d; }
       .mono { font-family: Consolas, "Courier New", monospace; font-size: 0.85rem; }
       .chart-wrap { border: 1px solid #d9e3f0; border-radius: 12px; padding: 0.6rem; background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%); min-height: 280px; }
       .chart-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0.8rem; }
@@ -535,9 +537,173 @@ _HTML_TEMPLATE = """
       </section>
       {% endif %}
 
+      {% if is_jira %}
+      <section>
+        <h2>Jira Portfolio Summary</h2>
+        <div class="stats-grid">
+          <div class="stat-card">
+            <div class="stat-label">Total Issues</div>
+            <div class="stat-value">{{ jira.summary.get('total_issues', 0) }}</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Projects</div>
+            <div class="stat-value">{{ jira.summary.get('projects', 0) }}</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Open</div>
+            <div class="stat-value {% if jira.summary.get('open_issues', 0) > jira.summary.get('closed_issues', 0) %}alert{% endif %}">
+              {{ jira.summary.get('open_issues', 0) }}
+            </div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">In Progress</div>
+            <div class="stat-value info">{{ jira.summary.get('in_progress_issues', 0) }}</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Closed</div>
+            <div class="stat-value ok">{{ jira.summary.get('closed_issues', 0) }}</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Closure Ratio</div>
+            <div class="stat-value {% if jira.summary.get('closure_ratio', 0) < 0.1 %}alert{% endif %}">
+              {{ "%.2f"|format(jira.summary.get('closure_ratio', 0) * 100) }}%
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <h2>Observed facts (space-level)</h2>
+        <p class="muted">Opened / in-progress / closed by project with responsibility owners.</p>
+        {% if jira.project_status_breakdown %}
+        <div class="table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>Project</th>
+                <th>Lead</th>
+                <th>Top Active Assignee</th>
+                <th>Open</th>
+                <th>In Progress</th>
+                <th>Closed</th>
+                <th>Total</th>
+                <th>Closure %</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in jira.project_status_breakdown[:12] %}
+              <tr>
+                <td class="mono">{{ row.project_key }}</td>
+                <td>{{ row.project_lead }}</td>
+                <td>{{ row.top_active_assignee }} ({{ row.top_active_assignee_issues }})</td>
+                <td>{{ row.open_issues }}</td>
+                <td>{{ row.in_progress_issues }}</td>
+                <td>{{ row.closed_issues }}</td>
+                <td>{{ row.total_issues }}</td>
+                <td>{{ "%.2f"|format(row.closure_ratio * 100) }}%</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% else %}
+        <p class="muted">No project breakdown available.</p>
+        {% endif %}
+      </section>
+
+      <section>
+        <h2>Responsibility and Stale Work</h2>
+        <div class="chart-grid">
+          <div class="chart-wrap">
+            <div class="chart-title">Top Active Assignees (Who Owns Backlog)</div>
+            {% if jira.responsible_workload %}
+            <div class="table-scroll">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Assignee</th>
+                    <th>Active Issues</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {% for row in jira.responsible_workload %}
+                  <tr>
+                    <td>{{ row.assignee }}</td>
+                    <td>{{ row.active_issues }}</td>
+                  </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
+            {% else %}
+            <p class="muted">No active assignee workload data.</p>
+            {% endif %}
+          </div>
+          <div class="chart-wrap">
+            <div class="chart-title">Oldest Active Issues (Stale Queue)</div>
+            {% if jira.oldest_open_issues %}
+            <div class="table-scroll">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Issue</th>
+                    <th>Project</th>
+                    <th>Status</th>
+                    <th>Assignee</th>
+                    <th>Age (days)</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {% for row in jira.oldest_open_issues[:10] %}
+                  <tr>
+                    <td class="mono">{{ row.issue_key }}</td>
+                    <td class="mono">{{ row.project_key }}</td>
+                    <td>{{ row.status }}</td>
+                    <td>{{ row.assignee }}</td>
+                    <td>{{ row.age_days }}</td>
+                  </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
+            {% else %}
+            <p class="muted">No stale issue data.</p>
+            {% endif %}
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <h2>Jira Status Charts</h2>
+        <div class="chart-grid">
+          <div class="chart-wrap">
+            <div class="chart-head">
+              <div class="chart-title">All Status Buckets</div>
+              <button type="button" class="chart-export-btn" data-canvas-id="jiraStatusChart" data-file-prefix="{{ report.metadata.get('report_id', report.report_type_id) }}">Export PNG</button>
+            </div>
+            <canvas id="jiraStatusChart"></canvas>
+          </div>
+          <div class="chart-wrap">
+            <div class="chart-head">
+              <div class="chart-title">Projects: Open / In Progress / Closed</div>
+              <button type="button" class="chart-export-btn" data-canvas-id="jiraProjectStatusChart" data-file-prefix="{{ report.metadata.get('report_id', report.report_type_id) }}">Export PNG</button>
+            </div>
+            <canvas id="jiraProjectStatusChart"></canvas>
+          </div>
+          <div class="chart-wrap">
+            <div class="chart-head">
+              <div class="chart-title">Assignees with Highest Active Backlog</div>
+              <button type="button" class="chart-export-btn" data-canvas-id="jiraAssigneeBacklogChart" data-file-prefix="{{ report.metadata.get('report_id', report.report_type_id) }}">Export PNG</button>
+            </div>
+            <canvas id="jiraAssigneeBacklogChart"></canvas>
+          </div>
+        </div>
+      </section>
+      {% endif %}
+
       <section>
         <h2>Tables</h2>
-        {% if is_network_queue or is_twamp or is_pm %}
+        {% if is_network_queue or is_twamp or is_pm or is_jira %}
           <p class="muted">Detailed metric payload is available in the JSON artifact for this report.</p>
         {% else %}
         {% for t in report.tables %}
@@ -1113,6 +1279,114 @@ _HTML_TEMPLATE = """
       })();
     </script>
     {% endif %}
+    {% if is_jira %}
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+    <script>
+      (function() {
+        if (!window.Chart) return;
+        Chart.defaults.font.family = "'Segoe UI', Tahoma, sans-serif";
+        Chart.defaults.font.size = 13;
+        Chart.defaults.color = "#334155";
+
+        const summary = {{ jira.summary_json | safe }};
+        const projects = {{ jira.project_status_breakdown_json | safe }};
+        const assignees = {{ jira.responsible_workload_json | safe }};
+
+        const createChart = (id, cfg) => {
+          const el = document.getElementById(id);
+          if (!el) return;
+          new Chart(el, cfg);
+        };
+
+        createChart("jiraStatusChart", {
+          type: "doughnut",
+          data: {
+            labels: ["Open", "In Progress", "Closed", "Other"],
+            datasets: [{
+              label: "Issues",
+              data: [
+                Number(summary.open_issues || 0),
+                Number(summary.in_progress_issues || 0),
+                Number(summary.closed_issues || 0),
+                Number(summary.other_status_issues || 0),
+              ],
+              borderColor: "#ffffff",
+              borderWidth: 2,
+              backgroundColor: ["#dc2626", "#1d4ed8", "#16a34a", "#64748b"],
+            }]
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: { legend: { position: "bottom" } },
+            cutout: "58%"
+          }
+        });
+
+        const topProjects = Array.isArray(projects) ? projects.slice(0, 12) : [];
+        const projectLabels = topProjects.map((p) => String(p.project_key || "UNKNOWN"));
+        createChart("jiraProjectStatusChart", {
+          type: "bar",
+          data: {
+            labels: projectLabels,
+            datasets: [
+              { label: "Open", data: topProjects.map((p) => Number(p.open_issues || 0)), backgroundColor: "#dc2626", borderRadius: 6 },
+              { label: "In Progress", data: topProjects.map((p) => Number(p.in_progress_issues || 0)), backgroundColor: "#1d4ed8", borderRadius: 6 },
+              { label: "Closed", data: topProjects.map((p) => Number(p.closed_issues || 0)), backgroundColor: "#16a34a", borderRadius: 6 },
+            ]
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            scales: {
+              x: { stacked: true, title: { display: true, text: "Project" } },
+              y: { stacked: true, beginAtZero: true, title: { display: true, text: "Issue Count" } }
+            },
+            plugins: { legend: { display: true } }
+          }
+        });
+
+        const topAssignees = Array.isArray(assignees) ? assignees.slice(0, 12) : [];
+        createChart("jiraAssigneeBacklogChart", {
+          type: "bar",
+          data: {
+            labels: topAssignees.map((a) => String(a.assignee || "Unassigned")),
+            datasets: [{
+              label: "Active Issues",
+              data: topAssignees.map((a) => Number(a.active_issues || 0)),
+              borderRadius: 8,
+              backgroundColor: "#1d4ed8",
+            }]
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            indexAxis: "y",
+            scales: {
+              x: { beginAtZero: true, title: { display: true, text: "Active Issues" } },
+              y: { title: { display: true, text: "Assignee" } }
+            },
+            plugins: { legend: { display: true } }
+          }
+        });
+
+        document.querySelectorAll(".chart-export-btn").forEach((btn) => {
+          btn.addEventListener("click", () => {
+            const canvasId = btn.getAttribute("data-canvas-id");
+            const prefix = btn.getAttribute("data-file-prefix") || "report";
+            const canvas = document.getElementById(canvasId);
+            if (!canvas) return;
+            const a = document.createElement("a");
+            a.href = canvas.toDataURL("image/png");
+            a.download = `${prefix}.${canvasId}.png`;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+          });
+        });
+      })();
+    </script>
+    {% endif %}
   </body>
 </html>
 """.strip()
@@ -1126,14 +1400,17 @@ def render_html(report: dict) -> str:
     network = _extract_network_metrics(report)
     twamp = _extract_twamp_metrics(report)
     pm = _extract_pm_metrics(report)
+    jira = _extract_jira_metrics(report)
     return template.render(
         report=report_view,
         is_network_queue=report.get("report_type_id") == "network_queue_congestion" and network is not None,
         is_twamp=report.get("report_type_id") == "twamp_session_health" and twamp is not None,
         is_pm=report.get("report_type_id") == "pm_export_health" and pm is not None,
+        is_jira=report.get("report_type_id") == "jira_issue_portfolio" and jira is not None,
         network=network or {},
         twamp=twamp or {},
         pm=pm or {},
+        jira=jira or {},
     )
 
 
@@ -1322,4 +1599,46 @@ def _normalize_pm_metrics(
         "table_counts": table_count_rows,
         "table_counts_json": json.dumps(table_count_rows),
         "l2_system_hypotheses": l2_system_hypotheses or [],
+    }
+
+
+def _extract_jira_metrics(report: dict) -> dict | None:
+    if report.get("report_type_id") != "jira_issue_portfolio":
+        return None
+    tables = report.get("tables", [])
+    for table in tables:
+        if table.get("name") == "metrics_payload" and table.get("rows"):
+            payload = table["rows"][0]
+            return _normalize_jira_metrics(
+                payload.get("summary", {}),
+                payload.get("project_status_breakdown", []),
+                payload.get("responsible_workload", []),
+                payload.get("oldest_open_issues", []),
+            )
+    return _normalize_jira_metrics({}, [], [], [])
+
+
+def _normalize_jira_metrics(
+    summary: dict,
+    project_status_breakdown: list,
+    responsible_workload: list,
+    oldest_open_issues: list,
+) -> dict:
+    normalized_summary = {
+        "total_issues": int(summary.get("total_issues", 0) or 0),
+        "projects": int(summary.get("projects", 0) or 0),
+        "open_issues": int(summary.get("open_issues", 0) or 0),
+        "in_progress_issues": int(summary.get("in_progress_issues", 0) or 0),
+        "closed_issues": int(summary.get("closed_issues", 0) or 0),
+        "other_status_issues": int(summary.get("other_status_issues", 0) or 0),
+        "closure_ratio": float(summary.get("closure_ratio", 0.0) or 0.0),
+    }
+    return {
+        "summary": normalized_summary,
+        "summary_json": json.dumps(normalized_summary),
+        "project_status_breakdown": project_status_breakdown or [],
+        "project_status_breakdown_json": json.dumps(project_status_breakdown or []),
+        "responsible_workload": responsible_workload or [],
+        "responsible_workload_json": json.dumps(responsible_workload or []),
+        "oldest_open_issues": oldest_open_issues or [],
     }

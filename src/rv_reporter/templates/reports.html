@@ -25,6 +25,7 @@
           <th class="model-col">Model</th>
           <th class="source-col">Source</th>
           <th>Rows</th>
+          <th>Cost</th>
           <th>Time Took</th>
           <th>JSON</th>
           <th>HTML</th>
@@ -51,6 +52,7 @@
               {% endif %}
             </td>
             <td>{{ item.source_rows_used }}</td>
+            <td>{{ item.generation_cost_usd_est }}</td>
             <td>{{ item.generation_duration_seconds }}</td>
             <td class="artifact-actions">
               <a class="icon-action-link" href="{{ url_for('view_json', path=item.json_path) }}" title="Open JSON" aria-label="Open JSON">
