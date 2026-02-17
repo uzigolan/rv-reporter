@@ -182,3 +182,4 @@ Default UI output root: `outputs/web`.
 
 - `INSTALL.md`
 - `docs/architecture.md`
+- `docs/UI_GUIDE.md`
