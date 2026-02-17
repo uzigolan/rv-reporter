@@ -261,6 +261,12 @@ def create_app(config_overrides: dict[str, Any] | None = None) -> Flask:
                 provider = MockProvider()
 
             output_dir = Path(app.config["OUTPUT_FOLDER"]) / report_type_id
+            generation_context = {
+                "backend": provider_name,
+                "model": model if provider_name != "local" else "local-metrics",
+                "source_csv": Path(csv_path).name,
+                "source_rows_used": csv_profile.get("row_count"),
+            }
             report_json_path, report_html_path = run_pipeline(
                 csv_path=csv_path,
                 report_type_id=report_type_id,
@@ -268,6 +274,7 @@ def create_app(config_overrides: dict[str, Any] | None = None) -> Flask:
                 output_dir=output_dir,
                 provider=provider,
                 row_limit=row_limit,
+                generation_context=generation_context,
             )
         except Exception as exc:  # noqa: BLE001
             flash(str(exc), "danger")
@@ -313,6 +320,16 @@ def create_app(config_overrides: dict[str, Any] | None = None) -> Flask:
                     render_pdf(html_path, pdf_path, fallback_report=payload)
                 except Exception:  # noqa: BLE001
                     pass
+            payload: dict[str, Any] = {}
+            metadata: dict[str, Any] = {}
+            try:
+                payload = _load_json(path)
+                meta_candidate = payload.get("metadata", {})
+                metadata = meta_candidate if isinstance(meta_candidate, dict) else {}
+            except Exception:  # noqa: BLE001
+                payload = {}
+                metadata = {}
+
             created_at = "unknown"
             created_epoch = path.stat().st_mtime
             if match:
@@ -321,9 +338,7 @@ def create_app(config_overrides: dict[str, Any] | None = None) -> Flask:
                 created_epoch = dt_utc.timestamp()
             else:
                 try:
-                    payload = _load_json(path)
-                    meta = payload.get("metadata", {}) if isinstance(payload, dict) else {}
-                    generated = str(meta.get("generated_at_utc", "")).strip()
+                    generated = str(metadata.get("generated_at_utc", "")).strip()
                     if generated:
                         dt_utc = _iso_to_utc(generated)
                         created_at = _display_local_time(dt_utc)
@@ -339,10 +354,43 @@ def create_app(config_overrides: dict[str, Any] | None = None) -> Flask:
                     "name": path.stem.replace(".report", ""),
                     "created_at": created_at,
                     "created_epoch": created_epoch,
+                    "backend": str(metadata.get("generation_backend", "unknown")),
+                    "model": str(metadata.get("generation_model", "-")),
+                    "source_csv": str(metadata.get("source_csv", "-")),
+                    "source_rows_used": metadata.get("source_rows_used", "-"),
                 }
             )
         items.sort(key=lambda i: i["created_epoch"], reverse=True)
         return render_template("reports.html", reports=items, output_folder=str(root))
+
+    @app.post("/reports/delete")
+    def delete_report() -> Any:
+        json_path = request.form.get("json_path", "").strip()
+        if not json_path:
+            flash("Missing report path.", "danger")
+            return redirect(url_for("reports"))
+        try:
+            path = _validate_report_artifact_path(json_path, Path(app.config["OUTPUT_FOLDER"]))
+        except ValueError:
+            flash("Invalid report path.", "danger")
+            return redirect(url_for("reports"))
+
+        if not path.exists():
+            flash("Report file not found.", "danger")
+            return redirect(url_for("reports"))
+
+        html_path = path.with_name(path.name.replace(".report.json", ".report.html"))
+        pdf_path = path.with_name(path.name.replace(".report.json", ".report.pdf"))
+        raw_path = path.with_name(path.name.replace(".report.json", ".openai.raw.json"))
+
+        deleted = 0
+        for artifact in (path, html_path, pdf_path, raw_path):
+            if artifact.exists():
+                artifact.unlink()
+                deleted += 1
+
+        flash(f"Deleted report artifacts ({deleted} files).", "success")
+        return redirect(url_for("reports"))
 
     @app.get("/reports/json")
     def view_json() -> Any:
@@ -556,7 +604,7 @@ def _iso_to_utc(iso_text: str) -> datetime:
 
 
 def _display_local_time(dt_utc: datetime) -> str:
-    return dt_utc.astimezone().strftime("%Y-%m-%d %H:%M:%S")
+    return dt_utc.astimezone().strftime("%y-%m-%d %H:%M")
 
 
 def _normalize_report_type_payload(payload: dict[str, Any], report_types_dir: Path) -> dict[str, Any]:

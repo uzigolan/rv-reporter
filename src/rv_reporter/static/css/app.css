@@ -147,6 +147,22 @@ select:focus, input:focus { outline: 2px solid #bfdbfe; border-color: #93c5fd; }
 .table td { background: #fff; border: 1px solid var(--border); padding: .65rem; }
 .table td:first-child { border-right: none; border-radius: 10px 0 0 10px; }
 .table td:last-child { border-left: none; border-radius: 0 10px 10px 0; }
+.reports-table { table-layout: fixed; }
+.reports-table .name-col { width: 20%; }
+.reports-table .model-col { width: 10%; }
+.reports-table .source-col { width: 12%; }
+.cell-ellipsis {
+  display: block;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.btn-danger-link {
+  background: #fff1f2;
+  border: 1px solid #fecaca;
+  color: #b91c1c;
+  cursor: pointer;
+}
 
 .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: .7rem; }
 .cost-context-grid { grid-template-columns: 1.1fr 2fr 0.7fr; }

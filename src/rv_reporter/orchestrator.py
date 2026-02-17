@@ -44,6 +44,7 @@ def run_pipeline(
     registry: ReportTypeRegistry | None = None,
     provider: ReportProvider | None = None,
     row_limit: int | None = None,
+    generation_context: dict[str, Any] | None = None,
 ) -> tuple[Path, Path]:
     definition, prefs, csv_profile, metrics = prepare_pipeline_inputs(
         csv_path=csv_path,
@@ -63,6 +64,7 @@ def run_pipeline(
     generated_at = datetime.now(timezone.utc)
     run_id = generated_at.strftime("%y%m%d_%H%M_%f")
     _stamp_report_metadata(report_json, run_id=run_id, generated_at=generated_at)
+    _stamp_generation_metadata(report_json, generation_context or {})
     validate_report_schema(report_json, definition.output_schema)
     json_content = json.dumps(report_json, indent=2)
     html_content = render_html(report_json)
@@ -116,6 +118,21 @@ def _stamp_report_metadata(report_json: dict[str, Any], run_id: str, generated_a
         report_json["metadata"] = metadata
     metadata["report_id"] = f"{report_json.get('report_type_id', 'report')}.{run_id}"
     metadata["generated_at_utc"] = generated_at.isoformat()
+
+
+def _stamp_generation_metadata(report_json: dict[str, Any], generation_context: dict[str, Any]) -> None:
+    metadata = report_json.setdefault("metadata", {})
+    if not isinstance(metadata, dict):
+        metadata = {}
+        report_json["metadata"] = metadata
+    if generation_context.get("backend"):
+        metadata["generation_backend"] = str(generation_context["backend"])
+    if generation_context.get("model"):
+        metadata["generation_model"] = str(generation_context["model"])
+    if generation_context.get("source_csv"):
+        metadata["source_csv"] = str(generation_context["source_csv"])
+    if generation_context.get("source_rows_used") is not None:
+        metadata["source_rows_used"] = int(generation_context["source_rows_used"])
 
 
 def _ensure_metrics_payload_for_charted_reports(
