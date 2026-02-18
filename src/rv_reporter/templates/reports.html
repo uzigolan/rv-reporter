@@ -169,5 +169,31 @@
       th.dataset.staggerBuilt = "1";
     });
   })();
+
+  (function () {
+    let currentSignature = "";
+    let initialized = false;
+    const poll = async () => {
+      try {
+        const response = await fetch("{{ url_for('events_status') }}", { cache: "no-store" });
+        if (!response.ok) return;
+        const payload = await response.json();
+        const nextSignature = String((payload && payload.signature) || "");
+        if (!nextSignature) return;
+        if (!initialized) {
+          currentSignature = nextSignature;
+          initialized = true;
+          return;
+        }
+        if (nextSignature !== currentSignature) {
+          currentSignature = nextSignature;
+          window.location.reload();
+        }
+      } catch (e) {
+        // Ignore transient polling failures.
+      }
+    };
+    setInterval(poll, 2500);
+  })();
 </script>
 {% endblock %}

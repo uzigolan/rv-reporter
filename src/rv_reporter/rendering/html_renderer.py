@@ -750,6 +750,12 @@ _HTML_TEMPLATE = """
       </section>
 
       <section>
+        <h2>Priority Matrix: Sample EDSS 4+</h2>
+        <p class="muted small">Most important matrix view for high-disability band. Correlation method: {{ ms.summary.get('correlation_method', 'Spearman rank correlation (Pearson computed on ranked values)') }}.</p>
+        <div class="table-scroll" id="msCorrMatrixPriorityTable"></div>
+      </section>
+
+      <section>
         <h2>Clinical Progression Snapshot</h2>
         <div class="chart-grid">
           <div class="chart-wrap">
@@ -830,6 +836,14 @@ _HTML_TEMPLATE = """
       <section>
         <h2>Biomarkers Related to Sample EDSS</h2>
         <p class="muted small">Correlation method: {{ ms.summary.get('correlation_method', 'Spearman rank correlation (Pearson computed on ranked values)') }}.</p>
+        <p class="muted small">
+          Correlation color bands:
+          <span style="color:{{ ms.summary.get('corr_strength_config', {}).get('colors', {}).get('very_weak', '#6b7280') }};">very weak</span>,
+          <span style="color:{{ ms.summary.get('corr_strength_config', {}).get('colors', {}).get('weak', '#2563eb') }};">weak</span>,
+          <span style="color:{{ ms.summary.get('corr_strength_config', {}).get('colors', {}).get('moderate', '#0f766e') }};">moderate</span>,
+          <span style="color:{{ ms.summary.get('corr_strength_config', {}).get('colors', {}).get('strong', '#b45309') }};">strong</span>,
+          <span style="color:{{ ms.summary.get('corr_strength_config', {}).get('colors', {}).get('very_strong', '#b91c1c') }};">very strong</span>.
+        </p>
         {% if ms.biomarker_sample_edss_corr %}
         <div class="table-scroll">
           <table>
@@ -846,7 +860,7 @@ _HTML_TEMPLATE = """
               {% for row in ms.biomarker_sample_edss_corr %}
               <tr>
                 <td>{{ row.biomarker }}</td>
-                <td>{{ "%.4f"|format(row.corr) }}</td>
+                <td class="corr-val-cell" data-corr="{{ row.corr }}">{{ "%.4f"|format(row.corr) }}</td>
                 <td>{{ "%.4f"|format(row.abs_corr) }}</td>
                 <td>{{ row.direction }}</td>
                 <td>{{ row.paired_rows }}</td>
@@ -863,16 +877,17 @@ _HTML_TEMPLATE = """
       <section>
         <h2>Biomarker Correlation by Sample EDSS Bands (0-3.5 vs 4+)</h2>
         <p class="muted small">Correlation method: {{ ms.summary.get('correlation_method', 'Spearman rank correlation (Pearson computed on ranked values)') }}.</p>
+        <p class="muted small"><strong>Band labels:</strong> Low Band = 0-3.5, High Band = 4+.</p>
         {% if ms.biomarker_sample_edss_group_corr %}
         <div class="table-scroll">
           <table>
             <thead>
               <tr>
                 <th>Biomarker</th>
-                <th>Corr (0-3.5)</th>
-                <th>Rows (0-3.5)</th>
-                <th>Corr (4+)</th>
-                <th>Rows (4+)</th>
+                <th>Low Band Corr (0-3.5)</th>
+                <th>Low Band Rows (0-3.5)</th>
+                <th>High Band Corr (4+)</th>
+                <th>High Band Rows (4+)</th>
                 <th>|Delta|</th>
               </tr>
             </thead>
@@ -880,9 +895,9 @@ _HTML_TEMPLATE = """
               {% for row in ms.biomarker_sample_edss_group_corr %}
               <tr>
                 <td>{{ row.biomarker }}</td>
-                <td>{% if row.low_corr is not none %}{{ "%.4f"|format(row.low_corr) }}{% else %}-{% endif %}</td>
+                <td class="corr-val-cell" {% if row.low_corr is not none %}data-corr="{{ row.low_corr }}"{% endif %}>{% if row.low_corr is not none %}{{ "%.4f"|format(row.low_corr) }}{% else %}-{% endif %}</td>
                 <td>{{ row.low_paired_rows }}</td>
-                <td>{% if row.high_corr is not none %}{{ "%.4f"|format(row.high_corr) }}{% else %}-{% endif %}</td>
+                <td class="corr-val-cell" {% if row.high_corr is not none %}data-corr="{{ row.high_corr }}"{% endif %}>{% if row.high_corr is not none %}{{ "%.4f"|format(row.high_corr) }}{% else %}-{% endif %}</td>
                 <td>{{ row.high_paired_rows }}</td>
                 <td>{{ "%.4f"|format(row.delta_abs) }}</td>
               </tr>
@@ -898,16 +913,17 @@ _HTML_TEMPLATE = """
       <section>
         <h2>Biomarker Correlation by Last EDSS Bands (0-3.5 vs 4+)</h2>
         <p class="muted small">Correlation method: {{ ms.summary.get('correlation_method', 'Spearman rank correlation (Pearson computed on ranked values)') }}.</p>
+        <p class="muted small"><strong>Band labels:</strong> Low Band = 0-3.5, High Band = 4+.</p>
         {% if ms.biomarker_last_edss_group_corr %}
         <div class="table-scroll">
           <table>
             <thead>
               <tr>
                 <th>Biomarker</th>
-                <th>Corr (0-3.5)</th>
-                <th>Rows (0-3.5)</th>
-                <th>Corr (4+)</th>
-                <th>Rows (4+)</th>
+                <th>Low Band Corr (0-3.5)</th>
+                <th>Low Band Rows (0-3.5)</th>
+                <th>High Band Corr (4+)</th>
+                <th>High Band Rows (4+)</th>
                 <th>|Delta|</th>
               </tr>
             </thead>
@@ -915,9 +931,9 @@ _HTML_TEMPLATE = """
               {% for row in ms.biomarker_last_edss_group_corr %}
               <tr>
                 <td>{{ row.biomarker }}</td>
-                <td>{% if row.low_corr is not none %}{{ "%.4f"|format(row.low_corr) }}{% else %}-{% endif %}</td>
+                <td class="corr-val-cell" {% if row.low_corr is not none %}data-corr="{{ row.low_corr }}"{% endif %}>{% if row.low_corr is not none %}{{ "%.4f"|format(row.low_corr) }}{% else %}-{% endif %}</td>
                 <td>{{ row.low_paired_rows }}</td>
-                <td>{% if row.high_corr is not none %}{{ "%.4f"|format(row.high_corr) }}{% else %}-{% endif %}</td>
+                <td class="corr-val-cell" {% if row.high_corr is not none %}data-corr="{{ row.high_corr }}"{% endif %}>{% if row.high_corr is not none %}{{ "%.4f"|format(row.high_corr) }}{% else %}-{% endif %}</td>
                 <td>{{ row.high_paired_rows }}</td>
                 <td>{{ "%.4f"|format(row.delta_abs) }}</td>
               </tr>
@@ -950,7 +966,7 @@ _HTML_TEMPLATE = """
               <tr>
                 <td>{{ row.left_biomarker }}</td>
                 <td>{{ row.right_biomarker }}</td>
-                <td>{{ "%.4f"|format(row.corr) }}</td>
+                <td class="corr-val-cell" data-corr="{{ row.corr }}">{{ "%.4f"|format(row.corr) }}</td>
                 <td>{{ "%.4f"|format(row.abs_corr) }}</td>
                 <td>{{ row.paired_rows }}</td>
               </tr>
@@ -961,8 +977,10 @@ _HTML_TEMPLATE = """
         {% else %}
         <p class="muted">Not enough paired coverage for robust biomarker-to-biomarker correlation estimation.</p>
         {% endif %}
-        <h3 style="margin-top:0.9rem;">Correlation Matrix (Overall)</h3>
+        <h3 style="margin-top:0.9rem;">Correlation Matrix (Overall - Sample EDSS)</h3>
         <div class="table-scroll" id="msCorrMatrixTable"></div>
+        <h3 style="margin-top:0.9rem;">Correlation Matrix (Overall - Last EDSS)</h3>
+        <div class="table-scroll" id="msCorrMatrixLastTable"></div>
         <h3 style="margin-top:0.9rem;">Correlation Matrix (Sample EDSS 0-3.5)</h3>
         <div class="table-scroll" id="msCorrMatrixSampleLowTable"></div>
         <h3 style="margin-top:0.9rem;">Correlation Matrix (Sample EDSS 4+)</h3>
@@ -1683,7 +1701,21 @@ _HTML_TEMPLATE = """
         const progression = {{ ms.edss_progression_json | safe }};
         const edssCorr = {{ ms.biomarker_sample_edss_corr_json | safe }};
         const pairCorr = {{ ms.biomarker_pair_corr_json | safe }};
+        const corrStrengthCfg = (summary && summary.corr_strength_config) ? summary.corr_strength_config : {
+          very_weak_max: 0.10,
+          weak_max: 0.29,
+          moderate_max: 0.49,
+          strong_max: 0.69,
+          colors: {
+            very_weak: "#6b7280",
+            weak: "#2563eb",
+            moderate: "#0f766e",
+            strong: "#b45309",
+            very_strong: "#b91c1c",
+          }
+        };
         const corrMatrix = {{ ms.correlation_matrix_json | safe }};
+        const corrMatrixLast = {{ ms.correlation_matrix_last_json | safe }};
         const corrMatrixSampleLow = {{ ms.correlation_matrix_sample_low_json | safe }};
         const corrMatrixSampleHigh = {{ ms.correlation_matrix_sample_high_json | safe }};
         const corrMatrixLastLow = {{ ms.correlation_matrix_last_low_json | safe }};
@@ -1695,6 +1727,47 @@ _HTML_TEMPLATE = """
           const el = document.getElementById(id);
           if (!el) return;
           new Chart(el, cfg);
+        };
+        const applyCorrelationTextColors = () => {
+          const veryWeakMax = Number(corrStrengthCfg.very_weak_max ?? 0.10);
+          const weakMax = Number(corrStrengthCfg.weak_max ?? 0.29);
+          const moderateMax = Number(corrStrengthCfg.moderate_max ?? 0.49);
+          const strongMax = Number(corrStrengthCfg.strong_max ?? 0.69);
+          const colors = corrStrengthCfg.colors || {};
+          const colorVeryWeak = String(colors.very_weak || "#6b7280");
+          const colorWeak = String(colors.weak || "#2563eb");
+          const colorModerate = String(colors.moderate || "#0f766e");
+          const colorStrong = String(colors.strong || "#b45309");
+          const colorVeryStrong = String(colors.very_strong || "#b91c1c");
+
+          document.querySelectorAll(".corr-val-cell[data-corr]").forEach((cell) => {
+            const value = Number(cell.getAttribute("data-corr"));
+            if (Number.isNaN(value)) return;
+            const absV = Math.abs(value);
+            let color = colorVeryStrong;
+            let bucket = "very strong";
+            if (absV <= veryWeakMax) {
+              color = colorVeryWeak;
+              bucket = "very weak";
+            } else if (absV <= weakMax) {
+              color = colorWeak;
+              bucket = "weak";
+            } else if (absV <= moderateMax) {
+              color = colorModerate;
+              bucket = "moderate";
+            } else if (absV <= strongMax) {
+              color = colorStrong;
+              bucket = "strong";
+            }
+            cell.style.color = color;
+            cell.style.fontWeight = "700";
+            if (value < 0) {
+              cell.style.textDecoration = "underline dotted";
+              cell.style.textUnderlineOffset = "2px";
+            }
+            const currentTitle = cell.getAttribute("title") || cell.textContent || "";
+            cell.setAttribute("title", `${currentTitle} | strength: ${bucket}`);
+          });
         };
 
         createChart("msEdssProgressionChart", {
@@ -1903,11 +1976,14 @@ _HTML_TEMPLATE = """
           `;
           host.innerHTML = html;
         };
+        renderCorrMatrix("msCorrMatrixPriorityTable", corrMatrixSampleHigh);
         renderCorrMatrix("msCorrMatrixTable", corrMatrix);
+        renderCorrMatrix("msCorrMatrixLastTable", corrMatrixLast);
         renderCorrMatrix("msCorrMatrixSampleLowTable", corrMatrixSampleLow);
         renderCorrMatrix("msCorrMatrixSampleHighTable", corrMatrixSampleHigh);
         renderCorrMatrix("msCorrMatrixLastLowTable", corrMatrixLastLow);
         renderCorrMatrix("msCorrMatrixLastHighTable", corrMatrixLastHigh);
+        applyCorrelationTextColors();
 
         document.querySelectorAll(".chart-export-btn").forEach((btn) => {
           btn.addEventListener("click", () => {
@@ -2306,12 +2382,13 @@ def _extract_ms_biomarker_metrics(report: dict) -> dict | None:
                 payload.get("biomarker_last_edss_group_corr", []),
                 payload.get("biomarker_pair_corr", []),
                 payload.get("correlation_matrix", {}),
+                payload.get("correlation_matrix_last", {}),
                 payload.get("correlation_matrix_sample_low", {}),
                 payload.get("correlation_matrix_sample_high", {}),
                 payload.get("correlation_matrix_last_low", {}),
                 payload.get("correlation_matrix_last_high", {}),
             )
-    return _normalize_ms_biomarker_metrics({}, [], [], [], {}, [], {}, [], [], [], [], {}, {}, {}, {}, {})
+    return _normalize_ms_biomarker_metrics({}, [], [], [], {}, [], {}, [], [], [], [], {}, {}, {}, {}, {}, {})
 
 
 def _normalize_ms_biomarker_metrics(
@@ -2327,6 +2404,7 @@ def _normalize_ms_biomarker_metrics(
     biomarker_last_edss_group_corr: list,
     biomarker_pair_corr: list,
     correlation_matrix: dict,
+    correlation_matrix_last: dict,
     correlation_matrix_sample_low: dict,
     correlation_matrix_sample_high: dict,
     correlation_matrix_last_low: dict,
@@ -2343,6 +2421,22 @@ def _normalize_ms_biomarker_metrics(
         "edss_worsened_ratio": float(summary.get("edss_worsened_ratio", 0.0) or 0.0),
         "correlation_method": str(
             summary.get("correlation_method", "Spearman rank correlation (Pearson computed on ranked values)")
+        ),
+        "corr_strength_config": summary.get(
+            "corr_strength_config",
+            {
+                "very_weak_max": 0.10,
+                "weak_max": 0.29,
+                "moderate_max": 0.49,
+                "strong_max": 0.69,
+                "colors": {
+                    "very_weak": "#6b7280",
+                    "weak": "#2563eb",
+                    "moderate": "#0f766e",
+                    "strong": "#b45309",
+                    "very_strong": "#b91c1c",
+                },
+            },
         ),
     }
     normalized_edss = {
@@ -2379,6 +2473,8 @@ def _normalize_ms_biomarker_metrics(
         "biomarker_pair_corr_json": json.dumps(biomarker_pair_corr or []),
         "correlation_matrix": correlation_matrix or {"columns": [], "rows": []},
         "correlation_matrix_json": json.dumps(correlation_matrix or {"columns": [], "rows": []}),
+        "correlation_matrix_last": correlation_matrix_last or {"columns": [], "rows": []},
+        "correlation_matrix_last_json": json.dumps(correlation_matrix_last or {"columns": [], "rows": []}),
         "correlation_matrix_sample_low": correlation_matrix_sample_low or {"columns": [], "rows": []},
         "correlation_matrix_sample_low_json": json.dumps(correlation_matrix_sample_low or {"columns": [], "rows": []}),
         "correlation_matrix_sample_high": correlation_matrix_sample_high or {"columns": [], "rows": []},

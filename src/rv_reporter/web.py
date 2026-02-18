@@ -81,7 +81,7 @@ PROVIDER_CATALOG: dict[str, dict[str, Any]] = {
         "env_key": "XAI_API_KEY",
         "default_base_url": "https://api.x.ai/v1",
         "cost_estimate": False,
-        "runtime": "responses",
+        "runtime": "chat_compat",
         "model_options": ["grok-4", "grok-3", "grok-3-mini"],
     },
     "gemini": {

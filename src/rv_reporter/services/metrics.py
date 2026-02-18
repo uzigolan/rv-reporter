@@ -1281,6 +1281,35 @@ def _compute_ms_biomarker_registry_health(df: pd.DataFrame, prefs: dict[str, Any
     weak_corr_threshold = float(prefs.get("weak_corr_threshold", 0.10))
     top_n_corr_biomarkers = int(prefs.get("top_n_corr_biomarkers", 15))
     top_n_biomarker_pairs = int(prefs.get("top_n_biomarker_pairs", 12))
+    min_biomarker_non_null = int(prefs.get("min_biomarker_non_null", 100))
+    corr_band_very_weak_max = float(prefs.get("corr_band_very_weak_max", 0.10))
+    corr_band_weak_max = float(prefs.get("corr_band_weak_max", 0.29))
+    corr_band_moderate_max = float(prefs.get("corr_band_moderate_max", 0.49))
+    corr_band_strong_max = float(prefs.get("corr_band_strong_max", 0.69))
+    corr_color_very_weak = str(prefs.get("corr_color_very_weak", "#6b7280"))
+    corr_color_weak = str(prefs.get("corr_color_weak", "#2563eb"))
+    corr_color_moderate = str(prefs.get("corr_color_moderate", "#0f766e"))
+    corr_color_strong = str(prefs.get("corr_color_strong", "#b45309"))
+    corr_color_very_strong = str(prefs.get("corr_color_very_strong", "#b91c1c"))
+
+    if min_biomarker_non_null < 1:
+        min_biomarker_non_null = 1
+    # Keep thresholds monotonic even if user misconfigures prefs.
+    corr_band_very_weak_max = max(0.0, min(1.0, corr_band_very_weak_max))
+    corr_band_weak_max = max(corr_band_very_weak_max, min(1.0, corr_band_weak_max))
+    corr_band_moderate_max = max(corr_band_weak_max, min(1.0, corr_band_moderate_max))
+    corr_band_strong_max = max(corr_band_moderate_max, min(1.0, corr_band_strong_max))
+
+    excluded_low_count_biomarkers: list[dict[str, Any]] = []
+    filtered_biomarker_columns: list[str] = []
+    for col in biomarker_columns:
+        non_null_count = int(pd.to_numeric(working[col], errors="coerce").notna().sum())
+        if non_null_count < min_biomarker_non_null:
+            excluded_low_count_biomarkers.append({"biomarker": str(col), "non_null": non_null_count})
+            continue
+        filtered_biomarker_columns.append(col)
+    biomarker_columns = filtered_biomarker_columns
+    excluded_low_count_biomarkers = sorted(excluded_low_count_biomarkers, key=lambda x: x["non_null"])
 
     missingness_rows = []
     for col in required:
@@ -1401,6 +1430,14 @@ def _compute_ms_biomarker_registry_health(df: pd.DataFrame, prefs: dict[str, Any
         lower_bound=None,
         upper_bound=None,
     )
+    correlation_matrix_last = _compute_biomarker_correlation_matrix(
+        working=working,
+        biomarker_columns=biomarker_columns,
+        min_pairs=corr_min_pairs,
+        target_column="Last EDSS",
+        lower_bound=None,
+        upper_bound=None,
+    )
     correlation_matrix_sample_low = _compute_biomarker_correlation_matrix(
         working=working,
         biomarker_columns=biomarker_columns,
@@ -1491,6 +1528,8 @@ def _compute_ms_biomarker_registry_health(df: pd.DataFrame, prefs: dict[str, Any
             "rows": total_rows,
             "unique_patients": unique_patients,
             "biomarker_columns_used": int(len(biomarker_columns)),
+            "biomarker_min_non_null_threshold": int(min_biomarker_non_null),
+            "biomarker_columns_excluded_low_non_null": int(len(excluded_low_count_biomarkers)),
             "high_sparse_biomarkers": int(high_sparse_count),
             "severe_sparse_biomarkers": int(severe_sparse_count),
             "edss_pairs": int(total_edss_pairs),
@@ -1500,7 +1539,21 @@ def _compute_ms_biomarker_registry_health(df: pd.DataFrame, prefs: dict[str, Any
             "strong_contributors": int(len(strong_contributors)),
             "weak_contributors": int(len(weak_contributors)),
             "correlation_method": "Spearman rank correlation (Pearson computed on ranked values)",
+            "corr_strength_config": {
+                "very_weak_max": round(corr_band_very_weak_max, 4),
+                "weak_max": round(corr_band_weak_max, 4),
+                "moderate_max": round(corr_band_moderate_max, 4),
+                "strong_max": round(corr_band_strong_max, 4),
+                "colors": {
+                    "very_weak": corr_color_very_weak,
+                    "weak": corr_color_weak,
+                    "moderate": corr_color_moderate,
+                    "strong": corr_color_strong,
+                    "very_strong": corr_color_very_strong,
+                },
+            },
         },
+        "excluded_low_count_biomarkers": excluded_low_count_biomarkers,
         "sid_distribution": [{"sid": int(k), "count": int(v)} for k, v in sid_counts.items()],
         "key_missingness": missingness_rows,
         "sparse_biomarkers": sparse_biomarkers,
@@ -1523,6 +1576,7 @@ def _compute_ms_biomarker_registry_health(df: pd.DataFrame, prefs: dict[str, Any
         "weak_biomarker_contributors": weak_contributors,
         "biomarker_pair_corr": biomarker_pair_corr,
         "correlation_matrix": correlation_matrix,
+        "correlation_matrix_last": correlation_matrix_last,
         "correlation_matrix_sample_low": correlation_matrix_sample_low,
         "correlation_matrix_sample_high": correlation_matrix_sample_high,
         "correlation_matrix_last_low": correlation_matrix_last_low,

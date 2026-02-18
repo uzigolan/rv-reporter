@@ -25,8 +25,19 @@ default_prefs:
   weak_corr_threshold: 0.10
   top_n_corr_biomarkers: 15
   top_n_biomarker_pairs: 12
+  min_biomarker_non_null: 100
+  corr_band_very_weak_max: 0.10
+  corr_band_weak_max: 0.29
+  corr_band_moderate_max: 0.49
+  corr_band_strong_max: 0.69
+  corr_color_very_weak: "#6b7280"
+  corr_color_weak: "#2563eb"
+  corr_color_moderate: "#0f766e"
+  corr_color_strong: "#b45309"
+  corr_color_very_strong: "#b91c1c"
 prompt_instructions: |
   Analyze this MS registry dataset with strong attention to data quality and longitudinal signal.
+  Ignore biomarkers with non-null values below the configured minimum threshold.
   Must include:
   - participant coverage (unique PID, SID distribution, missingness profile)
   - handling of empty cells and impact on confidence

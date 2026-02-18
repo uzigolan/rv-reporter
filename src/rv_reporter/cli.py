@@ -72,7 +72,7 @@ def build_report(
         if not resolved_key:
             raise typer.BadParameter(f"Missing API token. Set {env_key} or pass --api-key.")
         resolved_base_url = (api_base_url or "").strip() or default_base or None
-        if provider_name in {"openai", "xai"}:
+        if provider_name == "openai":
             provider_impl = OpenAIResponsesProvider(
                 model=model,
                 api_key=resolved_key,
