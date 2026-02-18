@@ -16,52 +16,92 @@
     </span>
   </p>
   {% if reports %}
-    <table class="table reports-table">
+    <table class="table reports-table staggered-head show-advanced" id="reports_table">
       <thead>
         <tr>
           <th class="name-col">Name</th>
-          <th class="datetime-col">Date/Time</th>
-          <th>Engine</th>
-          <th class="model-col">Model</th>
-          <th class="source-col">Source</th>
-          <th>Rows</th>
-          <th>Cost</th>
-          <th class="duration-col">Time Took</th>
-          <th class="action-col">JSON</th>
+          <th class="report-type-col">Report Type</th>
+          <th class="datetime-col">Time</th>
+          <th class="engine-col">Provider</th>
+          <th class="model-col advanced-col">Model</th>
+          <th class="source-col advanced-col">Source</th>
+          <th class="rows-col advanced-col">Rows</th>
+          <th class="cost-col advanced-col">Cost</th>
+          <th class="actual-cost-col advanced-col">Actual Cost</th>
+          <th class="duration-col advanced-col">Duration</th>
+          <th class="action-col action-col-mini">JSON</th>
           <th class="action-col">HTML</th>
           <th class="action-col">PDF</th>
-          <th class="action-col">OpenAI Raw</th>
-          <th class="action-col">Action</th>
+          <th class="action-col action-col-mini">RAW</th>
+          <th class="action-col advanced-col">Action</th>
         </tr>
       </thead>
       <tbody>
         {% for item in reports %}
           <tr>
             <td class="name-col">
-              <span class="cell-ellipsis" title="{{ item.name }}">{{ item.name }}</span>
+              {% set display_name = item.name %}
+              {% if '.' in item.name %}
+                {% set display_name = '...' ~ (item.name.split('.', 1)[1]) %}
+              {% endif %}
+              <span class="cell-ellipsis" title="{{ item.name }}">{{ display_name }}</span>
             </td>
+            <td class="report-type-col"><span class="cell-ellipsis" title="{{ item.report_type_id }}">{{ item.report_type_label or item.report_type_id }}</span></td>
             <td class="datetime-col"><span class="datetime-value">{{ item.created_at }}</span></td>
-            <td>{{ item.backend }}</td>
-            <td class="model-col">
-              <span class="cell-ellipsis" title="{{ item.model }}">{{ item.model }}</span>
-            </td>
-            <td class="source-col">
-              <div class="cell-ellipsis" title="{{ item.source_csv }}">{{ item.source_csv }}</div>
-              {% if item.source_sheet %}
-                <div class="muted small cell-ellipsis" title="{{ item.source_sheet }}">sheet: {{ item.source_sheet }}</div>
+            <td class="engine-col">
+              {% if item.backend == "openai" %}
+                <img class="provider-favicon" src="https://openai.com/favicon.ico" alt="openai" title="openai" loading="lazy" onerror="this.onerror=null;this.src='{{ url_for('static', filename='favicon.svg') }}';">
+              {% elif item.backend == "claude" %}
+                <img class="provider-favicon" src="https://claude.ai/favicon.ico" alt="claude" title="claude" loading="lazy" onerror="this.onerror=null;this.src='https://www.anthropic.com/favicon.ico';this.onerror=function(){this.src='{{ url_for('static', filename='favicon.svg') }}';};">
+              {% elif item.backend == "gemini" %}
+                <img class="provider-favicon" src="https://gemini.google.com/favicon.ico" alt="gemini" title="gemini" loading="lazy" onerror="this.onerror=null;this.src='{{ url_for('static', filename='favicon.svg') }}';">
+              {% elif item.backend == "xai" %}
+                <img class="provider-favicon" src="https://x.ai/favicon.ico" alt="xai" title="xai" loading="lazy" onerror="this.onerror=null;this.src='{{ url_for('static', filename='favicon.svg') }}';">
+              {% else %}
+                <img class="provider-favicon" src="{{ url_for('static', filename='favicon.svg') }}" alt="{{ item.backend }}" title="{{ item.backend }}" loading="lazy">
               {% endif %}
             </td>
-            <td>{{ item.source_rows_used }}</td>
-            <td>{{ item.generation_cost_usd_est }}</td>
-            <td class="duration-col">{{ item.generation_duration_seconds }}</td>
-            <td class="action-col artifact-actions">
+            <td class="model-col advanced-col">
+              <span class="cell-ellipsis" title="{{ item.model }}">{{ item.model }}</span>
+            </td>
+            <td class="source-col advanced-col">
+              <div class="cell-ellipsis" title="{{ item.source_csv }}">{{ item.source_csv }}</div>
+              {% if item.source_sheet %}
+                <div class="muted small cell-ellipsis" title="{{ item.source_sheet }}">({{ item.source_sheet }})</div>
+              {% endif %}
+            </td>
+            <td class="rows-col advanced-col">{{ item.source_rows_used }}</td>
+            <td class="cost-col advanced-col">
+              {% if item.generation_cost_usd_est and item.generation_cost_usd_est not in ['none', 'None', '-'] %}
+                {{ item.generation_cost_usd_est|replace('$', '') }}
+              {% else %}
+                {{ "%.2f"|format((item.generation_cost_usd_est_raw or 0)|float) }}
+              {% endif %}
+            </td>
+            <td class="actual-cost-col advanced-col">
+              <form method="post" action="{{ url_for('update_report_actual_cost') }}" class="actual-cost-form">
+                <input type="hidden" name="json_path" value="{{ item.json_path }}">
+                <input
+                  type="number"
+                  name="actual_cost_usd"
+                  min="0"
+                  step="0.01"
+                  placeholder="0.00"
+                  title="Change value and leave field to save"
+                  onchange="this.form.submit()"
+                  value="{% if item.actual_cost_usd_raw is not none %}{{ '%.2f'|format(item.actual_cost_usd_raw|float) }}{% endif %}"
+                >
+              </form>
+            </td>
+            <td class="duration-col advanced-col">{{ item.generation_duration_seconds }}</td>
+            <td class="action-col action-col-mini artifact-actions">
               <div class="artifact-actions-wrap">
                 <a class="icon-action-link" href="{{ url_for('view_json', path=item.json_path) }}" title="Open JSON" aria-label="Open JSON">
                   <span class="icon-open" aria-hidden="true">↗</span>
                 </a>
               </div>
             </td>
-            <td class="action-col artifact-actions">
+            <td class="action-col action-col-mini artifact-actions">
               <div class="artifact-actions-wrap">
                 <a class="icon-action-link" href="{{ url_for('view_html', path=item.html_path) }}" title="Open HTML" aria-label="Open HTML">
                   <span class="icon-open" aria-hidden="true">↗</span>
@@ -96,7 +136,7 @@
                 <span class="muted">-</span>
               {% endif %}
             </td>
-            <td class="action-col action-delete">
+            <td class="action-col action-delete advanced-col">
               <form method="post" action="{{ url_for('delete_report') }}" onsubmit="return confirm('Delete this report artifacts?');">
                 <input type="hidden" name="json_path" value="{{ item.json_path }}">
                 <button type="submit" class="btn-link btn-danger-link">Delete</button>
@@ -110,4 +150,24 @@
     <p class="muted">No reports yet.</p>
   {% endif %}
 </section>
+<script>
+  (function () {
+    const table = document.getElementById("reports_table");
+    if (!table) return;
+    const headers = Array.from(table.querySelectorAll("thead th"));
+    headers.forEach((th, idx) => {
+      if (th.dataset.staggerBuilt === "1") return;
+      const label = (th.textContent || "").trim();
+      if (!label) return;
+      const isOdd = idx % 2 === 0;
+      th.innerHTML = `
+        <span class="hdr-stack">
+          <span class="hdr-line">${isOdd ? label : ""}</span>
+          <span class="hdr-line">${isOdd ? "" : label}</span>
+        </span>
+      `;
+      th.dataset.staggerBuilt = "1";
+    });
+  })();
+</script>
 {% endblock %}

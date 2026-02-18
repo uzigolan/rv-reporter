@@ -69,6 +69,7 @@ def run_pipeline(
     report_provider = provider or MockProvider()
     report_json = report_provider.generate_report_json(definition, csv_profile, metrics, prefs)
     report_json = _normalize_report_output(report_json, definition.report_type_id, definition.title)
+    _enrich_sparse_report(report_json, definition.metrics_profile, csv_profile, metrics)
     _ensure_metrics_payload_for_charted_reports(report_json, definition.report_type_id, metrics)
 
     output_path = Path(output_dir)
@@ -165,6 +166,18 @@ def _stamp_generation_metadata(report_json: dict[str, Any], generation_context: 
             metadata["generation_cost_usd_est"] = round(float(cost), 6)
         except (TypeError, ValueError):
             pass
+    in_tokens = generation_context.get("generation_input_tokens_est")
+    if in_tokens is not None:
+        try:
+            metadata["generation_input_tokens_est"] = int(round(float(in_tokens)))
+        except (TypeError, ValueError):
+            pass
+    out_tokens = generation_context.get("generation_output_tokens_est")
+    if out_tokens is not None:
+        try:
+            metadata["generation_output_tokens_est"] = int(round(float(out_tokens)))
+        except (TypeError, ValueError):
+            pass
 
 
 def _ensure_metrics_payload_for_charted_reports(
@@ -194,3 +207,196 @@ def _ensure_metrics_payload_for_charted_reports(
         tables.insert(0, payload_table)
     else:
         tables[existing_idx] = payload_table
+
+
+def _enrich_sparse_report(
+    report_json: dict[str, Any],
+    metrics_profile: str,
+    csv_profile: dict[str, Any],
+    metrics: dict[str, Any],
+) -> None:
+    summary_text = str(report_json.get("summary", "") or "").strip()
+    if len(summary_text) < 120:
+        report_json["summary"] = _build_default_summary(summary_text, csv_profile, metrics)
+
+    sections = report_json.get("sections")
+    if not isinstance(sections, list):
+        sections = []
+        report_json["sections"] = sections
+
+    normalized_sections: list[dict[str, str]] = []
+    for section in sections:
+        if not isinstance(section, dict):
+            continue
+        title = str(section.get("title", "")).strip()
+        body = str(section.get("body", "")).strip()
+        if not title and not body:
+            continue
+        normalized_sections.append(
+            {
+                "title": title or "Analysis",
+                "body": _normalize_section_body(body),
+            }
+        )
+
+    if _is_sparse_sections(normalized_sections):
+        normalized_sections = _default_sections(csv_profile, metrics)
+    report_json["sections"] = normalized_sections
+
+    alerts = report_json.get("alerts")
+    if not isinstance(alerts, list):
+        alerts = []
+    cleaned_alerts: list[dict[str, str]] = []
+    for alert in alerts:
+        if not isinstance(alert, dict):
+            continue
+        severity = str(alert.get("severity", "")).strip().lower()
+        message = str(alert.get("message", "")).strip()
+        if not severity or not message:
+            continue
+        cleaned_alerts.append({"severity": severity, "message": message})
+    if not cleaned_alerts and isinstance(metrics.get("alerts"), list):
+        for alert in metrics.get("alerts", []):
+            if not isinstance(alert, dict):
+                continue
+            severity = str(alert.get("severity", "")).strip().lower()
+            message = str(alert.get("message", "")).strip()
+            if severity and message:
+                cleaned_alerts.append({"severity": severity, "message": message})
+    report_json["alerts"] = cleaned_alerts
+
+    recommendations = report_json.get("recommendations")
+    if not isinstance(recommendations, list):
+        recommendations = []
+    cleaned_recos: list[dict[str, str]] = []
+    for reco in recommendations:
+        if not isinstance(reco, dict):
+            continue
+        priority = str(reco.get("priority", "")).strip().lower()
+        action = str(reco.get("action", "")).strip()
+        if not priority or not action:
+            continue
+        cleaned_recos.append({"priority": priority, "action": action})
+    if len(cleaned_recos) < 2:
+        defaults = _default_recommendations(metrics_profile)
+        for item in defaults:
+            if item not in cleaned_recos:
+                cleaned_recos.append(item)
+            if len(cleaned_recos) >= 3:
+                break
+    report_json["recommendations"] = cleaned_recos
+
+
+def _build_default_summary(existing: str, csv_profile: dict[str, Any], metrics: dict[str, Any]) -> str:
+    row_count = int(csv_profile.get("row_count", 0))
+    column_count = int(csv_profile.get("column_count", 0))
+    summary_metrics = metrics.get("summary")
+    summary_blob = ""
+    if isinstance(summary_metrics, dict) and summary_metrics:
+        preview_items = []
+        for idx, (k, v) in enumerate(summary_metrics.items()):
+            if idx >= 4:
+                break
+            preview_items.append(f"{k}={v}")
+        summary_blob = "; ".join(preview_items)
+    parts = [f"Dataset has {row_count} rows and {column_count} columns."]
+    if summary_blob:
+        parts.append(f"Key metrics: {summary_blob}.")
+    if existing:
+        parts.append(existing)
+    return " ".join(parts).strip()
+
+
+def _normalize_section_body(body: str) -> str:
+    text = body.strip()
+    if not text:
+        return "No details provided by model."
+    if "\n" in text:
+        return text
+    if text.startswith("- "):
+        return text
+    sentences = [s.strip() for s in text.split(". ") if s.strip()]
+    if len(sentences) >= 3:
+        bullet_lines = [f"- {s if s.endswith('.') else s + '.'}" for s in sentences[:6]]
+        return "\n".join(bullet_lines)
+    return text
+
+
+def _is_sparse_sections(sections: list[dict[str, str]]) -> bool:
+    if len(sections) < 3:
+        return True
+    total_len = sum(len(str(s.get("body", ""))) for s in sections)
+    return total_len < 360
+
+
+def _default_sections(csv_profile: dict[str, Any], metrics: dict[str, Any]) -> list[dict[str, str]]:
+    numeric_cols = csv_profile.get("numeric_columns", [])
+    summary_metrics = metrics.get("summary", {})
+    summary_lines: list[str] = []
+    if isinstance(summary_metrics, dict):
+        for idx, (k, v) in enumerate(summary_metrics.items()):
+            if idx >= 8:
+                break
+            summary_lines.append(f"- **{k}**: {v}")
+    if not summary_lines:
+        summary_lines = ["- No summary metrics were available from computation."]
+    return [
+        {
+            "title": "Data Profile",
+            "body": (
+                f"- Rows: {csv_profile.get('row_count', 0)}\n"
+                f"- Columns: {csv_profile.get('column_count', 0)}\n"
+                f"- Numeric columns: {', '.join(numeric_cols) if numeric_cols else 'none'}"
+            ),
+        },
+        {
+            "title": "Observed Metrics",
+            "body": "\n".join(summary_lines),
+        },
+        {
+            "title": "Quality and Interpretation",
+            "body": (
+                "- Results are derived from deterministic metrics and model narrative.\n"
+                "- Treat findings as directional where missingness/sparsity is high.\n"
+                "- Validate key signals with domain-owner review before operational changes."
+            ),
+        },
+    ]
+
+
+def _default_recommendations(metrics_profile: str) -> list[dict[str, str]]:
+    if metrics_profile == "ms_biomarker_registry_health":
+        return [
+            {"priority": "high", "action": "Stabilize biomarker capture for high-missingness markers before modeling."},
+            {"priority": "high", "action": "Prioritize complete follow-up EDSS/date capture to improve longitudinal confidence."},
+            {"priority": "medium", "action": "Use only adequately covered biomarkers for correlation-based conclusions."},
+        ]
+    if metrics_profile == "network_queue_congestion":
+        return [
+            {"priority": "high", "action": "Investigate queues with highest sustained drop ratios and tune QoS policy."},
+            {"priority": "medium", "action": "Correlate drop spikes with traffic bursts and interface capacity windows."},
+            {"priority": "medium", "action": "Validate class mapping and queue thresholds on affected interfaces."},
+        ]
+    if metrics_profile == "twamp_session_health":
+        return [
+            {"priority": "high", "action": "Investigate intervals with peak discard rate and packet-loss concentration."},
+            {"priority": "medium", "action": "Correlate discard spikes with yellow-traffic behavior and policy limits."},
+            {"priority": "medium", "action": "Track delay/IPDV trend for early degradation detection."},
+        ]
+    if metrics_profile == "pm_export_health":
+        return [
+            {"priority": "high", "action": "Prioritize interfaces with highest discard/error deltas for remediation."},
+            {"priority": "medium", "action": "Review CPU/memory pressure intervals against interface degradation events."},
+            {"priority": "medium", "action": "Validate queue and policy settings on top affected interfaces."},
+        ]
+    if metrics_profile == "jira_issue_portfolio":
+        return [
+            {"priority": "high", "action": "Escalate overloaded owners and rebalance high in-progress backlogs."},
+            {"priority": "medium", "action": "Prioritize stale unresolved issues with explicit closure owners."},
+            {"priority": "medium", "action": "Track project-level open/in-progress/closed trend weekly."},
+        ]
+    return [
+        {"priority": "high", "action": "Investigate top-risk findings and assign an owner with due date."},
+        {"priority": "medium", "action": "Validate key assumptions behind top conclusions before action."},
+        {"priority": "medium", "action": "Schedule a follow-up run after data quality corrections."},
+    ]

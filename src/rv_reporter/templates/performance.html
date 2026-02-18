@@ -1,0 +1,171 @@
+{% extends "layout.html" %}
+{% block title %}Performance | RV Reporter{% endblock %}
+{% block content %}
+<section class="panel hero">
+  <h1>Performance Analytics</h1>
+  <p>Built from existing generated report history in <code>{{ output_folder }}</code>.</p>
+</section>
+
+<section class="panel">
+  <div class="stats-grid">
+    <div class="stat-card">
+      <div class="stat-label">Runs (non-local)</div>
+      <div class="stat-value">{{ total_runs }}</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Total Cost (est)</div>
+      <div class="stat-value">
+        {% set ns = namespace(sum=0.0) %}
+        {% for row in provider_rows %}
+          {% set ns.sum = ns.sum + (row.total_cost|float) %}
+        {% endfor %}
+        ${{ "%.4f"|format(ns.sum) }}
+      </div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Total Consumed Tokens (est)</div>
+      <div class="stat-value">{{ total_tokens }}</div>
+    </div>
+  </div>
+</section>
+
+<section class="panel">
+  <h2>Provider Summary</h2>
+  {% if provider_rows %}
+  <table class="table">
+    <thead>
+      <tr>
+        <th>Provider</th>
+        <th>Runs</th>
+        <th>Total Cost</th>
+        <th>Avg Duration (sec)</th>
+        <th>Total Tokens</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in provider_rows %}
+      <tr>
+        <td>{{ row.provider }}</td>
+        <td>{{ row.runs }}</td>
+        <td>${{ "%.4f"|format(row.total_cost) }}</td>
+        <td>{{ "%.1f"|format(row.avg_duration) }}</td>
+        <td>{{ "{:,}".format(row.total_tokens) }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="muted">No non-local runs with measurable metadata yet.</p>
+  {% endif %}
+</section>
+
+<section class="panel">
+  <h2>Charts</h2>
+  <div class="chart-grid">
+    <div class="chart-wrap">
+      <div class="chart-title">Total Cost by Provider</div>
+      <canvas id="providerCostChart"></canvas>
+    </div>
+    <div class="chart-wrap">
+      <div class="chart-title">Avg Duration by Provider</div>
+      <canvas id="providerDurationChart"></canvas>
+    </div>
+    <div class="chart-wrap">
+      <div class="chart-title">Top Models by Consumed Tokens</div>
+      <canvas id="modelTokensChart"></canvas>
+    </div>
+    <div class="chart-wrap">
+      <div class="chart-title">Top Models by Cost</div>
+      <canvas id="modelCostChart"></canvas>
+    </div>
+  </div>
+</section>
+
+<section class="panel">
+  <h2>Duration vs Tokens</h2>
+  <p class="muted small">Each point is one run (x=duration sec, y=total tokens).</p>
+  <div class="chart-wrap">
+    <canvas id="durationTokensScatter"></canvas>
+  </div>
+</section>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+<script>
+(() => {
+  const providerRows = {{ provider_rows | tojson }};
+  const modelTokensRows = {{ model_tokens_rows | tojson }};
+  const modelCostRows = {{ model_cost_rows | tojson }};
+  const scatterRows = {{ scatter_rows | tojson }};
+
+  const providerLabels = providerRows.map(r => r.provider);
+  const providerCosts = providerRows.map(r => Number(r.total_cost || 0));
+  const providerDurations = providerRows.map(r => Number(r.avg_duration || 0));
+
+  const modelLabelsByTokens = modelTokensRows.map(r => r.model);
+  const modelTokenValues = modelTokensRows.map(r => Number(r.tokens || 0));
+  const modelLabelsByCost = modelCostRows.map(r => r.model);
+  const modelCostValues = modelCostRows.map(r => Number(r.cost || 0));
+
+  const colors = ["#2563eb", "#0f766e", "#9333ea", "#ea580c", "#16a34a", "#dc2626"];
+
+  const barOpts = {
+    responsive: true,
+    maintainAspectRatio: false,
+    plugins: { legend: { display: false } },
+    scales: { x: { ticks: { maxRotation: 35, minRotation: 0 } } }
+  };
+
+  if (providerLabels.length) {
+    new Chart(document.getElementById("providerCostChart"), {
+      type: "bar",
+      data: { labels: providerLabels, datasets: [{ data: providerCosts, backgroundColor: colors }] },
+      options: barOpts
+    });
+    new Chart(document.getElementById("providerDurationChart"), {
+      type: "bar",
+      data: { labels: providerLabels, datasets: [{ data: providerDurations, backgroundColor: colors }] },
+      options: barOpts
+    });
+  }
+
+  if (modelLabelsByTokens.length) {
+    new Chart(document.getElementById("modelTokensChart"), {
+      type: "bar",
+      data: { labels: modelLabelsByTokens, datasets: [{ data: modelTokenValues, backgroundColor: "#1d4ed8" }] },
+      options: barOpts
+    });
+  }
+
+  if (modelLabelsByCost.length) {
+    new Chart(document.getElementById("modelCostChart"), {
+      type: "bar",
+      data: { labels: modelLabelsByCost, datasets: [{ data: modelCostValues, backgroundColor: "#0f766e" }] },
+      options: barOpts
+    });
+  }
+
+  if (scatterRows.length) {
+    new Chart(document.getElementById("durationTokensScatter"), {
+      type: "scatter",
+      data: {
+        datasets: [{
+          label: "Runs",
+          data: scatterRows.map(r => ({ x: Number(r.x || 0), y: Number(r.y || 0) })),
+          pointRadius: 5,
+          pointBackgroundColor: "#2563eb"
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: { legend: { display: false } },
+        scales: {
+          x: { title: { display: true, text: "Duration (sec)" } },
+          y: { title: { display: true, text: "Tokens" } }
+        }
+      }
+    });
+  }
+})();
+</script>
+{% endblock %}

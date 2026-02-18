@@ -19,6 +19,7 @@ MODEL_PRICING_USD: dict[str, ModelPricing] = {
     "gpt-5.2": ModelPricing(input_per_1m=1.75, output_per_1m=14.00),
     "gpt-5.1": ModelPricing(input_per_1m=1.25, output_per_1m=10.00),
     "gpt-5": ModelPricing(input_per_1m=1.25, output_per_1m=10.00),
+    "gpt-5.2-pro": ModelPricing(input_per_1m=21.00, output_per_1m=168.00),
     "gpt-5-mini": ModelPricing(input_per_1m=0.25, output_per_1m=2.00),
     "gpt-5-nano": ModelPricing(input_per_1m=0.05, output_per_1m=0.40),
     "gpt-4.1": ModelPricing(input_per_1m=2.00, output_per_1m=8.00),

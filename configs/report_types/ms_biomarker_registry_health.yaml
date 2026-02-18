@@ -31,7 +31,9 @@ prompt_instructions: |
   - participant coverage (unique PID, SID distribution, missingness profile)
   - handling of empty cells and impact on confidence
   - EDSS progression signal (improved / stable / worsened, with ratio)
-  - biomarker-to-Last-EDSS correlations (state contributing vs weak/non-contributing markers)
+  - biomarker-to-Sample-EDSS correlations (state contributing vs weak/non-contributing markers)
+  - grouped biomarker correlations to Sample EDSS by two bands: 0-3.5 and 4+
+  - grouped biomarker correlations to Last EDSS by two bands: 0-3.5 and 4+
   - strongest biomarker-to-biomarker correlations and what clusters may indicate
   - disease-course transitions (sample vs last course)
   - biomarker panel completeness and which markers are too sparse for reliable inference

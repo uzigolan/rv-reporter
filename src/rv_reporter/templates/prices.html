@@ -1,0 +1,66 @@
+{% extends "layout.html" %}
+{% block title %}Models & Prices | RV Reporter{% endblock %}
+{% block content %}
+<section class="panel hero">
+  <h1>Provider Models & Pricing</h1>
+  <p>Live model inventory uses provider tokens from environment. Pricing links are official provider sources.</p>
+</section>
+
+<section class="panel">
+  <table class="table">
+    <thead>
+      <tr>
+        <th>Provider</th>
+        <th>Token Env</th>
+        <th>Models (API access)</th>
+        <th>Model Source</th>
+        <th>Reference Cost</th>
+        <th>Pricing</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for p in providers %}
+      <tr>
+        <td>{{ p.label }}</td>
+        <td><code>{{ p.env_key }}</code></td>
+        <td>
+          {% if p.model_count > 0 %}
+            <strong>{{ p.model_count }}</strong> models
+            <div class="muted small">{{ p.models_preview }}</div>
+            {% if p.model_prices %}
+            <div class="muted small" style="margin-top:.3rem;">
+              {% for mp in p.model_prices[:8] %}
+                <div>
+                  <code>{{ mp.model }}</code>: {{ mp.cost_text }} / {{ mp.ratio_text }}
+                  {% if mp.source_url %}
+                  <a href="{{ mp.source_url }}" target="_blank">src</a>
+                  {% endif %}
+                </div>
+              {% endfor %}
+            </div>
+            {% endif %}
+          {% else %}
+            <span class="muted small">{{ p.models_error }}</span>
+          {% endif %}
+        </td>
+        <td>
+          {% if p.model_source == "live" %}
+            live API
+          {% else %}
+            fallback
+          {% endif %}
+        </td>
+        <td>{{ p.reference_cost }}</td>
+        <td>
+          {% if p.pricing_url %}
+          <a href="{{ p.pricing_url }}" target="_blank">Open pricing page</a>
+          {% else %}
+          <span class="muted">-</span>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}

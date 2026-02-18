@@ -1,0 +1,17 @@
+{% extends "layout.html" %}
+{% block title %}Report Type YAML | RV Reporter{% endblock %}
+{% block content %}
+<section class="panel hero">
+  <h1>Report Type YAML</h1>
+  <p>Read-only configuration view.</p>
+</section>
+
+<section class="panel">
+  <p><strong>Report Type:</strong> {{ report_type_label }} <span class="muted">({{ report_type_id }})</span></p>
+  <p><strong>File:</strong> <code>{{ yaml_path }}</code></p>
+  <pre style="white-space: pre-wrap; word-break: break-word; margin-top: 0.8rem;">{{ yaml_text }}</pre>
+  <p style="margin-top: 0.9rem;">
+    <a class="btn-link" href="{{ url_for('list_report_types_page') }}">Back to Manage Report Types</a>
+  </p>
+</section>
+{% endblock %}

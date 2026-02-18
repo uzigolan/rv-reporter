@@ -19,9 +19,18 @@
       <tbody>
         {% for item in report_types %}
           <tr>
-            <td>{{ item.report_type_id }}</td>
+            <td title="{{ item.report_type_id }}">
+              {{ {
+                'network_queue_congestion': 'network',
+                'twamp_session_health': 'twamp',
+                'ms_biomarker_registry_health': 'biomarkers',
+                'pm_export_health': 'performance',
+                'jira_issue_portfolio': 'jira'
+              }.get(item.report_type_id, item.report_type_id) }}
+            </td>
             <td><span class="muted">{{ item.path }}</span></td>
             <td>
+              <a class="btn-link" href="{{ url_for('view_report_type_yaml_page', report_type_id=item.report_type_id) }}">View YAML</a>
               {% if item.is_protected %}
                 <span class="muted">protected</span>
               {% else %}

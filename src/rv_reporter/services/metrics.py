@@ -1362,14 +1362,31 @@ def _compute_ms_biomarker_registry_health(df: pd.DataFrame, prefs: dict[str, Any
         "invalid_pairs": invalid_followup_rows,
     }
 
-    biomarker_last_edss_corr = _compute_biomarker_to_last_edss_correlations(
+    biomarker_sample_edss_corr = _compute_biomarker_to_target_edss_correlations(
         working=working,
         biomarker_columns=biomarker_columns,
+        target_column="Sample EDSS",
         min_pairs=corr_min_pairs,
         top_n=top_n_corr_biomarkers,
     )
-    strong_contributors = [row for row in biomarker_last_edss_corr if abs(float(row["corr"])) >= strong_corr_threshold]
-    weak_contributors = [row for row in biomarker_last_edss_corr if abs(float(row["corr"])) <= weak_corr_threshold]
+    biomarker_sample_edss_group_corr = _compute_biomarker_target_edss_group_correlations(
+        working=working,
+        biomarker_columns=biomarker_columns,
+        target_column="Sample EDSS",
+        split_threshold=3.5,
+        min_pairs=max(12, corr_min_pairs // 2),
+        top_n=top_n_corr_biomarkers,
+    )
+    biomarker_last_edss_group_corr = _compute_biomarker_target_edss_group_correlations(
+        working=working,
+        biomarker_columns=biomarker_columns,
+        target_column="Last EDSS",
+        split_threshold=3.5,
+        min_pairs=max(12, corr_min_pairs // 2),
+        top_n=top_n_corr_biomarkers,
+    )
+    strong_contributors = [row for row in biomarker_sample_edss_corr if abs(float(row["corr"])) >= strong_corr_threshold]
+    weak_contributors = [row for row in biomarker_sample_edss_corr if abs(float(row["corr"])) <= weak_corr_threshold]
     biomarker_pair_corr = _compute_biomarker_pair_correlations(
         working=working,
         biomarker_columns=biomarker_columns,
@@ -1380,6 +1397,41 @@ def _compute_ms_biomarker_registry_health(df: pd.DataFrame, prefs: dict[str, Any
         working=working,
         biomarker_columns=biomarker_columns,
         min_pairs=corr_min_pairs,
+        target_column="Sample EDSS",
+        lower_bound=None,
+        upper_bound=None,
+    )
+    correlation_matrix_sample_low = _compute_biomarker_correlation_matrix(
+        working=working,
+        biomarker_columns=biomarker_columns,
+        min_pairs=max(12, corr_min_pairs // 2),
+        target_column="Sample EDSS",
+        lower_bound=0.0,
+        upper_bound=3.5,
+    )
+    correlation_matrix_sample_high = _compute_biomarker_correlation_matrix(
+        working=working,
+        biomarker_columns=biomarker_columns,
+        min_pairs=max(12, corr_min_pairs // 2),
+        target_column="Sample EDSS",
+        lower_bound=4.0,
+        upper_bound=None,
+    )
+    correlation_matrix_last_low = _compute_biomarker_correlation_matrix(
+        working=working,
+        biomarker_columns=biomarker_columns,
+        min_pairs=max(12, corr_min_pairs // 2),
+        target_column="Last EDSS",
+        lower_bound=0.0,
+        upper_bound=3.5,
+    )
+    correlation_matrix_last_high = _compute_biomarker_correlation_matrix(
+        working=working,
+        biomarker_columns=biomarker_columns,
+        min_pairs=max(12, corr_min_pairs // 2),
+        target_column="Last EDSS",
+        lower_bound=4.0,
+        upper_bound=None,
     )
 
     alerts: list[dict[str, str]] = []
@@ -1418,7 +1470,7 @@ def _compute_ms_biomarker_registry_health(df: pd.DataFrame, prefs: dict[str, Any
             {
                 "severity": "low",
                 "message": (
-                    f"No biomarker reached |corr(Last EDSS)| >= {strong_corr_threshold:.2f} "
+                    f"No biomarker reached |corr(Sample EDSS)| >= {strong_corr_threshold:.2f} "
                     f"with at least {corr_min_pairs} paired rows."
                 ),
             }
@@ -1428,7 +1480,7 @@ def _compute_ms_biomarker_registry_health(df: pd.DataFrame, prefs: dict[str, Any
             {
                 "severity": "medium",
                 "message": (
-                    f"{len(weak_contributors)} biomarkers show weak |corr(Last EDSS)| <= {weak_corr_threshold:.2f}; "
+                    f"{len(weak_contributors)} biomarkers show weak |corr(Sample EDSS)| <= {weak_corr_threshold:.2f}; "
                     "these are likely non-contributing for EDSS signal in current data."
                 ),
             }
@@ -1447,6 +1499,7 @@ def _compute_ms_biomarker_registry_health(df: pd.DataFrame, prefs: dict[str, Any
             "corr_min_pairs": int(corr_min_pairs),
             "strong_contributors": int(len(strong_contributors)),
             "weak_contributors": int(len(weak_contributors)),
+            "correlation_method": "Spearman rank correlation (Pearson computed on ranked values)",
         },
         "sid_distribution": [{"sid": int(k), "count": int(v)} for k, v in sid_counts.items()],
         "key_missingness": missingness_rows,
@@ -1461,11 +1514,20 @@ def _compute_ms_biomarker_registry_health(df: pd.DataFrame, prefs: dict[str, Any
         "course_distribution": course_distribution,
         "course_transitions": transitions,
         "followup_summary": followup_summary,
-        "biomarker_last_edss_corr": biomarker_last_edss_corr,
+        "biomarker_sample_edss_corr": biomarker_sample_edss_corr,
+        "biomarker_sample_edss_group_corr": biomarker_sample_edss_group_corr,
+        "biomarker_last_edss_group_corr": biomarker_last_edss_group_corr,
+        # Backward compatibility for existing renderers/templates.
+        "biomarker_last_edss_corr": biomarker_sample_edss_corr,
         "strong_biomarker_contributors": strong_contributors,
         "weak_biomarker_contributors": weak_contributors,
         "biomarker_pair_corr": biomarker_pair_corr,
         "correlation_matrix": correlation_matrix,
+        "correlation_matrix_sample_low": correlation_matrix_sample_low,
+        "correlation_matrix_sample_high": correlation_matrix_sample_high,
+        "correlation_matrix_last_low": correlation_matrix_last_low,
+        "correlation_matrix_last_high": correlation_matrix_last_high,
+        "correlation_method": "Spearman rank correlation (Pearson computed on ranked values)",
         "alerts": alerts,
     }
 
@@ -1518,14 +1580,15 @@ def _parse_last_dates(series: pd.Series | None) -> pd.Series:
     return parsed
 
 
-def _compute_biomarker_to_last_edss_correlations(
+def _compute_biomarker_to_target_edss_correlations(
     working: pd.DataFrame,
     biomarker_columns: list[str],
+    target_column: str,
     min_pairs: int,
     top_n: int,
 ) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
-    target = pd.to_numeric(working.get("Last EDSS"), errors="coerce")
+    target = pd.to_numeric(working.get(target_column), errors="coerce")
     for col in biomarker_columns:
         x = pd.to_numeric(working[col], errors="coerce")
         pair = pd.DataFrame({"x": x, "y": target}).dropna()
@@ -1548,6 +1611,64 @@ def _compute_biomarker_to_last_edss_correlations(
             }
         )
     rows.sort(key=lambda r: (r["abs_corr"], r["paired_rows"]), reverse=True)
+    return rows[:top_n]
+
+
+def _compute_biomarker_target_edss_group_correlations(
+    working: pd.DataFrame,
+    biomarker_columns: list[str],
+    target_column: str,
+    split_threshold: float,
+    min_pairs: int,
+    top_n: int,
+) -> list[dict[str, Any]]:
+    target_series = pd.to_numeric(working.get(target_column), errors="coerce")
+    low = working[target_series.between(0.0, split_threshold, inclusive="both")]
+    high = working[target_series >= (split_threshold + 0.5)]
+    rows: list[dict[str, Any]] = []
+    for col in biomarker_columns:
+        low_pair = pd.DataFrame(
+            {"x": pd.to_numeric(low.get(col), errors="coerce"), "y": pd.to_numeric(low.get(target_column), errors="coerce")}
+        ).dropna()
+        high_pair = pd.DataFrame(
+            {"x": pd.to_numeric(high.get(col), errors="coerce"), "y": pd.to_numeric(high.get(target_column), errors="coerce")}
+        ).dropna()
+
+        low_n = int(len(low_pair))
+        high_n = int(len(high_pair))
+        if low_n < min_pairs and high_n < min_pairs:
+            continue
+
+        def _corr(pair: pd.DataFrame) -> float | None:
+            if len(pair) < min_pairs:
+                return None
+            if pair["x"].nunique() <= 1 or pair["y"].nunique() <= 1:
+                return None
+            c = pair["x"].rank(method="average").corr(pair["y"].rank(method="average"), method="pearson")
+            if pd.isna(c):
+                return None
+            return float(c)
+
+        low_corr = _corr(low_pair)
+        high_corr = _corr(high_pair)
+        if low_corr is None and high_corr is None:
+            continue
+
+        delta_abs = abs((high_corr or 0.0) - (low_corr or 0.0))
+        rows.append(
+            {
+                "biomarker": str(col),
+                "low_band": "0-3.5",
+                "high_band": "4+",
+                "low_corr": round(float(low_corr), 4) if low_corr is not None else None,
+                "high_corr": round(float(high_corr), 4) if high_corr is not None else None,
+                "low_paired_rows": low_n,
+                "high_paired_rows": high_n,
+                "delta_abs": round(float(delta_abs), 4),
+                "target_edss": str(target_column),
+            }
+        )
+    rows.sort(key=lambda r: (r["delta_abs"], max(int(r["low_paired_rows"]), int(r["high_paired_rows"]))), reverse=True)
     return rows[:top_n]
 
 
@@ -1598,10 +1719,21 @@ def _compute_biomarker_correlation_matrix(
     working: pd.DataFrame,
     biomarker_columns: list[str],
     min_pairs: int,
+    target_column: str = "Sample EDSS",
+    lower_bound: float | None = None,
+    upper_bound: float | None = None,
 ) -> dict[str, Any]:
+    filtered = working
+    target_series = pd.to_numeric(working.get(target_column), errors="coerce")
+    if lower_bound is not None:
+        filtered = filtered[target_series >= lower_bound]
+        target_series = target_series[target_series >= lower_bound]
+    if upper_bound is not None:
+        filtered = filtered[target_series <= upper_bound]
+
     eligible = []
-    for col in ["Last EDSS"] + biomarker_columns:
-        s = pd.to_numeric(working.get(col), errors="coerce")
+    for col in [target_column] + biomarker_columns:
+        s = pd.to_numeric(filtered.get(col), errors="coerce")
         if int(s.notna().sum()) < min_pairs:
             continue
         if s.nunique(dropna=True) <= 1:
@@ -1610,7 +1742,7 @@ def _compute_biomarker_correlation_matrix(
     if len(eligible) < 2:
         return {"columns": [], "rows": []}
 
-    frame = pd.DataFrame({col: pd.to_numeric(working[col], errors="coerce") for col in eligible})
+    frame = pd.DataFrame({col: pd.to_numeric(filtered[col], errors="coerce") for col in eligible})
     corr = frame.rank(method="average").corr(method="pearson", min_periods=min_pairs)
     rows = []
     for row_name in corr.index:

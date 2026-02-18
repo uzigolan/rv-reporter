@@ -1,0 +1,144 @@
+{% extends "layout.html" %}
+{% block title %}Events | RV Reporter{% endblock %}
+{% block content %}
+<section class="panel">
+  <h1>Report Events</h1>
+  <div class="actions">
+    <form method="post" action="{{ url_for('reset_in_progress_events') }}" style="display:inline-block; margin:0;">
+      <button type="submit" class="btn-link">Reset In-Progress</button>
+    </form>
+  </div>
+  <p class="muted">Lifecycle log from <code>{{ output_folder }}</code>/report_events.jsonl</p>
+  <p class="muted status-legend">
+    Legend:
+    <span class="status-legend-item"><span class="status-dot status-requested" aria-hidden="true"></span> requested</span>
+    <span class="status-legend-item"><span class="status-dot status-cost-estimated" aria-hidden="true"></span> cost estimated</span>
+    <span class="status-legend-item"><span class="status-dot status-started" aria-hidden="true"></span> started</span>
+    <span class="status-legend-item"><span class="status-dot status-finished" aria-hidden="true"></span> finished</span>
+    <span class="status-legend-item"><span class="status-dot status-failed" aria-hidden="true"></span> failed</span>
+    <span class="status-legend-item"><span class="status-dot status-timeout" aria-hidden="true"></span> timeout</span>
+    <span class="status-legend-item"><span class="status-dot status-cancelled" aria-hidden="true"></span> cancelled</span>
+  </p>
+  {% if events %}
+  <table class="table events-table staggered-head" id="events_table">
+    <thead>
+      <tr>
+        <th class="datetime-col">Time</th>
+        <th class="attempt-col">Attempt</th>
+        <th class="report-type-col">Report Type</th>
+        <th class="engine-col">Provider</th>
+        <th class="model-col">Model</th>
+        <th class="status-col">Status</th>
+        <th class="report-name-col">Report Name</th>
+        <th class="message-col">Message</th>
+        <th class="action-col">Action</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for e in events %}
+      <tr>
+        <td class="datetime-col"><span class="datetime-value">{{ e.created_at }}</span></td>
+        <td class="attempt-col">
+          {% if e.attempt_id and e.attempt_id.startswith('evt_') %}
+            <span class="cell-ellipsis" title="{{ e.attempt_id }}">Run {{ e.attempt_id[4:9] }}</span>
+          {% else %}
+            <span class="cell-ellipsis" title="{{ e.attempt_id }}">{{ e.attempt_id or "-" }}</span>
+          {% endif %}
+        </td>
+        <td class="report-type-col"><span class="cell-ellipsis" title="{{ e.report_type_label or e.report_type_id }}">{{ e.report_type_label or e.report_type_id }}</span></td>
+        <td class="engine-col">
+          {% if e.provider == "openai" %}
+            <img class="provider-favicon" src="https://openai.com/favicon.ico" alt="openai" title="openai" loading="lazy" onerror="this.onerror=null;this.src='{{ url_for('static', filename='favicon.svg') }}';">
+          {% elif e.provider == "claude" %}
+            <img class="provider-favicon" src="https://claude.ai/favicon.ico" alt="claude" title="claude" loading="lazy" onerror="this.onerror=null;this.src='https://www.anthropic.com/favicon.ico';this.onerror=function(){this.src='{{ url_for('static', filename='favicon.svg') }}';};">
+          {% elif e.provider == "gemini" %}
+            <img class="provider-favicon" src="https://gemini.google.com/favicon.ico" alt="gemini" title="gemini" loading="lazy" onerror="this.onerror=null;this.src='{{ url_for('static', filename='favicon.svg') }}';">
+          {% elif e.provider == "xai" %}
+            <img class="provider-favicon" src="https://x.ai/favicon.ico" alt="xai" title="xai" loading="lazy" onerror="this.onerror=null;this.src='{{ url_for('static', filename='favicon.svg') }}';">
+          {% else %}
+            <img class="provider-favicon" src="{{ url_for('static', filename='favicon.svg') }}" alt="{{ e.provider }}" title="{{ e.provider }}" loading="lazy">
+          {% endif %}
+        </td>
+        <td class="model-col"><span class="cell-ellipsis" title="{{ e.model }}">{{ e.model }}</span></td>
+        <td class="status-col">
+          {% set raw_status = (e.status or '')|lower %}
+          {% set status_class = 'status-unknown' %}
+          {% if raw_status == 'requested' %}
+            {% set status_class = 'status-requested' %}
+          {% elif raw_status == 'cost_estimated' %}
+            {% set status_class = 'status-cost-estimated' %}
+          {% elif raw_status == 'started' %}
+            {% set status_class = 'status-started' %}
+          {% elif raw_status == 'finished' %}
+            {% set status_class = 'status-finished' %}
+          {% elif raw_status == 'failed' %}
+            {% set status_class = 'status-failed' %}
+          {% elif raw_status == 'timeout' %}
+            {% set status_class = 'status-timeout' %}
+          {% elif raw_status in ['cancelled', 'canceled'] %}
+            {% set status_class = 'status-cancelled' %}
+          {% endif %}
+          <span class="status-dot status-dot-table {{ status_class }}" title="{{ e.status }}" aria-label="{{ e.status }}"></span>
+        </td>
+        <td class="report-name-col">
+          {% set display_name = e.report_name or "-" %}
+          {% if e.report_name and '.' in e.report_name %}
+            {% set display_name = '...' ~ (e.report_name.split('.', 1)[1]) %}
+          {% endif %}
+          <span class="cell-ellipsis" title="{{ e.report_name }}">{{ display_name }}</span>
+        </td>
+        <td class="message-col"><span class="cell-ellipsis" title="{{ e.message }}">{{ e.message }}</span></td>
+        <td class="action-col action-delete">
+          <form method="post" action="{{ url_for('delete_event') }}">
+            <input type="hidden" name="line_index" value="{{ e.line_index }}">
+            <button type="submit" class="btn-link btn-danger-link">Delete</button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="muted">No events yet.</p>
+  {% endif %}
+</section>
+<script>
+  (function () {
+    let currentSignature = "{{ events_signature }}";
+    const poll = async () => {
+      try {
+        const response = await fetch("{{ url_for('events_status') }}", { cache: "no-store" });
+        if (!response.ok) return;
+        const payload = await response.json();
+        const nextSignature = String((payload && payload.signature) || "");
+        if (nextSignature && nextSignature !== currentSignature) {
+          currentSignature = nextSignature;
+          window.location.reload();
+        }
+      } catch (e) {
+        // Ignore transient polling failures.
+      }
+    };
+    setInterval(poll, 2500);
+  })();
+
+  (function () {
+    const table = document.getElementById("events_table");
+    if (!table) return;
+    const headers = Array.from(table.querySelectorAll("thead th"));
+    headers.forEach((th, idx) => {
+      if (th.dataset.staggerBuilt === "1") return;
+      const label = (th.textContent || "").trim();
+      if (!label) return;
+      const isOdd = idx % 2 === 0;
+      th.innerHTML = `
+        <span class="hdr-stack">
+          <span class="hdr-line">${isOdd ? label : ""}</span>
+          <span class="hdr-line">${isOdd ? "" : label}</span>
+        </span>
+      `;
+      th.dataset.staggerBuilt = "1";
+    });
+  })();
+</script>
+{% endblock %}

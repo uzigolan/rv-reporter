@@ -15,7 +15,13 @@
       <select id="clone_source_type">
         <option value="">Choose report type...</option>
         {% for rid in report_types %}
-          <option value="{{ rid }}">{{ rid }}</option>
+          <option value="{{ rid }}">{{ {
+            'network_queue_congestion': 'network',
+            'twamp_session_health': 'twamp',
+            'ms_biomarker_registry_health': 'biomarkers',
+            'pm_export_health': 'performance',
+            'jira_issue_portfolio': 'jira'
+          }.get(rid, rid) }}</option>
         {% endfor %}
       </select>
     </label>

@@ -8,12 +8,25 @@ from rv_reporter.report_types.registry import ReportTypeDefinition
 
 
 class OpenAIResponsesProvider(ReportProvider):
-    def __init__(self, model: str = "gpt-4.1-mini") -> None:
+    def __init__(
+        self,
+        model: str = "gpt-4.1-mini",
+        api_key: str | None = None,
+        base_url: str | None = None,
+        default_headers: dict[str, str] | None = None,
+    ) -> None:
         try:
             from openai import OpenAI  # pylint: disable=import-outside-toplevel
         except ImportError as exc:
             raise RuntimeError("Install openai extra: pip install -e .[openai]") from exc
-        self._client = OpenAI()
+        client_kwargs: dict[str, Any] = {}
+        if api_key:
+            client_kwargs["api_key"] = api_key
+        if base_url:
+            client_kwargs["base_url"] = base_url
+        if default_headers:
+            client_kwargs["default_headers"] = default_headers
+        self._client = OpenAI(**client_kwargs)
         self._model = model
         self.last_raw_response: dict[str, Any] | None = None
 

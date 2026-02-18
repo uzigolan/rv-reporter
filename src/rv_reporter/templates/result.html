@@ -2,7 +2,7 @@
 {% block title %}Report Generated | RV Reporter{% endblock %}
 {% block content %}
 <section class="panel">
-  <h1>{{ report_type_id }} report generated</h1>
+  <h1>{{ report_type_label or report_type_id }} report generated</h1>
   <p class="muted">Artifacts are stored on disk and ready to view.</p>
   <div class="actions">
     <a class="btn-link" href="{{ url_for('view_json', path=report_json_path) }}" target="_blank" rel="noopener noreferrer">View JSON</a>
@@ -39,4 +39,18 @@
     <p class="muted">No alerts.</p>
   {% endif %}
 </section>
+{% endblock %}
+{% block head %}
+<script>
+  window.addEventListener("DOMContentLoaded", () => {
+    if (window.rvGenerationState && typeof window.rvGenerationState.finishJob === "function") {
+      let jobId = "";
+      try { jobId = sessionStorage.getItem("rv_current_job_id") || ""; } catch (e) {}
+      window.rvGenerationState.finishJob(jobId, "Report generated");
+      if (jobId) {
+        try { sessionStorage.removeItem("rv_current_job_id"); } catch (e) {}
+      }
+    }
+  });
+</script>
 {% endblock %}

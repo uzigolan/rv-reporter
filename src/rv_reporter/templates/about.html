@@ -3,7 +3,7 @@
 {% block content %}
 <section class="panel hero">
   <h1>About RV Reporter</h1>
-  <p>Schema-first CSV reporting platform that combines deterministic metric computation with optional OpenAI narrative generation.</p>
+  <p>Schema-first tabular reporting platform combining deterministic metric computation with optional AI narrative generation.</p>
 </section>
 
 <section class="panel">
@@ -56,8 +56,22 @@
     <li><strong>New Type:</strong> define a custom report type YAML.</li>
     <li><strong>Manage Types:</strong> inspect and delete non-protected types.</li>
     <li><strong>Reports:</strong> browse report history and open artifacts.</li>
+    <li><strong>Prices:</strong> view provider model inventory + official pricing links.</li>
   </ul>
   <p class="muted small">OpenAI models currently available in UI: {{ priced_models | join(", ") }}.</p>
+</section>
+
+<section class="panel">
+  <h2>API Provider Infrastructure</h2>
+  <p class="muted">Configured provider engines:</p>
+  <div class="chips">
+    {% for p in provider_options %}
+      <span class="chip">{{ p.id }}</span>
+    {% endfor %}
+  </div>
+  <p class="muted small" style="margin-top:.6rem;">
+    API providers read tokens from environment by default, with per-request token/base-url override available in Generate form.
+  </p>
 </section>
 
 <section class="panel">

@@ -16,11 +16,15 @@
   <div class="bg-orb bg-orb-b"></div>
   <header class="topbar">
     <a href="{{ url_for('index') }}" class="brand">RV Reporter</a>
+    <div id="gen_status_badge" class="gen-status-badge hidden" aria-live="polite"></div>
     <nav class="nav">
       <a href="{{ url_for('index') }}">Generate</a>
       <a href="{{ url_for('new_report_type') }}">New Type</a>
       <a href="{{ url_for('list_report_types_page') }}">Manage Types</a>
       <a href="{{ url_for('reports') }}">Reports</a>
+      <a href="{{ url_for('events') }}">Events</a>
+      <a href="{{ url_for('performance') }}">Performance</a>
+      <a href="{{ url_for('prices') }}">Prices</a>
       <a href="{{ url_for('about') }}">About</a>
     </nav>
   </header>
@@ -34,5 +38,165 @@
     {% endwith %}
     {% block content %}{% endblock %}
   </main>
+  <script>
+    (function () {
+      const KEY = "rv_report_generation_state.v1";
+      const badge = document.getElementById("gen_status_badge");
+      if (!badge) return;
+
+      const readState = () => {
+        try {
+          const raw = localStorage.getItem(KEY);
+          if (!raw) return null;
+          const parsed = JSON.parse(raw);
+          if (!parsed || typeof parsed !== "object") return null;
+          return parsed;
+        } catch (e) {
+          return null;
+        }
+      };
+
+      const writeState = (payload) => {
+        localStorage.setItem(KEY, JSON.stringify(payload));
+        render(payload);
+      };
+
+      const clearState = () => {
+        localStorage.removeItem(KEY);
+        render(null);
+      };
+
+      const normalize = (payload) => {
+        const state = payload && typeof payload === "object" ? payload : {};
+        if (!state.jobs || typeof state.jobs !== "object") {
+          state.jobs = {};
+        }
+        if (!state.done_text) state.done_text = "";
+        if (!state.done_ts) state.done_ts = 0;
+        // Drop stale jobs older than 3 minutes.
+        const now = Date.now();
+        for (const [id, job] of Object.entries(state.jobs)) {
+          const ts = Number(job && job.ts ? job.ts : 0);
+          if (!ts || (now - ts) > 3 * 60 * 1000) {
+            delete state.jobs[id];
+          }
+        }
+        return state;
+      };
+
+      const completionLabel = (status, fallbackText) => {
+        if (status === "finished") return "Report generated";
+        if (status === "timeout") return "Report timed out";
+        if (status === "failed") return "Report failed";
+        return fallbackText || "Report updated";
+      };
+
+      const render = (rawPayload) => {
+        const payload = normalize(rawPayload);
+        const activeCount = Object.keys(payload.jobs || {}).length;
+        if (activeCount > 0) {
+          badge.classList.remove("hidden", "done");
+          badge.classList.add("running");
+          badge.textContent = activeCount === 1
+            ? "Generating report (1 pending)"
+            : `Generating reports (${activeCount} pending)`;
+          return;
+        }
+        const showDone = payload.done_ts && (Date.now() - Number(payload.done_ts) <= 10000);
+        if (showDone) {
+          badge.classList.remove("hidden", "running");
+          badge.classList.add("done");
+          badge.textContent = payload.done_text || "Report generated";
+          return;
+        }
+        badge.classList.add("hidden");
+        badge.classList.remove("running", "done");
+        badge.textContent = "";
+      };
+
+      window.rvGenerationState = {
+        startJob: (preferredId, text) => {
+          const state = normalize(readState());
+          const id = (preferredId && String(preferredId).trim())
+            ? String(preferredId).trim()
+            : `job_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+          state.jobs[id] = { text: text || "Generating report...", ts: Date.now() };
+          state.done_text = "";
+          state.done_ts = 0;
+          writeState(state);
+          return id;
+        },
+        finishJob: (id, text) => {
+          const state = normalize(readState());
+          if (id && state.jobs[id]) {
+            delete state.jobs[id];
+          } else {
+            const ids = Object.keys(state.jobs);
+            if (ids.length > 0) {
+              delete state.jobs[ids[0]];
+            }
+          }
+          if (Object.keys(state.jobs).length === 0) {
+            state.done_text = text || "Report generated";
+            state.done_ts = Date.now();
+          }
+          writeState(state);
+        },
+        activeCount: () => Object.keys(normalize(readState()).jobs || {}).length,
+        clear: clearState,
+      };
+
+      const reconcileWithServer = async () => {
+        try {
+          const response = await fetch("{{ url_for('generation_status') }}", { cache: "no-store" });
+          if (!response.ok) return;
+          const payload = await response.json();
+          const activeIds = new Set(Array.isArray(payload.active_attempt_ids) ? payload.active_attempt_ids : []);
+          const completed = (payload && payload.completed_attempts && typeof payload.completed_attempts === "object")
+            ? payload.completed_attempts
+            : {};
+
+          const state = normalize(readState());
+          let changed = false;
+
+          for (const id of Object.keys(state.jobs)) {
+            if (!activeIds.has(id)) {
+              delete state.jobs[id];
+              changed = true;
+              if (completed[id]) {
+                state.done_text = completionLabel(completed[id].status, "Report updated");
+                state.done_ts = Date.now();
+              }
+            }
+          }
+
+          for (const id of activeIds) {
+            if (!state.jobs[id]) {
+              state.jobs[id] = { text: "Generating report...", ts: Date.now() };
+              changed = true;
+            }
+          }
+
+          if (changed) {
+            writeState(state);
+          } else {
+            render(state);
+          }
+        } catch (e) {
+          // Keep local-only behavior on transient API errors.
+        }
+      };
+
+      window.addEventListener("storage", (event) => {
+        if (event.key === KEY) {
+          render(readState());
+        }
+      });
+
+      render(readState());
+      reconcileWithServer();
+      setInterval(reconcileWithServer, 3000);
+    })();
+  </script>
 </body>
 </html>

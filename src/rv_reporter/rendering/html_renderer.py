@@ -768,7 +768,7 @@ _HTML_TEMPLATE = """
           </div>
           <div class="chart-wrap">
             <div class="chart-head">
-              <div class="chart-title">Biomarker vs Last EDSS Correlation</div>
+              <div class="chart-title">Biomarker vs Sample EDSS Correlation</div>
               <button type="button" class="chart-export-btn" data-canvas-id="msBiomarkerEdssCorrChart" data-file-prefix="{{ report.metadata.get('report_id', report.report_type_id) }}">Export PNG</button>
             </div>
             <canvas id="msBiomarkerEdssCorrChart"></canvas>
@@ -828,21 +828,22 @@ _HTML_TEMPLATE = """
       </section>
 
       <section>
-        <h2>Biomarkers Related to Last EDSS</h2>
-        {% if ms.biomarker_last_edss_corr %}
+        <h2>Biomarkers Related to Sample EDSS</h2>
+        <p class="muted small">Correlation method: {{ ms.summary.get('correlation_method', 'Spearman rank correlation (Pearson computed on ranked values)') }}.</p>
+        {% if ms.biomarker_sample_edss_corr %}
         <div class="table-scroll">
           <table>
             <thead>
               <tr>
                 <th>Biomarker</th>
-                <th>Spearman Corr (Last EDSS)</th>
+                <th>Spearman Corr (Sample EDSS)</th>
                 <th>Abs Corr</th>
                 <th>Direction</th>
                 <th>Paired Rows</th>
               </tr>
             </thead>
             <tbody>
-              {% for row in ms.biomarker_last_edss_corr %}
+              {% for row in ms.biomarker_sample_edss_corr %}
               <tr>
                 <td>{{ row.biomarker }}</td>
                 <td>{{ "%.4f"|format(row.corr) }}</td>
@@ -855,12 +856,83 @@ _HTML_TEMPLATE = """
           </table>
         </div>
         {% else %}
-        <p class="muted">Not enough paired data to estimate biomarker-to-Last-EDSS correlations.</p>
+        <p class="muted">Not enough paired data to estimate biomarker-to-Sample-EDSS correlations.</p>
+        {% endif %}
+      </section>
+
+      <section>
+        <h2>Biomarker Correlation by Sample EDSS Bands (0-3.5 vs 4+)</h2>
+        <p class="muted small">Correlation method: {{ ms.summary.get('correlation_method', 'Spearman rank correlation (Pearson computed on ranked values)') }}.</p>
+        {% if ms.biomarker_sample_edss_group_corr %}
+        <div class="table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>Biomarker</th>
+                <th>Corr (0-3.5)</th>
+                <th>Rows (0-3.5)</th>
+                <th>Corr (4+)</th>
+                <th>Rows (4+)</th>
+                <th>|Delta|</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in ms.biomarker_sample_edss_group_corr %}
+              <tr>
+                <td>{{ row.biomarker }}</td>
+                <td>{% if row.low_corr is not none %}{{ "%.4f"|format(row.low_corr) }}{% else %}-{% endif %}</td>
+                <td>{{ row.low_paired_rows }}</td>
+                <td>{% if row.high_corr is not none %}{{ "%.4f"|format(row.high_corr) }}{% else %}-{% endif %}</td>
+                <td>{{ row.high_paired_rows }}</td>
+                <td>{{ "%.4f"|format(row.delta_abs) }}</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% else %}
+        <p class="muted">Not enough grouped paired data to estimate banded Sample-EDSS biomarker correlations.</p>
+        {% endif %}
+      </section>
+
+      <section>
+        <h2>Biomarker Correlation by Last EDSS Bands (0-3.5 vs 4+)</h2>
+        <p class="muted small">Correlation method: {{ ms.summary.get('correlation_method', 'Spearman rank correlation (Pearson computed on ranked values)') }}.</p>
+        {% if ms.biomarker_last_edss_group_corr %}
+        <div class="table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>Biomarker</th>
+                <th>Corr (0-3.5)</th>
+                <th>Rows (0-3.5)</th>
+                <th>Corr (4+)</th>
+                <th>Rows (4+)</th>
+                <th>|Delta|</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in ms.biomarker_last_edss_group_corr %}
+              <tr>
+                <td>{{ row.biomarker }}</td>
+                <td>{% if row.low_corr is not none %}{{ "%.4f"|format(row.low_corr) }}{% else %}-{% endif %}</td>
+                <td>{{ row.low_paired_rows }}</td>
+                <td>{% if row.high_corr is not none %}{{ "%.4f"|format(row.high_corr) }}{% else %}-{% endif %}</td>
+                <td>{{ row.high_paired_rows }}</td>
+                <td>{{ "%.4f"|format(row.delta_abs) }}</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% else %}
+        <p class="muted">Not enough grouped paired data to estimate banded Last-EDSS biomarker correlations.</p>
         {% endif %}
       </section>
 
       <section>
         <h2>Biomarker Inter-correlation</h2>
+        <p class="muted small">Correlation method: {{ ms.summary.get('correlation_method', 'Spearman rank correlation (Pearson computed on ranked values)') }}.</p>
         {% if ms.biomarker_pair_corr %}
         <div class="table-scroll">
           <table>
@@ -889,8 +961,16 @@ _HTML_TEMPLATE = """
         {% else %}
         <p class="muted">Not enough paired coverage for robust biomarker-to-biomarker correlation estimation.</p>
         {% endif %}
-        <h3 style="margin-top:0.9rem;">Correlation Matrix (Spearman)</h3>
+        <h3 style="margin-top:0.9rem;">Correlation Matrix (Overall)</h3>
         <div class="table-scroll" id="msCorrMatrixTable"></div>
+        <h3 style="margin-top:0.9rem;">Correlation Matrix (Sample EDSS 0-3.5)</h3>
+        <div class="table-scroll" id="msCorrMatrixSampleLowTable"></div>
+        <h3 style="margin-top:0.9rem;">Correlation Matrix (Sample EDSS 4+)</h3>
+        <div class="table-scroll" id="msCorrMatrixSampleHighTable"></div>
+        <h3 style="margin-top:0.9rem;">Correlation Matrix (Last EDSS 0-3.5)</h3>
+        <div class="table-scroll" id="msCorrMatrixLastLowTable"></div>
+        <h3 style="margin-top:0.9rem;">Correlation Matrix (Last EDSS 4+)</h3>
+        <div class="table-scroll" id="msCorrMatrixLastHighTable"></div>
       </section>
       {% endif %}
 
@@ -955,6 +1035,7 @@ _HTML_TEMPLATE = """
           if (asText.length >= 16) return asText.slice(11, 16);
           return asText;
         };
+        const staggerTick = (text, index) => (index % 2 === 0 ? [String(text || ""), ""] : ["", String(text || "")]);
         const topQueueLabels = Array.isArray(queues)
           ? queues.slice(0, 10).map((q) => truncate(`${q.resource_name} ${q.queue_block}/${q.queue_number}`))
           : [];
@@ -1008,7 +1089,7 @@ _HTML_TEMPLATE = """
               },
               x: {
                 title: { display: true, text: "Time (UTC)", color: "#334155", font: { weight: "600" } },
-                ticks: { maxTicksLimit: maxTicks, callback: (value, index) => formatTimeLabel(labels[index]) },
+                ticks: { maxTicksLimit: maxTicks, callback: (value, index) => staggerTick(formatTimeLabel(labels[index]), index) },
                 grid: { display: false }
               }
             },
@@ -1045,7 +1126,7 @@ _HTML_TEMPLATE = """
               },
               x: {
                 title: { display: true, text: "Time (UTC)", color: "#334155", font: { weight: "600" } },
-                ticks: { maxTicksLimit: maxTicks, callback: (value, index) => formatTimeLabel(labels[index]) },
+                ticks: { maxTicksLimit: maxTicks, callback: (value, index) => staggerTick(formatTimeLabel(labels[index]), index) },
                 grid: { display: false }
               }
             },
@@ -1158,6 +1239,7 @@ _HTML_TEMPLATE = """
           if (asText.length >= 16) return asText.slice(11, 16);
           return asText;
         };
+        const staggerTick = (text, index) => (index % 2 === 0 ? [String(text || ""), ""] : ["", String(text || "")]);
 
         const createChart = (id, cfg) => {
           const el = document.getElementById(id);
@@ -1192,7 +1274,7 @@ _HTML_TEMPLATE = """
               },
               x: {
                 title: { display: true, text: "Time (UTC)", color: "#334155", font: { weight: "600" } },
-                ticks: { maxTicksLimit: maxTicks, callback: (value, index) => formatTimeLabel(labels[index]) },
+                ticks: { maxTicksLimit: maxTicks, callback: (value, index) => staggerTick(formatTimeLabel(labels[index]), index) },
                 grid: { display: false }
               }
             },
@@ -1227,7 +1309,7 @@ _HTML_TEMPLATE = """
               },
               x: {
                 title: { display: true, text: "Time (UTC)", color: "#334155", font: { weight: "600" } },
-                ticks: { maxTicksLimit: maxTicks, callback: (value, index) => formatTimeLabel(labels[index]) },
+                ticks: { maxTicksLimit: maxTicks, callback: (value, index) => staggerTick(formatTimeLabel(labels[index]), index) },
                 grid: { display: false }
               }
             },
@@ -1257,7 +1339,7 @@ _HTML_TEMPLATE = """
               },
               x: {
                 title: { display: true, text: "Time (UTC)", color: "#334155", font: { weight: "600" } },
-                ticks: { maxTicksLimit: maxTicks, callback: (value, index) => formatTimeLabel(labels[index]) },
+                ticks: { maxTicksLimit: maxTicks, callback: (value, index) => staggerTick(formatTimeLabel(labels[index]), index) },
                 grid: { display: false }
               }
             },
@@ -1484,6 +1566,7 @@ _HTML_TEMPLATE = """
         const summary = {{ jira.summary_json | safe }};
         const projects = {{ jira.project_status_breakdown_json | safe }};
         const assignees = {{ jira.responsible_workload_json | safe }};
+        const staggerTick = (text, index) => (index % 2 === 0 ? [String(text || ""), ""] : ["", String(text || "")]);
 
         const createChart = (id, cfg) => {
           const el = document.getElementById(id);
@@ -1532,7 +1615,11 @@ _HTML_TEMPLATE = """
             responsive: true,
             maintainAspectRatio: false,
             scales: {
-              x: { stacked: true, title: { display: true, text: "Project" } },
+              x: {
+                stacked: true,
+                title: { display: true, text: "Project" },
+                ticks: { callback: (value, index) => staggerTick(projectLabels[index], index) }
+              },
               y: { stacked: true, beginAtZero: true, title: { display: true, text: "Issue Count" } }
             },
             plugins: { legend: { display: true } }
@@ -1594,9 +1681,15 @@ _HTML_TEMPLATE = """
         const sparse = {{ ms.sparse_biomarkers_json | safe }};
         const courses = {{ ms.course_distribution_json | safe }};
         const progression = {{ ms.edss_progression_json | safe }};
-        const edssCorr = {{ ms.biomarker_last_edss_corr_json | safe }};
+        const edssCorr = {{ ms.biomarker_sample_edss_corr_json | safe }};
         const pairCorr = {{ ms.biomarker_pair_corr_json | safe }};
         const corrMatrix = {{ ms.correlation_matrix_json | safe }};
+        const corrMatrixSampleLow = {{ ms.correlation_matrix_sample_low_json | safe }};
+        const corrMatrixSampleHigh = {{ ms.correlation_matrix_sample_high_json | safe }};
+        const corrMatrixLastLow = {{ ms.correlation_matrix_last_low_json | safe }};
+        const corrMatrixLastHigh = {{ ms.correlation_matrix_last_high_json | safe }};
+        const staggerTick = (text, index) => (index % 2 === 0 ? [String(text || ""), ""] : ["", String(text || "")]);
+        const courseLabels = Array.isArray(courses) ? courses.map((r) => String(r.course || "")) : [];
 
         const createChart = (id, cfg) => {
           const el = document.getElementById(id);
@@ -1633,7 +1726,7 @@ _HTML_TEMPLATE = """
         createChart("msCourseDistributionChart", {
           type: "bar",
           data: {
-            labels: Array.isArray(courses) ? courses.map((r) => String(r.course || "")) : [],
+            labels: courseLabels,
             datasets: [
               {
                 label: "Sample Course",
@@ -1653,7 +1746,11 @@ _HTML_TEMPLATE = """
             responsive: true,
             maintainAspectRatio: false,
             scales: {
-              x: { stacked: false, title: { display: true, text: "Course" } },
+              x: {
+                stacked: false,
+                title: { display: true, text: "Course" },
+                ticks: { callback: (value, index) => staggerTick(courseLabels[index], index) }
+              },
               y: { stacked: false, beginAtZero: true, title: { display: true, text: "Count" } }
             },
             plugins: { legend: { display: true } }
@@ -1666,7 +1763,7 @@ _HTML_TEMPLATE = """
           data: {
             labels: corrTop.map((r) => String(r.biomarker || "")),
             datasets: [{
-              label: "Spearman Corr with Last EDSS",
+              label: "Spearman Corr with Sample EDSS",
               data: corrTop.map((r) => Number(r.corr || 0)),
               borderRadius: 8,
               backgroundColor: corrTop.map((r) => Number(r.corr || 0) >= 0 ? "#dc2626" : "#1d4ed8"),
@@ -1676,7 +1773,10 @@ _HTML_TEMPLATE = """
             responsive: true,
             maintainAspectRatio: false,
             scales: {
-              x: { title: { display: true, text: "Biomarker" } },
+              x: {
+                title: { display: true, text: "Biomarker" },
+                ticks: { callback: (value, index) => staggerTick(corrTop[index] ? String(corrTop[index].biomarker || "") : "", index) }
+              },
               y: { min: -1, max: 1, title: { display: true, text: "Correlation" } }
             },
             plugins: { legend: { display: true } }
@@ -1751,11 +1851,11 @@ _HTML_TEMPLATE = """
           }
         });
 
-        const renderCorrMatrix = () => {
-          const host = document.getElementById("msCorrMatrixTable");
+        const renderCorrMatrix = (hostId, matrixPayload) => {
+          const host = document.getElementById(hostId);
           if (!host) return;
-          const columns = Array.isArray(corrMatrix.columns) ? corrMatrix.columns : [];
-          const rows = Array.isArray(corrMatrix.rows) ? corrMatrix.rows : [];
+          const columns = Array.isArray(matrixPayload.columns) ? matrixPayload.columns : [];
+          const rows = Array.isArray(matrixPayload.rows) ? matrixPayload.rows : [];
           if (!columns.length || !rows.length) {
             host.innerHTML = '<p class="muted">Matrix unavailable: insufficient paired data.</p>';
             return;
@@ -1803,7 +1903,11 @@ _HTML_TEMPLATE = """
           `;
           host.innerHTML = html;
         };
-        renderCorrMatrix();
+        renderCorrMatrix("msCorrMatrixTable", corrMatrix);
+        renderCorrMatrix("msCorrMatrixSampleLowTable", corrMatrixSampleLow);
+        renderCorrMatrix("msCorrMatrixSampleHighTable", corrMatrixSampleHigh);
+        renderCorrMatrix("msCorrMatrixLastLowTable", corrMatrixLastLow);
+        renderCorrMatrix("msCorrMatrixLastHighTable", corrMatrixLastHigh);
 
         document.querySelectorAll(".chart-export-btn").forEach((btn) => {
           btn.addEventListener("click", () => {
@@ -1872,6 +1976,14 @@ def _body_to_html(text: str) -> str:
     if not lines:
         return "<p></p>"
 
+    mixed_html = _render_mixed_markdown_tables(lines)
+    if mixed_html is not None:
+        return mixed_html
+
+    table_html = _markdown_table_to_html(lines)
+    if table_html:
+        return table_html
+
     bullet_lines = [line for line in lines if re.match(r"^[-*]\s+", line)]
     non_bullet_lines = [line for line in lines if line not in bullet_lines]
     if bullet_lines:
@@ -1891,6 +2003,98 @@ def _body_to_html(text: str) -> str:
             return f"<ul>{items}</ul>"
 
     return "".join(f"<p>{_inline_format(line)}</p>" for line in lines)
+
+
+def _markdown_table_to_html(lines: list[str]) -> str | None:
+    pipe_lines = [line for line in lines if "|" in line]
+    if len(pipe_lines) < 2:
+        return None
+
+    header_idx = None
+    sep_idx = None
+    for idx in range(len(pipe_lines) - 1):
+        if _is_markdown_table_separator(pipe_lines[idx + 1]):
+            header_idx = idx
+            sep_idx = idx + 1
+            break
+    if header_idx is None or sep_idx is None:
+        return None
+
+    header_cells = _split_markdown_table_row(pipe_lines[header_idx])
+    if not header_cells:
+        return None
+
+    body_rows: list[list[str]] = []
+    for row_line in pipe_lines[sep_idx + 1 :]:
+        cells = _split_markdown_table_row(row_line)
+        if not cells:
+            continue
+        while len(cells) < len(header_cells):
+            cells.append("")
+        body_rows.append(cells[: len(header_cells)])
+
+    if not body_rows:
+        return None
+
+    thead = "".join(f"<th>{_inline_format(cell)}</th>" for cell in header_cells)
+    tbody_parts: list[str] = []
+    for row in body_rows:
+        tds = "".join(f"<td>{_inline_format(cell)}</td>" for cell in row)
+        tbody_parts.append(f"<tr>{tds}</tr>")
+    tbody = "".join(tbody_parts)
+    return f"<div class='table-scroll'><table><thead><tr>{thead}</tr></thead><tbody>{tbody}</tbody></table></div>"
+
+
+def _split_markdown_table_row(row: str) -> list[str]:
+    trimmed = row.strip()
+    if trimmed.startswith("|"):
+        trimmed = trimmed[1:]
+    if trimmed.endswith("|"):
+        trimmed = trimmed[:-1]
+    return [cell.strip() for cell in trimmed.split("|")]
+
+
+def _is_markdown_table_separator(line: str) -> bool:
+    cells = _split_markdown_table_row(line)
+    if not cells:
+        return False
+    for cell in cells:
+        compact = cell.replace(" ", "")
+        if not compact:
+            return False
+        if not re.fullmatch(r":?-{3,}:?", compact):
+            return False
+    return True
+
+
+def _render_mixed_markdown_tables(lines: list[str]) -> str | None:
+    html_parts: list[str] = []
+    idx = 0
+    found_table = False
+
+    while idx < len(lines):
+        if idx + 1 < len(lines) and "|" in lines[idx] and _is_markdown_table_separator(lines[idx + 1]):
+            table_lines = [lines[idx], lines[idx + 1]]
+            idx += 2
+            while idx < len(lines) and "|" in lines[idx]:
+                table_lines.append(lines[idx])
+                idx += 1
+            table_html = _markdown_table_to_html(table_lines)
+            if table_html:
+                html_parts.append(table_html)
+                found_table = True
+                continue
+            # Fallback: if parsing failed, keep original lines as paragraphs.
+            for line in table_lines:
+                html_parts.append(f"<p>{_inline_format(line)}</p>")
+            continue
+
+        html_parts.append(f"<p>{_inline_format(lines[idx])}</p>")
+        idx += 1
+
+    if not found_table:
+        return None
+    return "".join(html_parts)
 
 
 def _inline_format(text: str) -> str:
@@ -2097,11 +2301,17 @@ def _extract_ms_biomarker_metrics(report: dict) -> dict | None:
                 payload.get("edss_progression", {}),
                 payload.get("course_distribution", []),
                 payload.get("followup_summary", {}),
-                payload.get("biomarker_last_edss_corr", []),
+                payload.get("biomarker_sample_edss_corr", payload.get("biomarker_last_edss_corr", [])),
+                payload.get("biomarker_sample_edss_group_corr", []),
+                payload.get("biomarker_last_edss_group_corr", []),
                 payload.get("biomarker_pair_corr", []),
                 payload.get("correlation_matrix", {}),
+                payload.get("correlation_matrix_sample_low", {}),
+                payload.get("correlation_matrix_sample_high", {}),
+                payload.get("correlation_matrix_last_low", {}),
+                payload.get("correlation_matrix_last_high", {}),
             )
-    return _normalize_ms_biomarker_metrics({}, [], [], [], {}, [], {}, [], [], {})
+    return _normalize_ms_biomarker_metrics({}, [], [], [], {}, [], {}, [], [], [], [], {}, {}, {}, {}, {})
 
 
 def _normalize_ms_biomarker_metrics(
@@ -2112,9 +2322,15 @@ def _normalize_ms_biomarker_metrics(
     edss_progression: dict,
     course_distribution: list,
     followup_summary: dict,
-    biomarker_last_edss_corr: list,
+    biomarker_sample_edss_corr: list,
+    biomarker_sample_edss_group_corr: list,
+    biomarker_last_edss_group_corr: list,
     biomarker_pair_corr: list,
     correlation_matrix: dict,
+    correlation_matrix_sample_low: dict,
+    correlation_matrix_sample_high: dict,
+    correlation_matrix_last_low: dict,
+    correlation_matrix_last_high: dict,
 ) -> dict:
     normalized_summary = {
         "rows": int(summary.get("rows", 0) or 0),
@@ -2125,6 +2341,9 @@ def _normalize_ms_biomarker_metrics(
         "weak_contributors": int(summary.get("weak_contributors", 0) or 0),
         "edss_pairs": int(summary.get("edss_pairs", 0) or 0),
         "edss_worsened_ratio": float(summary.get("edss_worsened_ratio", 0.0) or 0.0),
+        "correlation_method": str(
+            summary.get("correlation_method", "Spearman rank correlation (Pearson computed on ranked values)")
+        ),
     }
     normalized_edss = {
         "improved": int(edss_progression.get("improved", 0) or 0),
@@ -2150,10 +2369,22 @@ def _normalize_ms_biomarker_metrics(
         "course_distribution": course_distribution or [],
         "course_distribution_json": json.dumps(course_distribution or []),
         "followup_summary": normalized_followup,
-        "biomarker_last_edss_corr": biomarker_last_edss_corr or [],
-        "biomarker_last_edss_corr_json": json.dumps(biomarker_last_edss_corr or []),
+        "biomarker_sample_edss_corr": biomarker_sample_edss_corr or [],
+        "biomarker_sample_edss_corr_json": json.dumps(biomarker_sample_edss_corr or []),
+        "biomarker_sample_edss_group_corr": biomarker_sample_edss_group_corr or [],
+        "biomarker_sample_edss_group_corr_json": json.dumps(biomarker_sample_edss_group_corr or []),
+        "biomarker_last_edss_group_corr": biomarker_last_edss_group_corr or [],
+        "biomarker_last_edss_group_corr_json": json.dumps(biomarker_last_edss_group_corr or []),
         "biomarker_pair_corr": biomarker_pair_corr or [],
         "biomarker_pair_corr_json": json.dumps(biomarker_pair_corr or []),
         "correlation_matrix": correlation_matrix or {"columns": [], "rows": []},
         "correlation_matrix_json": json.dumps(correlation_matrix or {"columns": [], "rows": []}),
+        "correlation_matrix_sample_low": correlation_matrix_sample_low or {"columns": [], "rows": []},
+        "correlation_matrix_sample_low_json": json.dumps(correlation_matrix_sample_low or {"columns": [], "rows": []}),
+        "correlation_matrix_sample_high": correlation_matrix_sample_high or {"columns": [], "rows": []},
+        "correlation_matrix_sample_high_json": json.dumps(correlation_matrix_sample_high or {"columns": [], "rows": []}),
+        "correlation_matrix_last_low": correlation_matrix_last_low or {"columns": [], "rows": []},
+        "correlation_matrix_last_low_json": json.dumps(correlation_matrix_last_low or {"columns": [], "rows": []}),
+        "correlation_matrix_last_high": correlation_matrix_last_high or {"columns": [], "rows": []},
+        "correlation_matrix_last_high_json": json.dumps(correlation_matrix_last_high or {"columns": [], "rows": []}),
     }

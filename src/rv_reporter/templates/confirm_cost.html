@@ -1,13 +1,13 @@
 {% extends "layout.html" %}
-{% block title %}Confirm OpenAI Cost | RV Reporter{% endblock %}
+{% block title %}Confirm Cost | RV Reporter{% endblock %}
 {% block content %}
 <section class="panel">
-  <h1>OpenAI Cost Estimate</h1>
+  <h1>Cost Estimate</h1>
   <p class="muted">Review estimated request cost before running report generation.</p>
   <div class="stats-grid cost-context-grid">
     <div class="stat-card">
       <div class="stat-label">Report Type</div>
-      <div class="stat-value">{{ report_type_id }}</div>
+      <div class="stat-value">{{ report_type_label or report_type_id }}</div>
     </div>
     <div class="stat-card">
       <div class="stat-label">CSV Source</div>
@@ -19,6 +19,10 @@
     </div>
   </div>
   <div class="stats-grid" style="margin-top: 0.7rem;">
+    <div class="stat-card">
+      <div class="stat-label">Provider</div>
+      <div class="stat-value">{{ provider }}</div>
+    </div>
     <div class="stat-card">
       <div class="stat-label">Model</div>
       <div class="stat-value">{{ estimate.model }}</div>
@@ -37,6 +41,17 @@
     </div>
   </div>
   <p class="small muted" style="margin-top: 0.8rem;">
+    Output budget requested: {{ estimate.output_tokens_user_budget }}.
+    {% if estimate.output_tokens_scale_factor and estimate.output_tokens_scale_factor > 1 %}
+    Provider safety factor applied: {{ estimate.output_tokens_scale_factor }}x.
+    {% endif %}
+    {% if estimate.calibration_applied %}
+    <br>
+    Calibrated using {{ estimate.calibration_sample_size }} historical actual-cost samples
+    (scope: {{ estimate.calibration_scope }}, factor: {{ estimate.calibration_factor }}x).
+    Raw estimate before calibration: ${{ "%.6f"|format(estimate.raw_total_cost_usd_est) }}.
+    {% endif %}
+    <br>
     Pricing source: <a href="{{ estimate.pricing_source_url }}" target="_blank">{{ estimate.pricing_source_url }}</a>
     (verified {{ estimate.pricing_verified_date }}).
   </p>
@@ -45,12 +60,14 @@
 <section class="panel">
   <h2>Continue or Abort</h2>
   <form method="post" action="{{ url_for('generate') }}" id="confirm_generate_form">
-    <input type="hidden" name="confirm_openai" value="1" />
+    <input type="hidden" name="confirm_cost" value="1" />
+    <input type="hidden" name="attempt_id" value="{{ attempt_id or '' }}" />
     <input type="hidden" name="expected_cost_token" value="{{ expected_cost_token }}" />
     <input type="hidden" name="report_type_id" value="{{ report_type_id }}" />
     <input type="hidden" name="provider" value="{{ provider }}" />
     <input type="hidden" name="model" value="{{ model }}" />
-    <input type="hidden" name="csv_source" value="{{ csv_source }}" />
+    <input type="hidden" name="api_key" value="{{ api_key or '' }}" />
+    <input type="hidden" name="api_base_url" value="{{ api_base_url or '' }}" />
     <input type="hidden" name="existing_csv_path" value="{{ csv_path }}" />
     <input type="hidden" name="sheet_name" value="{{ sheet_name }}" />
     <input type="hidden" name="row_limit" value="{{ row_limit }}" />
@@ -85,6 +102,12 @@
     const msg = document.getElementById("confirm_processing_msg");
     if (!form || !submitBtn || !msg) return;
     form.addEventListener("submit", () => {
+      if (window.rvGenerationState && typeof window.rvGenerationState.startJob === "function") {
+        const attemptInput = form.querySelector("input[name='attempt_id']");
+        const attemptId = attemptInput && attemptInput.value ? attemptInput.value : "";
+        const jobId = window.rvGenerationState.startJob(attemptId, "Generating report...");
+        try { sessionStorage.setItem("rv_current_job_id", jobId); } catch (e) {}
+      }
       submitBtn.disabled = true;
       submitBtn.textContent = "Generating...";
       msg.classList.remove("hidden");

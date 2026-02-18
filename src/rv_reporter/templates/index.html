@@ -8,129 +8,135 @@
 
 <section class="panel">
   <form method="post" action="{{ url_for('generate') }}" enctype="multipart/form-data" class="grid" id="generate_form">
+    <input type="hidden" name="attempt_id" id="attempt_id" value="" />
     <input type="hidden" name="existing_csv_path" id="existing_csv_path" value="{{ existing_csv_path or '' }}" />
-    <label>
-      <span>Report Type</span>
-      <select name="report_type_id" required>
-        {% for rid in report_types %}
-          <option value="{{ rid }}" {% if rid == defaults.report_type_id %}selected{% endif %}>{{ rid }}</option>
-        {% endfor %}
-      </select>
-      <span class="field-help">Select the analysis blueprint. Each report type defines required columns, computed metrics, and the final output structure.</span>
-    </label>
+    <div class="form-row form-row-top">
+      <label>
+        <span>Report Type</span>
+        <select name="report_type_id" required>
+          {% for rt in report_type_options %}
+            <option value="{{ rt.id }}" {% if rt.id == defaults.report_type_id %}selected{% endif %}>{{ rt.label }}</option>
+          {% endfor %}
+        </select>
+        <span class="field-help">Select the analysis blueprint. Each report type defines required columns, computed metrics, and the final output structure.</span>
+      </label>
 
-    <label>
-      <span>Provider</span>
-      <select name="provider" id="provider" required>
-        <option value="local" {% if defaults.provider == "local" %}selected{% endif %}>local</option>
-        <option value="openai">openai</option>
-      </select>
-      <span class="field-help">Use local for deterministic metric-based output with no API cost. Use openai to generate richer narrative and interpretation.</span>
-    </label>
+      <label>
+        <span>Provider</span>
+        <select name="provider" id="provider" required>
+          {% for p in provider_options %}
+            <option value="{{ p.id }}" {% if defaults.provider == p.id %}selected{% endif %}>{{ p.label }}</option>
+          {% endfor %}
+        </select>
+        <span class="field-help">Choose inference engine. local runs deterministic metrics only. API providers use token-authenticated LLM generation.</span>
+      </label>
 
-    <label id="model_wrap">
-      <span>Model / cost ratio</span>
-      <select name="model" id="model_select">
-        {% for opt in model_options %}
-          <option value="{{ opt.value }}" {% if opt.value == defaults.model %}selected{% endif %}>{{ opt.label }}</option>
-        {% endfor %}
-      </select>
-      <span class="field-help">Defines which OpenAI model generates report narrative and insights.<br>Ratio uses gpt-4.1-mini as 1x baseline, estimated from 1000 input + 100 output tokens.</span>
-    </label>
+      <label id="model_wrap">
+        <span>Model / cost ratio</span>
+        <select name="model" id="model_select">
+          {% for opt in model_options %}
+            <option value="{{ opt.value }}" {% if opt.value == defaults.model %}selected{% endif %}>{{ opt.label }}</option>
+          {% endfor %}
+        </select>
+        <span class="field-help">Model id used by selected provider. Ratio is calculated against gpt-5-mini (1x baseline).</span>
+      </label>
+      <label id="upload_wrap" class="upload-field">
+        <span>Upload File</span>
+        <div id="upload_input_row" style="display:flex; gap:.5rem; align-items:center; flex-wrap:nowrap; width:100%;">
+          <select id="upload_mode" style="width: 8.75rem; flex: 0 0 8.75rem;">
+            <option value="new">New file</option>
+            <option value="recent" selected>Recent file</option>
+          </select>
+          <div id="new_upload_row" style="flex:1 1 auto; min-width: 0;">
+            <input type="file" name="csv_upload" id="csv_upload" accept=".csv,.xlsx,.xls" style="width:100%; max-width:24rem;" />
+          </div>
+          <div id="recent_upload_row" class="hidden" style="flex:1 1 auto; min-width: 0;">
+            <select id="recent_upload_select" style="width:100%; max-width:24rem; min-width:0;">
+            <option value="">Choose recent upload...</option>
+            {% for recent in recent_uploads %}
+              <option value="{{ recent }}">{{ recent.split('\\')[-1].split('/')[-1] }}</option>
+            {% endfor %}
+          </select>
+          </div>
+        </div>
+        <span class="field-help">Upload your dataset in CSV or Excel format. For Excel files, sheet names are discovered automatically after selection.</span>
+      </label>
 
-    <label>
-      <span>CSV Source</span>
-      <select name="csv_source" id="csv_source">
-        <option value="sample" {% if defaults.csv_source == "sample" %}selected{% endif %}>sample</option>
-        <option value="upload" {% if defaults.csv_source == "upload" %}selected{% endif %}>upload</option>
-      </select>
-      <span class="field-help">Choose where input data comes from. `sample` uses bundled files; `upload` lets you analyze your own file.</span>
-    </label>
+      <label id="sheet_wrap">
+        <span>Sheet (for .xlsx/.xls)</span>
+        <select name="sheet_name" id="sheet_name">
+          {% if not sheet_options %}
+            <option value="">Auto / not needed</option>
+          {% endif %}
+          {% for sheet in sheet_options %}
+            <option value="{{ sheet }}" {% if selected_sheet == sheet %}selected{% endif %}>{{ sheet }}</option>
+          {% endfor %}
+        </select>
+        <span class="field-help">For Excel inputs, choose the sheet to analyze. If only one sheet exists, it is selected automatically.</span>
+      </label>
+    </div>
 
-    <label id="sample_wrap">
-      <span>Sample File</span>
-      <select name="sample_csv" id="sample_csv">
-        {% for sample in sample_files %}
-          <option value="{{ sample }}">{{ sample }}</option>
-        {% endfor %}
-      </select>
-      <span class="field-help">Select one of the included example datasets. Useful for testing report types and UI behavior quickly.</span>
-    </label>
+    <input type="hidden" name="api_base_url" id="api_base_url" value="{{ defaults.api_base_url or '' }}" />
 
-    <label id="upload_wrap">
-      <span>Upload File</span>
-      <input type="file" name="csv_upload" id="csv_upload" accept=".csv,.xlsx,.xls" />
-      <span class="field-help">Upload your dataset in CSV or Excel format. For Excel files, sheet names are discovered automatically after selection.</span>
-    </label>
+    <div class="form-row form-row-3">
+      <label>
+        <span>Tone</span>
+        <select name="tone">
+          <option value="concise">concise</option>
+          <option value="executive">executive</option>
+          <option value="technical">technical</option>
+        </select>
+        <span class="field-help">Defines writing style and depth.<br><strong>concise:</strong> short and direct summary.<br><strong>executive:</strong> business impact and decisions.<br><strong>technical:</strong> deeper analysis and details.</span>
+      </label>
 
-    <label id="sheet_wrap">
-      <span>Sheet (for .xlsx/.xls)</span>
-      <select name="sheet_name" id="sheet_name">
-        {% if not sheet_options %}
-          <option value="">Auto / not needed</option>
-        {% endif %}
-        {% for sheet in sheet_options %}
-          <option value="{{ sheet }}" {% if selected_sheet == sheet %}selected{% endif %}>{{ sheet }}</option>
-        {% endfor %}
-      </select>
-      <span class="field-help">For Excel inputs, choose the sheet to analyze. If only one sheet exists, it is selected automatically.</span>
-    </label>
+      <label>
+        <span>Audience</span>
+        <select name="audience">
+          <option value="leadership">leadership</option>
+          <option value="engineering">engineering</option>
+          <option value="customer">customer</option>
+        </select>
+        <span class="field-help">Defines who the report is written for.<br><strong>leadership:</strong> risk, impact, and priorities.<br><strong>engineering:</strong> root cause and actions.<br><strong>customer:</strong> service quality and outcomes.</span>
+      </label>
 
-    <label>
-      <span>Tone</span>
-      <select name="tone">
-        <option value="concise">concise</option>
-        <option value="executive">executive</option>
-        <option value="technical">technical</option>
-      </select>
-      <span class="field-help">Defines writing style and depth.<br><strong>concise:</strong> short and direct summary.<br><strong>executive:</strong> business impact and decisions.<br><strong>technical:</strong> deeper analysis and details.</span>
-    </label>
+      <label>
+        <span>Focus</span>
+        <select name="focus">
+          <option value="trends">trends</option>
+          <option value="anomalies">anomalies</option>
+          <option value="cost">cost</option>
+        </select>
+        <span class="field-help">Defines what the report emphasizes most.<br><strong>trends:</strong> long-term behavior over time.<br><strong>anomalies:</strong> spikes and unusual intervals.<br><strong>cost:</strong> waste, efficiency, and savings.</span>
+      </label>
+    </div>
 
-    <label>
-      <span>Audience</span>
-      <select name="audience">
-        <option value="leadership">leadership</option>
-        <option value="engineering">engineering</option>
-        <option value="customer">customer</option>
-      </select>
-      <span class="field-help">Defines who the report is written for.<br><strong>leadership:</strong> risk, impact, and priorities.<br><strong>engineering:</strong> root cause and actions.<br><strong>customer:</strong> service quality and outcomes.</span>
-    </label>
+    <div class="form-row form-row-4">
+      <label>
+        <span>Threshold Key (optional)</span>
+        <input name="threshold_name" placeholder="alert_error_rate or variance_alert_pct" />
+        <span class="field-help">Optional preference key to override default alert logic. Use only known keys supported by this report type.</span>
+      </label>
 
-    <label>
-      <span>Focus</span>
-      <select name="focus">
-        <option value="trends">trends</option>
-        <option value="anomalies">anomalies</option>
-        <option value="cost">cost</option>
-      </select>
-      <span class="field-help">Defines what the report emphasizes most.<br><strong>trends:</strong> long-term behavior over time.<br><strong>anomalies:</strong> spikes and unusual intervals.<br><strong>cost:</strong> waste, efficiency, and savings.</span>
-    </label>
+      <label>
+        <span>Threshold Value (optional)</span>
+        <input name="threshold_value" placeholder="0.05" />
+        <span class="field-help">Numeric override for the selected threshold key. Example: `0.2` for 20% when the metric is ratio-based.</span>
+      </label>
 
-    <label>
-      <span>Threshold Key (optional)</span>
-      <input name="threshold_name" placeholder="alert_error_rate or variance_alert_pct" />
-      <span class="field-help">Optional preference key to override default alert logic. Use only known keys supported by this report type.</span>
-    </label>
+      <label>
+        <span>Row Limit (cost control)</span>
+        <input name="row_limit" type="number" min="1" step="1" value="{{ defaults.row_limit }}" />
+        <span class="field-help">Maximum number of rows loaded from input. Lower values reduce cost and time; higher values improve coverage.</span>
+      </label>
 
-    <label>
-      <span>Threshold Value (optional)</span>
-      <input name="threshold_value" placeholder="0.05" />
-      <span class="field-help">Numeric override for the selected threshold key. Example: `0.2` for 20% when the metric is ratio-based.</span>
-    </label>
+      <label>
+        <span>Output Tokens Budget</span>
+        <input name="output_token_budget" type="number" min="1" step="1" value="1200" />
+        <span class="field-help">Estimated response size used for cost preview. Increase if you expect longer reports with more narrative.</span>
+      </label>
+    </div>
 
-    <label>
-      <span>Row Limit (cost control)</span>
-      <input name="row_limit" type="number" min="1" step="1" value="{{ defaults.row_limit }}" />
-      <span class="field-help">Maximum number of rows loaded from input. Lower values reduce cost and time; higher values improve coverage.</span>
-    </label>
-
-    <label>
-      <span>Output Tokens Budget (OpenAI estimate)</span>
-      <input name="output_token_budget" type="number" min="1" step="1" value="1200" />
-      <span class="field-help">Estimated response size used for cost preview. Increase if you expect longer reports with more narrative.</span>
-    </label>
-
-    <button type="submit" class="btn-primary" id="generate_submit_btn">Generate Report</button>
+    <button type="submit" class="btn-primary generate-btn-row" id="generate_submit_btn">Generate Report</button>
     <p id="generate_processing_msg" class="processing-msg hidden">
       <span class="spinner" aria-hidden="true"></span>
       Processing request. This may take several seconds...
@@ -145,24 +151,28 @@
 </div>
 
 <script>
-  const source = document.getElementById("csv_source");
   const reportTypeInput = document.querySelector("select[name='report_type_id']");
   const provider = document.getElementById("provider");
   const modelWrap = document.getElementById("model_wrap");
   const modelSelect = document.getElementById("model_select");
-  const sampleWrap = document.getElementById("sample_wrap");
+  const apiBaseUrlInput = document.getElementById("api_base_url");
   const uploadWrap = document.getElementById("upload_wrap");
-  const sampleInput = document.getElementById("sample_csv");
+  const uploadMode = document.getElementById("upload_mode");
+  const newUploadRow = document.getElementById("new_upload_row");
+  const recentUploadRow = document.getElementById("recent_upload_row");
   const uploadInput = document.getElementById("csv_upload");
+  const recentUploadSelect = document.getElementById("recent_upload_select");
   const sheetWrap = document.getElementById("sheet_wrap");
   const sheetInput = document.getElementById("sheet_name");
   const existingCsvPathInput = document.getElementById("existing_csv_path");
+  const attemptIdInput = document.getElementById("attempt_id");
   const STORAGE_KEY = "rv_reporter.generate_form_state.v1";
+  const PROVIDER_MODEL_OPTIONS = {{ provider_model_options|tojson }};
+  const PROVIDER_IDS = {{ provider_ids|tojson }};
   let currentSourceFileType = "unknown";
 
   const saveState = () => {
     const state = {
-      csv_source: source.value,
       provider: provider.value,
     };
     try { sessionStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch (e) {}
@@ -173,26 +183,91 @@
       const raw = sessionStorage.getItem(STORAGE_KEY);
       if (!raw) return;
       const state = JSON.parse(raw);
-      if (state.csv_source === "sample" || state.csv_source === "upload") {
-        source.value = state.csv_source;
-      }
-      if (state.provider === "local" || state.provider === "openai") {
+      if (PROVIDER_IDS.includes(state.provider)) {
         provider.value = state.provider;
       }
     } catch (e) {}
-  };
-
-  const syncCsvSourceUi = () => {
-    const upload = source.value === "upload";
-    sampleWrap.classList.toggle("field-disabled", upload);
-    uploadWrap.classList.toggle("field-disabled", !upload);
-    sampleInput.disabled = upload;
-    uploadInput.disabled = !upload;
   };
   const syncProviderUi = () => {
     const isLocal = provider.value === "local";
     modelWrap.classList.toggle("field-disabled", isLocal);
     modelSelect.disabled = isLocal;
+    if (isLocal) {
+      apiBaseUrlInput.value = "";
+    }
+  };
+  const syncUploadModeUi = () => {
+    const recentMode = uploadMode && uploadMode.value === "recent";
+    if (newUploadRow) {
+      newUploadRow.classList.toggle("hidden", recentMode);
+    }
+    if (recentUploadRow) {
+      recentUploadRow.classList.toggle("hidden", !recentMode);
+    }
+    if (uploadInput) {
+      uploadInput.disabled = recentMode;
+    }
+    if (recentUploadSelect) {
+      recentUploadSelect.disabled = !recentMode;
+    }
+    if (!recentMode && recentUploadSelect) {
+      recentUploadSelect.value = "";
+    }
+    if (recentMode && uploadInput) {
+      uploadInput.value = "";
+    }
+  };
+  const setModelOptions = (options, previousValue) => {
+    const normalized = options || [];
+    modelSelect.innerHTML = "";
+    for (const opt of normalized) {
+      const option = document.createElement("option");
+      option.value = String((typeof opt === "string" ? opt : opt.value) || "");
+      option.textContent = String((typeof opt === "string" ? opt : (opt.label || opt.value)) || option.value);
+      modelSelect.appendChild(option);
+    }
+    if (provider.value === "local") {
+      modelSelect.value = "local-metrics";
+      return;
+    }
+    if (previousValue) {
+      const values = normalized.map((o) => typeof o === "string" ? String(o) : String(o.value || ""));
+      if (values.includes(previousValue)) {
+        modelSelect.value = previousValue;
+        return;
+      }
+    }
+    if (modelSelect.options.length > 0) {
+      modelSelect.selectedIndex = 0;
+    }
+  };
+  const refreshProviderModels = async () => {
+    const previousValue = modelSelect.value;
+    const fallbackOptions = PROVIDER_MODEL_OPTIONS[provider.value] || [];
+    if (provider.value === "local") {
+      setModelOptions([{ value: "local-metrics", label: "local-metrics / 0x" }], previousValue);
+      return;
+    }
+    try {
+      const params = new URLSearchParams({
+        provider: provider.value,
+        api_key: "",
+        api_base_url: (apiBaseUrlInput && apiBaseUrlInput.value) ? apiBaseUrlInput.value : "",
+      });
+      const response = await fetch(`{{ url_for('provider_models') }}?${params.toString()}`);
+      if (!response.ok) {
+        setModelOptions(fallbackOptions, previousValue);
+        return;
+      }
+      const payload = await response.json();
+      if (payload && Array.isArray(payload.options) && payload.options.length > 0) {
+        setModelOptions(payload.options, previousValue);
+      } else {
+        setModelOptions(fallbackOptions, previousValue);
+      }
+    } catch (e) {
+      setModelOptions(fallbackOptions, previousValue);
+    }
   };
   const syncSheetUi = () => {
     const isExcel = currentSourceFileType === "excel";
@@ -249,29 +324,29 @@
       syncSheetUi();
     } catch (e) {}
   };
-  const refreshSampleSheets = async () => {
-    if (source.value !== "sample") return;
-    const selected = sampleInput.value;
-    if (!selected) return;
-    existingCsvPathInput.value = "";
-    await fetchSourceMetadata(selected, sheetInput.value);
-  };
-  source.addEventListener("change", () => { syncCsvSourceUi(); refreshSampleSheets(); saveState(); });
   reportTypeInput.addEventListener("change", () => {
-    const activePath = source.value === "sample" ? sampleInput.value : existingCsvPathInput.value;
+    const activePath = existingCsvPathInput.value;
     fetchSourceMetadata(activePath, sheetInput.value);
     saveState();
   });
-  provider.addEventListener("change", () => { syncProviderUi(); saveState(); });
-  sampleInput.addEventListener("change", () => { refreshSampleSheets(); saveState(); });
+  provider.addEventListener("change", () => {
+    syncProviderUi();
+    refreshProviderModels();
+    saveState();
+  });
+  if (apiBaseUrlInput) {
+    apiBaseUrlInput.addEventListener("input", () => { refreshProviderModels(); });
+    apiBaseUrlInput.addEventListener("change", () => { refreshProviderModels(); });
+  }
   sheetInput.addEventListener("change", () => {
-    const activePath = source.value === "sample" ? sampleInput.value : existingCsvPathInput.value;
+    const activePath = existingCsvPathInput.value;
     fetchSourceMetadata(activePath, sheetInput.value);
     saveState();
   });
   uploadInput.addEventListener("change", () => {
     if (uploadInput.files && uploadInput.files.length > 0) {
       existingCsvPathInput.value = "";
+      if (recentUploadSelect) recentUploadSelect.value = "";
       const selectedFile = uploadInput.files[0];
       const data = new FormData();
       data.append("file", selectedFile);
@@ -297,19 +372,40 @@
         .catch(() => {});
     }
   });
+  if (uploadMode) {
+    uploadMode.addEventListener("change", () => {
+      syncUploadModeUi();
+      if (uploadMode.value !== "recent") {
+        if (existingCsvPathInput.value && uploadInput && uploadInput.files && uploadInput.files.length === 0) {
+          existingCsvPathInput.value = "";
+          sheetInput.value = "";
+          populateSheetOptions([]);
+          syncSheetUi();
+        }
+      }
+    });
+  }
+  if (recentUploadSelect) {
+    recentUploadSelect.addEventListener("change", () => {
+      const path = recentUploadSelect.value || "";
+      if (!path) return;
+      existingCsvPathInput.value = path;
+      if (uploadInput) uploadInput.value = "";
+      fetchSourceMetadata(path, sheetInput.value);
+    });
+  }
   window.addEventListener("pageshow", () => {
     restoreState();
-    syncCsvSourceUi();
     syncProviderUi();
+    refreshProviderModels();
     resetGenerateUi();
   });
   restoreState();
-  syncCsvSourceUi();
   syncProviderUi();
+  syncUploadModeUi();
+  refreshProviderModels();
   syncSheetUi();
-  if (source.value === "sample" && !existingCsvPathInput.value) {
-    refreshSampleSheets();
-  } else if (source.value === "upload" && existingCsvPathInput.value) {
+  if (existingCsvPathInput.value) {
     fetchSourceMetadata(existingCsvPathInput.value, sheetInput.value);
   }
 
@@ -325,6 +421,7 @@
   const helpPopup = document.getElementById("help_popup");
   const helpPopupTitle = document.getElementById("help_popup_title");
   const helpPopupBody = document.getElementById("help_popup_body");
+  let activeHelpButton = null;
   const showHelpPopup = (anchorEl, title, text) => {
     helpPopupTitle.textContent = title || "Field Help";
         helpPopupBody.innerHTML = text || "";
@@ -336,6 +433,10 @@
     helpPopup.style.left = `${Math.max(12, left)}px`;
   };
   const hideHelpPopup = () => {
+    if (activeHelpButton) {
+      activeHelpButton.setAttribute("aria-expanded", "false");
+      activeHelpButton = null;
+    }
     helpPopup.classList.add("hidden");
   };
   const setupHelpToggles = () => {
@@ -346,37 +447,53 @@
       const titleSpan = label.querySelector("span:not(.field-help)");
       if (!titleSpan) continue;
       titleSpan.classList.add("label-row");
-      const button = document.createElement("button");
-      button.type = "button";
+      const button = document.createElement("span");
       button.className = "help-toggle";
-      button.textContent = "?";
+      button.textContent = "i";
+      button.setAttribute("role", "button");
+      button.setAttribute("tabindex", "0");
       button.setAttribute("aria-label", "Show field help");
       button.setAttribute("aria-expanded", "false");
       const title = (titleSpan.childNodes[0] && titleSpan.childNodes[0].nodeValue ? titleSpan.childNodes[0].nodeValue : "Field Help").trim();
       const text = help.innerHTML.trim();
-      button.addEventListener("mouseenter", () => {
-        showHelpPopup(button, title, text);
-        button.setAttribute("aria-expanded", "true");
-      });
-      button.addEventListener("mouseleave", () => {
+      button.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        const alreadyOpen = !helpPopup.classList.contains("hidden") && activeHelpButton === button;
+        if (alreadyOpen) {
+          hideHelpPopup();
+          return;
+        }
         hideHelpPopup();
-        button.setAttribute("aria-expanded", "false");
-      });
-      button.addEventListener("focus", () => {
-        showHelpPopup(button, title, text);
+        activeHelpButton = button;
         button.setAttribute("aria-expanded", "true");
+        showHelpPopup(button, title, text);
       });
-      button.addEventListener("blur", () => {
-        hideHelpPopup();
-        button.setAttribute("aria-expanded", "false");
+      button.addEventListener("keydown", (event) => {
+        if (event.key !== "Enter" && event.key !== " ") return;
+        event.preventDefault();
+        button.click();
       });
       titleSpan.appendChild(button);
     }
   };
   setupHelpToggles();
+  document.addEventListener("click", (event) => {
+    if (event.target && event.target.closest(".help-toggle")) return;
+    hideHelpPopup();
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") hideHelpPopup();
+  });
   resetGenerateUi();
   generateForm.addEventListener("submit", () => {
     saveState();
+    const attemptId = `evt_${Math.random().toString(36).slice(2, 12)}`;
+    attemptIdInput.value = attemptId;
+    if (window.rvGenerationState && typeof window.rvGenerationState.startJob === "function") {
+      const jobId = window.rvGenerationState.startJob(attemptId, "Generating report...");
+      try { sessionStorage.setItem("rv_current_job_id", jobId); } catch (e) {}
+    }
     generateBtn.disabled = true;
     generateBtn.textContent = "Working...";
     generateMsg.classList.remove("hidden");
