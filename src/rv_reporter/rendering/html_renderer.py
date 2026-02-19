@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import html
 import json
@@ -49,10 +49,28 @@ _HTML_TEMPLATE = """
       .chart-export-btn { border: 1px solid #c7d2e3; background: #ffffff; color: #1d4ed8; border-radius: 8px; padding: 0.25rem 0.55rem; font-size: 0.76rem; font-weight: 600; cursor: pointer; }
       .chart-export-btn:hover { background: #eff6ff; border-color: #93c5fd; }
       .small { font-size: 0.84rem; }
+      .dist-icon { font-size: 1.65rem; line-height: 1; display: inline-block; min-width: 2rem; text-align: center; }
+      .dist-icon-svg { width: 38px; height: 24px; display: inline-block; vertical-align: middle; }
+      .dist-icon-svg path { fill: none; stroke: #2563eb; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
+      .fit-badge { display: inline-block; padding: 0.18rem 0.48rem; border-radius: 999px; font-size: 0.78rem; font-weight: 700; border: 1px solid; }
+      .fit-badge.good { color: #166534; background: #dcfce7; border-color: #86efac; }
+      .fit-badge.weak { color: #92400e; background: #fef3c7; border-color: #fcd34d; }
       .table-scroll { overflow: auto; }
       .chart-wrap { height: 320px; overflow: hidden; }
       .chart-wrap canvas { width: 100% !important; height: calc(100% - 56px) !important; display: block; }
       td, th { overflow-wrap: anywhere; word-break: break-word; }
+      .ms-flow { display: flex; flex-direction: column; gap: 0; }
+      .ms-sec-summary { order: 1; }
+      .ms-sec-data { order: 2; }
+      .ms-sec-distribution { order: 3; }
+      .ms-sec-progression { order: 4; }
+      .ms-sec-corr-sample { order: 5; }
+      .ms-sec-corr-sample-band { order: 6; }
+      .ms-sec-corr-last-band { order: 7; }
+      .ms-sec-corr-inter { order: 8; }
+      .ms-sec-priority { order: 9; }
+      .ms-sec-zscore { order: 10; }
+      .ms-sec-validation { order: 11; }
       @media print { .chart-export-btn { display: none !important; } }
       @media (max-width: 900px) { .chart-grid { grid-template-columns: 1fr; } }
     </style>
@@ -304,7 +322,58 @@ _HTML_TEMPLATE = """
               {{ twamp.summary.get('risk_band', 'healthy') }}
             </div>
           </div>
+          <div class="stat-card">
+            <div class="stat-label">Sessions</div>
+            <div class="stat-value">{{ twamp.summary.get('sessions', 0) }}</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Sessions With DSCP</div>
+            <div class="stat-value">{{ twamp.summary.get('sessions_with_dscp', 0) }}</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Total Loss Packets</div>
+            <div class="stat-value">{{ "{:,.0f}".format(twamp.summary.get('total_loss_packets', 0)) }}</div>
+          </div>
         </div>
+      </section>
+
+      <section>
+        <h2>Session CoS Distinction (DSCP-based)</h2>
+        {% if twamp.session_cos_summary %}
+        <div class="table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>Session ID</th>
+                <th>Peer</th>
+                <th>DSCP</th>
+                <th>CoS Class</th>
+                <th>Samples</th>
+                <th>Avg Discard %</th>
+                <th>P95 Discard %</th>
+                <th>Avg Yellow %</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in twamp.session_cos_summary %}
+              <tr>
+                <td>{{ row.session_id }}</td>
+                <td class="mono">{{ row.peer_addr }}</td>
+                <td>{% if row.dscp is not none %}{{ row.dscp }}{% else %}-{% endif %}</td>
+                <td>{{ row.cos_class }}</td>
+                <td>{{ row.samples }}</td>
+                <td>{{ "%.4f"|format(row.avg_discard_rate_pct) }}</td>
+                <td>{{ "%.4f"|format(row.p95_discard_rate_pct) }}</td>
+                <td>{{ "%.4f"|format(row.avg_yellow_traffic_pct) }}</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        <p class="muted small">If DSCP is absent in source columns, class is shown as Unknown (DSCP not present).</p>
+        {% else %}
+        <p class="muted">No session-level CoS data available.</p>
+        {% endif %}
       </section>
 
       <section>
@@ -397,6 +466,13 @@ _HTML_TEMPLATE = """
               <button type="button" class="chart-export-btn" data-canvas-id="twampDiscardPacketsChart" data-file-prefix="{{ report.metadata.get('report_id', report.report_type_id) }}">Export PNG</button>
             </div>
             <canvas id="twampDiscardPacketsChart"></canvas>
+          </div>
+          <div class="chart-wrap">
+            <div class="chart-head">
+              <div class="chart-title">Loss Packets Over Time</div>
+              <button type="button" class="chart-export-btn" data-canvas-id="twampLossPacketsChart" data-file-prefix="{{ report.metadata.get('report_id', report.report_type_id) }}">Export PNG</button>
+            </div>
+            <canvas id="twampLossPacketsChart"></canvas>
           </div>
           <div class="chart-wrap">
             <div class="chart-head">
@@ -703,7 +779,8 @@ _HTML_TEMPLATE = """
       {% endif %}
 
       {% if is_ms_biomarker %}
-      <section>
+      <div class="ms-flow">
+      <section class="ms-sec-summary">
         <h2>MS Registry Summary</h2>
         <div class="stats-grid">
           <div class="stat-card">
@@ -749,13 +826,13 @@ _HTML_TEMPLATE = """
         </div>
       </section>
 
-      <section>
+      <section class="ms-sec-priority">
         <h2>Priority Matrix: Sample EDSS 4+</h2>
         <p class="muted small">Most important matrix view for high-disability band. Correlation method: {{ ms.summary.get('correlation_method', 'Spearman rank correlation (Pearson computed on ranked values)') }}.</p>
         <div class="table-scroll" id="msCorrMatrixPriorityTable"></div>
       </section>
 
-      <section>
+      <section class="ms-sec-progression">
         <h2>Clinical Progression Snapshot</h2>
         <div class="chart-grid">
           <div class="chart-wrap">
@@ -803,7 +880,7 @@ _HTML_TEMPLATE = """
         </div>
       </section>
 
-      <section>
+      <section class="ms-sec-data">
         <h2>Data Completeness and Follow-up</h2>
         <div class="table-scroll">
           <table>
@@ -833,7 +910,222 @@ _HTML_TEMPLATE = """
         </p>
       </section>
 
-      <section>
+      <section class="ms-sec-distribution">
+        <h2>Biomarker Statistical Distribution Profile</h2>
+        <p class="muted small">Each included biomarker is profiled with a best-fit distribution heuristic and estimated parameters.</p>
+        {% if ms.biomarker_distribution_profiles %}
+        <div class="table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>Biomarker</th>
+                <th>Icon</th>
+                <th>Distribution</th>
+                <th>Fit Quality</th>
+                <th>Parameters</th>
+                <th>Mean</th>
+                <th>Variance</th>
+                <th>Used For</th>
+                <th>Non-null</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in ms.biomarker_distribution_profiles %}
+              <tr>
+                <td>{{ row.biomarker }}</td>
+        <td><span class="dist-icon">{{ row.distribution_icon_html | safe }}</span></td>
+                <td>{{ row.distribution }}</td>
+                <td>
+                  {% set fq = (row.fit_quality or "Weak") %}
+                  <span class="fit-badge {{ 'good' if fq|lower == 'good' else 'weak' }}">{{ fq }}</span>
+                </td>
+                <td>{{ row.parameters }}</td>
+                <td>{{ "{:,.2f}".format(row.mean) }}</td>
+                <td>{{ "{:,.2f}".format(row.variance) }}</td>
+                <td>{{ row.used_for }}</td>
+                <td>{{ row.non_null }}</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% else %}
+        <p class="muted">No biomarker distribution profile available.</p>
+        {% endif %}
+      </section>
+
+      <section class="ms-sec-zscore">
+        <h2>Z-score Biomarker Signals</h2>
+        <p class="muted small">
+          Z-score normalizes each biomarker as (value - cohort mean) / cohort std. Outlier threshold:
+          |z| &gt;= {{ ms.summary.get('zscore_outlier_threshold', 2.0) }}.
+        </p>
+
+        <h3 style="margin-top:0.9rem;">Top Biomarkers by Mean |z| in Sample EDSS 4+</h3>
+        {% if ms.zscore_high_band_signal %}
+        <div class="table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>Biomarker</th>
+                <th>Rows (EDSS 4+)</th>
+                <th>Mean |z|</th>
+                <th>P95 |z|</th>
+                <th>Outlier % (EDSS 4+)</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in ms.zscore_high_band_signal %}
+              <tr>
+                <td>{{ row.biomarker }}</td>
+                <td>{{ row.high_band_rows }}</td>
+                <td>{{ "%.4f"|format(row.mean_abs_z) }}</td>
+                <td>{{ "%.4f"|format(row.p95_abs_z) }}</td>
+                <td>{{ "%.2f"|format(row.outlier_pct_high_band) }}%</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% else %}
+        <p class="muted">Not enough high-band rows to compute robust z-score signal strength.</p>
+        {% endif %}
+
+        <h3 style="margin-top:0.9rem;">Outlier Prevalence by Biomarker (|z| threshold)</h3>
+        {% if ms.zscore_outlier_prevalence %}
+        <div class="table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>Biomarker</th>
+                <th>Rows</th>
+                <th>Outlier Count</th>
+                <th>Outlier %</th>
+                <th>Mean |z|</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in ms.zscore_outlier_prevalence %}
+              <tr>
+                <td>{{ row.biomarker }}</td>
+                <td>{{ row.rows }}</td>
+                <td>{{ row.outlier_count }}</td>
+                <td>{{ "%.2f"|format(row.outlier_pct) }}%</td>
+                <td>{{ "%.4f"|format(row.mean_abs_z) }}</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% else %}
+        <p class="muted">No z-score outlier prevalence available.</p>
+        {% endif %}
+
+        <h3 style="margin-top:0.9rem;">Z-score Correlation to EDSS</h3>
+        {% if ms.zscore_sample_edss_corr or ms.zscore_last_edss_corr %}
+        <div class="table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>Target</th>
+                <th>Biomarker</th>
+                <th>Spearman Corr</th>
+                <th>Abs Corr</th>
+                <th>Paired Rows</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in ms.zscore_sample_edss_corr %}
+              <tr>
+                <td>Sample EDSS</td>
+                <td>{{ row.biomarker }}</td>
+                <td class="corr-val-cell" data-corr="{{ row.corr }}">{{ "%.4f"|format(row.corr) }}</td>
+                <td>{{ "%.4f"|format(row.abs_corr) }}</td>
+                <td>{{ row.paired_rows }}</td>
+              </tr>
+              {% endfor %}
+              {% for row in ms.zscore_last_edss_corr %}
+              <tr>
+                <td>Last EDSS</td>
+                <td>{{ row.biomarker }}</td>
+                <td class="corr-val-cell" data-corr="{{ row.corr }}">{{ "%.4f"|format(row.corr) }}</td>
+                <td>{{ "%.4f"|format(row.abs_corr) }}</td>
+                <td>{{ row.paired_rows }}</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% endif %}
+
+        <h3 style="margin-top:0.9rem;">Top Patient-level Outliers (by |z|)</h3>
+        {% if ms.zscore_outlier_rows %}
+        <div class="table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>PID</th>
+                <th>SID</th>
+                <th>Biomarker</th>
+                <th>z-score</th>
+                <th>|z|</th>
+                <th>Sample EDSS</th>
+                <th>Last EDSS</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in ms.zscore_outlier_rows %}
+              <tr>
+                <td>{{ row.pid if row.pid is not none else "-" }}</td>
+                <td>{{ row.sid if row.sid is not none else "-" }}</td>
+                <td>{{ row.biomarker }}</td>
+                <td>{{ "%.4f"|format(row.z_score) }}</td>
+                <td>{{ "%.4f"|format(row.abs_z) }}</td>
+                <td>{{ row.sample_edss if row.sample_edss is not none else "-" }}</td>
+                <td>{{ row.last_edss if row.last_edss is not none else "-" }}</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% else %}
+        <p class="muted">No records crossed the configured z-score outlier threshold.</p>
+        {% endif %}
+      </section>
+
+      <section class="ms-sec-validation">
+        <h2>Statistical Validation Checks</h2>
+        <p class="muted small">Automated quality checks across distribution-robustness, effect-size, significance, multiple-testing, latent structure, and longitudinal signal.</p>
+        {% if ms.stat_validation_checks %}
+        <div class="table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>Method</th>
+                <th>Result (short)</th>
+                <th>Score</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in ms.stat_validation_checks %}
+              <tr>
+                <td>{{ row.test }}</td>
+                <td>{{ row.result }}</td>
+                <td>
+                  {% set sc = (row.score or "Not good") %}
+                  <span class="fit-badge {{ 'good' if sc|lower == 'good' else 'weak' }}">{{ sc }}</span>
+                </td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% else %}
+        <p class="muted">No statistical validation checks available.</p>
+        {% endif %}
+      </section>
+
+      <section class="ms-sec-corr-sample">
         <h2>Biomarkers Related to Sample EDSS</h2>
         <p class="muted small">Correlation method: {{ ms.summary.get('correlation_method', 'Spearman rank correlation (Pearson computed on ranked values)') }}.</p>
         <p class="muted small">
@@ -874,7 +1166,7 @@ _HTML_TEMPLATE = """
         {% endif %}
       </section>
 
-      <section>
+      <section class="ms-sec-corr-sample-band">
         <h2>Biomarker Correlation by Sample EDSS Bands (0-3.5 vs 4+)</h2>
         <p class="muted small">Correlation method: {{ ms.summary.get('correlation_method', 'Spearman rank correlation (Pearson computed on ranked values)') }}.</p>
         <p class="muted small"><strong>Band labels:</strong> Low Band = 0-3.5, High Band = 4+.</p>
@@ -910,7 +1202,7 @@ _HTML_TEMPLATE = """
         {% endif %}
       </section>
 
-      <section>
+      <section class="ms-sec-corr-last-band">
         <h2>Biomarker Correlation by Last EDSS Bands (0-3.5 vs 4+)</h2>
         <p class="muted small">Correlation method: {{ ms.summary.get('correlation_method', 'Spearman rank correlation (Pearson computed on ranked values)') }}.</p>
         <p class="muted small"><strong>Band labels:</strong> Low Band = 0-3.5, High Band = 4+.</p>
@@ -946,7 +1238,7 @@ _HTML_TEMPLATE = """
         {% endif %}
       </section>
 
-      <section>
+      <section class="ms-sec-corr-inter">
         <h2>Biomarker Inter-correlation</h2>
         <p class="muted small">Correlation method: {{ ms.summary.get('correlation_method', 'Spearman rank correlation (Pearson computed on ranked values)') }}.</p>
         {% if ms.biomarker_pair_corr %}
@@ -990,11 +1282,168 @@ _HTML_TEMPLATE = """
         <h3 style="margin-top:0.9rem;">Correlation Matrix (Last EDSS 4+)</h3>
         <div class="table-scroll" id="msCorrMatrixLastHighTable"></div>
       </section>
+      </div>
+      {% endif %}
+
+      {% if is_wireshark %}
+      <section>
+        <h2>Capture Summary</h2>
+        <div class="stats-grid">
+          <div class="stat-card">
+            <div class="stat-label">Packets</div>
+            <div class="stat-value">{{ "{:,.0f}".format(wireshark.summary.get('packets', 0)) }}</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Total Bytes</div>
+            <div class="stat-value">{{ "{:,.0f}".format(wireshark.summary.get('total_bytes', 0)) }}</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Unique Source IPs</div>
+            <div class="stat-value">{{ wireshark.summary.get('unique_src_ips', 0) }}</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Unique Destination IPs</div>
+            <div class="stat-value">{{ wireshark.summary.get('unique_dst_ips', 0) }}</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Avg Packet Size</div>
+            <div class="stat-value">{{ "%.2f"|format(wireshark.summary.get('avg_packet_size_bytes', 0)) }} B</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">TCP SYN / RST / DNS</div>
+            <div class="stat-value">{{ wireshark.summary.get('tcp_syn_packets', 0) }} / {{ wireshark.summary.get('tcp_rst_packets', 0) }} / {{ wireshark.summary.get('dns_query_packets', 0) }}</div>
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <h2>Protocol Breakdown</h2>
+        {% if wireshark.protocol_breakdown %}
+        <div class="table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>Protocol</th>
+                <th>Packets</th>
+                <th>Share %</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in wireshark.protocol_breakdown %}
+              <tr>
+                <td>{{ row.protocol }}</td>
+                <td>{{ "{:,.0f}".format(row.packets) }}</td>
+                <td>{{ "%.2f"|format(row.pct) }}</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% else %}
+        <p class="muted">No protocol breakdown available.</p>
+        {% endif %}
+      </section>
+
+      <section>
+        <h2>Top Talkers</h2>
+        {% if wireshark.top_talkers %}
+        <div class="table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>Source IP</th>
+                <th>Packets</th>
+                <th>Bytes</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in wireshark.top_talkers %}
+              <tr>
+                <td>{{ row.source_ip }}</td>
+                <td>{{ "{:,.0f}".format(row.packets) }}</td>
+                <td>{{ "{:,.0f}".format(row.bytes) }}</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% else %}
+        <p class="muted">No talker data available.</p>
+        {% endif %}
+      </section>
+
+      <section>
+        <h2>Top Conversations</h2>
+        {% if wireshark.top_conversations %}
+        <div class="table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>Source</th>
+                <th>Destination</th>
+                <th>Transport</th>
+                <th>Dst Port</th>
+                <th>Packets</th>
+                <th>Bytes</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in wireshark.top_conversations %}
+              <tr>
+                <td>{{ row.src_ip }}</td>
+                <td>{{ row.dst_ip }}</td>
+                <td>{{ row.transport }}</td>
+                <td>{{ row.dst_port if row.dst_port is not none else "-" }}</td>
+                <td>{{ "{:,.0f}".format(row.packets) }}</td>
+                <td>{{ "{:,.0f}".format(row.bytes) }}</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% else %}
+        <p class="muted">No conversation data available.</p>
+        {% endif %}
+      </section>
+
+      <section>
+        <h2>Traffic Charts</h2>
+        <div class="chart-grid">
+          <div class="chart-wrap">
+            <div class="chart-head">
+              <div class="chart-title">Protocol Mix (Packets)</div>
+              <button type="button" class="chart-export-btn" data-canvas-id="wsProtocolChart" data-file-prefix="{{ report.metadata.get('report_id', report.report_type_id) }}">Export PNG</button>
+            </div>
+            <canvas id="wsProtocolChart"></canvas>
+          </div>
+          <div class="chart-wrap">
+            <div class="chart-head">
+              <div class="chart-title">Top Talkers by Bytes</div>
+              <button type="button" class="chart-export-btn" data-canvas-id="wsTalkersChart" data-file-prefix="{{ report.metadata.get('report_id', report.report_type_id) }}">Export PNG</button>
+            </div>
+            <canvas id="wsTalkersChart"></canvas>
+          </div>
+          <div class="chart-wrap">
+            <div class="chart-head">
+              <div class="chart-title">Packets Over Time</div>
+              <button type="button" class="chart-export-btn" data-canvas-id="wsPacketsTrendChart" data-file-prefix="{{ report.metadata.get('report_id', report.report_type_id) }}">Export PNG</button>
+            </div>
+            <canvas id="wsPacketsTrendChart"></canvas>
+          </div>
+          <div class="chart-wrap">
+            <div class="chart-head">
+              <div class="chart-title">Bytes Over Time</div>
+              <button type="button" class="chart-export-btn" data-canvas-id="wsBytesTrendChart" data-file-prefix="{{ report.metadata.get('report_id', report.report_type_id) }}">Export PNG</button>
+            </div>
+            <canvas id="wsBytesTrendChart"></canvas>
+          </div>
+        </div>
+      </section>
       {% endif %}
 
       <section>
         <h2>Tables</h2>
-        {% if is_network_queue or is_twamp or is_pm or is_jira or is_ms_biomarker %}
+        {% if is_network_queue or is_twamp or is_pm or is_jira or is_ms_biomarker or is_wireshark %}
           <p class="muted">Detailed metric payload is available in the JSON artifact for this report.</p>
         {% else %}
         {% for t in report.tables %}
@@ -1250,6 +1699,7 @@ _HTML_TEMPLATE = """
         const discardRate = trend.map((p) => Number(p.discard_rate_pct || 0));
         const yellowPct = trend.map((p) => Number(p.yellow_traffic_pct || 0));
         const discardPackets = trend.map((p) => Number(p.discard_packets || 0));
+        const lossPackets = trend.map((p) => Number(p.loss_packets || 0));
         const scatterPoints = trend.map((p) => ({ x: Number(p.yellow_traffic_pct || 0), y: Number(p.discard_rate_pct || 0) }));
         const maxTicks = labels.length > 120 ? 6 : labels.length > 60 ? 8 : 12;
         const formatTimeLabel = (raw) => {
@@ -1352,6 +1802,36 @@ _HTML_TEMPLATE = """
             scales: {
               y: {
                 title: { display: true, text: "Discard Packets", color: "#334155", font: { weight: "600" } },
+                beginAtZero: true,
+                grid: { color: "rgba(148,163,184,0.18)" }
+              },
+              x: {
+                title: { display: true, text: "Time (UTC)", color: "#334155", font: { weight: "600" } },
+                ticks: { maxTicksLimit: maxTicks, callback: (value, index) => staggerTick(formatTimeLabel(labels[index]), index) },
+                grid: { display: false }
+              }
+            },
+            plugins: { legend: { display: true } }
+          }
+        });
+
+        createChart("twampLossPacketsChart", {
+          type: "bar",
+          data: {
+            labels,
+            datasets: [{
+              label: "Loss Packets",
+              data: lossPackets,
+              backgroundColor: "#7c3aed",
+              borderRadius: 6,
+            }]
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            scales: {
+              y: {
+                title: { display: true, text: "Loss Packets", color: "#334155", font: { weight: "600" } },
                 beginAtZero: true,
                 grid: { color: "rgba(148,163,184,0.18)" }
               },
@@ -2002,6 +2482,161 @@ _HTML_TEMPLATE = """
       })();
     </script>
     {% endif %}
+    {% if is_wireshark %}
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+    <script>
+      (function() {
+        if (!window.Chart) return;
+        Chart.defaults.font.family = "'Segoe UI', Tahoma, sans-serif";
+        Chart.defaults.font.size = 13;
+        Chart.defaults.color = "#334155";
+
+        const protocol = {{ wireshark.protocol_breakdown_json | safe }};
+        const talkers = {{ wireshark.top_talkers_json | safe }};
+        const trend = {{ wireshark.time_trend_json | safe }};
+
+        const createChart = (id, cfg) => {
+          const el = document.getElementById(id);
+          if (!el) return;
+          new Chart(el, cfg);
+        };
+
+        const protoTop = Array.isArray(protocol) ? protocol.slice(0, 10) : [];
+        createChart("wsProtocolChart", {
+          type: "doughnut",
+          data: {
+            labels: protoTop.map((r) => String(r.protocol || "UNKNOWN")),
+            datasets: [{
+              label: "Packets",
+              data: protoTop.map((r) => Number(r.packets || 0)),
+              borderColor: "#ffffff",
+              borderWidth: 2,
+              backgroundColor: [
+                "#1d4ed8", "#0f766e", "#0369a1", "#7c3aed", "#b45309",
+                "#be123c", "#0891b2", "#334155", "#15803d", "#ea580c"
+              ],
+            }]
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: { legend: { position: "bottom" } },
+            cutout: "58%"
+          }
+        });
+
+        const topTalkers = Array.isArray(talkers) ? talkers.slice(0, 12) : [];
+        createChart("wsTalkersChart", {
+          type: "bar",
+          data: {
+            labels: topTalkers.map((r) => String(r.source_ip || "unknown")),
+            datasets: [{
+              label: "Bytes",
+              data: topTalkers.map((r) => Number(r.bytes || 0)),
+              borderRadius: 8,
+              backgroundColor: "#1d4ed8",
+            }]
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            indexAxis: "y",
+            scales: {
+              x: { beginAtZero: true, title: { display: true, text: "Bytes" } },
+              y: { title: { display: true, text: "Source IP" } }
+            },
+            plugins: { legend: { display: true } }
+          }
+        });
+
+        const labels = Array.isArray(trend) ? trend.map((r) => String(r.time_utc || "")) : [];
+        const maxTicks = labels.length > 120 ? 6 : labels.length > 60 ? 8 : 12;
+        const formatTimeLabel = (raw) => {
+          const asText = String(raw || "");
+          if (asText.length >= 16) return asText.slice(11, 16);
+          return asText;
+        };
+        const staggerTick = (text, index) => (index % 2 === 0 ? [String(text || ""), ""] : ["", String(text || "")]);
+
+        createChart("wsPacketsTrendChart", {
+          type: "line",
+          data: {
+            labels: labels,
+            datasets: [{
+              label: "Packets",
+              data: Array.isArray(trend) ? trend.map((r) => Number(r.packets || 0)) : [],
+              borderColor: "#0f766e",
+              backgroundColor: "rgba(15, 118, 110, 0.14)",
+              borderWidth: 2.2,
+              pointRadius: 0,
+              pointHoverRadius: 3,
+              tension: 0.28,
+              fill: true,
+            }]
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            scales: {
+              y: { beginAtZero: true, title: { display: true, text: "Packets" } },
+              x: {
+                title: { display: true, text: "Time (UTC)" },
+                ticks: { maxTicksLimit: maxTicks, callback: (value, index) => staggerTick(formatTimeLabel(labels[index]), index) },
+                grid: { display: false }
+              }
+            },
+            plugins: { legend: { display: true } }
+          }
+        });
+
+        createChart("wsBytesTrendChart", {
+          type: "line",
+          data: {
+            labels: labels,
+            datasets: [{
+              label: "Bytes",
+              data: Array.isArray(trend) ? trend.map((r) => Number(r.bytes || 0)) : [],
+              borderColor: "#b45309",
+              backgroundColor: "rgba(180, 83, 9, 0.14)",
+              borderWidth: 2.2,
+              pointRadius: 0,
+              pointHoverRadius: 3,
+              tension: 0.28,
+              fill: true,
+            }]
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            scales: {
+              y: { beginAtZero: true, title: { display: true, text: "Bytes" } },
+              x: {
+                title: { display: true, text: "Time (UTC)" },
+                ticks: { maxTicksLimit: maxTicks, callback: (value, index) => staggerTick(formatTimeLabel(labels[index]), index) },
+                grid: { display: false }
+              }
+            },
+            plugins: { legend: { display: true } }
+          }
+        });
+
+        document.querySelectorAll(".chart-export-btn").forEach((btn) => {
+          btn.addEventListener("click", () => {
+            const canvasId = btn.getAttribute("data-canvas-id");
+            const prefix = btn.getAttribute("data-file-prefix") || "report";
+            const canvas = document.getElementById(canvasId);
+            if (!canvas) return;
+            const a = document.createElement("a");
+            a.href = canvas.toDataURL("image/png");
+            a.download = `${prefix}.${canvasId}.png`;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+          });
+        });
+      })();
+    </script>
+    {% endif %}
   </body>
 </html>
 """.strip()
@@ -2017,6 +2652,7 @@ def render_html(report: dict) -> str:
     pm = _extract_pm_metrics(report)
     jira = _extract_jira_metrics(report)
     ms = _extract_ms_biomarker_metrics(report)
+    wireshark = _extract_wireshark_metrics(report)
     return template.render(
         report=report_view,
         is_network_queue=report.get("report_type_id") == "network_queue_congestion" and network is not None,
@@ -2024,11 +2660,13 @@ def render_html(report: dict) -> str:
         is_pm=report.get("report_type_id") == "pm_export_health" and pm is not None,
         is_jira=report.get("report_type_id") == "jira_issue_portfolio" and jira is not None,
         is_ms_biomarker=report.get("report_type_id") == "ms_biomarker_registry_health" and ms is not None,
+        is_wireshark=report.get("report_type_id") == "wireshark_capture_health" and wireshark is not None,
         network=network or {},
         twamp=twamp or {},
         pm=pm or {},
         jira=jira or {},
         ms=ms or {},
+        wireshark=wireshark or {},
     )
 
 
@@ -2237,8 +2875,9 @@ def _extract_twamp_metrics(report: dict) -> dict | None:
                 payload.get("time_trend", []),
                 payload.get("color_packet_share_pct", {}),
                 payload.get("l2_qos_insights", []),
+                payload.get("session_cos_summary", []),
             )
-    return _normalize_twamp_metrics({}, [], [], {}, [])
+    return _normalize_twamp_metrics({}, [], [], {}, [], [])
 
 
 def _normalize_twamp_metrics(
@@ -2247,6 +2886,7 @@ def _normalize_twamp_metrics(
     time_trend: list,
     color_packet_share_pct: dict,
     l2_qos_insights: list,
+    session_cos_summary: list,
 ) -> dict:
     normalized_summary = {
         "samples": int(summary.get("samples", 0) or 0),
@@ -2255,14 +2895,19 @@ def _normalize_twamp_metrics(
         "avg_yellow_traffic_pct": float(summary.get("avg_yellow_traffic_pct", 0.0) or 0.0),
         "total_forward_packets": int(summary.get("total_forward_packets", 0) or 0),
         "total_discard_packets": int(summary.get("total_discard_packets", 0) or 0),
+        "total_loss_packets": int(summary.get("total_loss_packets", 0) or 0),
         "avg_delay": float(summary.get("avg_delay", 0.0) or 0.0),
         "p95_ipdv_max": float(summary.get("p95_ipdv_max", 0.0) or 0.0),
+        "sessions": int(summary.get("sessions", 0) or 0),
+        "sessions_with_dscp": int(summary.get("sessions_with_dscp", 0) or 0),
     }
     return {
         "summary": normalized_summary,
         "top_discard_intervals": top_discard_intervals or [],
         "color_packet_share_pct": color_packet_share_pct or {},
         "l2_qos_insights": l2_qos_insights or [],
+        "session_cos_summary": session_cos_summary or [],
+        "session_cos_summary_json": json.dumps(session_cos_summary or []),
         "time_trend_json": json.dumps(time_trend or []),
     }
 
@@ -2374,6 +3019,7 @@ def _extract_ms_biomarker_metrics(report: dict) -> dict | None:
                 payload.get("sid_distribution", []),
                 payload.get("key_missingness", []),
                 payload.get("sparse_biomarkers", []),
+                payload.get("biomarker_distribution_profiles", []),
                 payload.get("edss_progression", {}),
                 payload.get("course_distribution", []),
                 payload.get("followup_summary", {}),
@@ -2387,8 +3033,14 @@ def _extract_ms_biomarker_metrics(report: dict) -> dict | None:
                 payload.get("correlation_matrix_sample_high", {}),
                 payload.get("correlation_matrix_last_low", {}),
                 payload.get("correlation_matrix_last_high", {}),
+                payload.get("zscore_high_band_signal", []),
+                payload.get("zscore_outlier_prevalence", []),
+                payload.get("zscore_sample_edss_corr", []),
+                payload.get("zscore_last_edss_corr", []),
+                payload.get("zscore_outlier_rows", []),
+                payload.get("stat_validation_checks", []),
             )
-    return _normalize_ms_biomarker_metrics({}, [], [], [], {}, [], {}, [], [], [], [], {}, {}, {}, {}, {}, {})
+    return _normalize_ms_biomarker_metrics({}, [], [], [], [], {}, [], {}, [], [], [], [], {}, {}, {}, {}, {}, {}, [], [], [], [], [], [])
 
 
 def _normalize_ms_biomarker_metrics(
@@ -2396,6 +3048,7 @@ def _normalize_ms_biomarker_metrics(
     sid_distribution: list,
     key_missingness: list,
     sparse_biomarkers: list,
+    biomarker_distribution_profiles: list,
     edss_progression: dict,
     course_distribution: list,
     followup_summary: dict,
@@ -2409,6 +3062,12 @@ def _normalize_ms_biomarker_metrics(
     correlation_matrix_sample_high: dict,
     correlation_matrix_last_low: dict,
     correlation_matrix_last_high: dict,
+    zscore_high_band_signal: list,
+    zscore_outlier_prevalence: list,
+    zscore_sample_edss_corr: list,
+    zscore_last_edss_corr: list,
+    zscore_outlier_rows: list,
+    stat_validation_checks: list,
 ) -> dict:
     normalized_summary = {
         "rows": int(summary.get("rows", 0) or 0),
@@ -2419,6 +3078,7 @@ def _normalize_ms_biomarker_metrics(
         "weak_contributors": int(summary.get("weak_contributors", 0) or 0),
         "edss_pairs": int(summary.get("edss_pairs", 0) or 0),
         "edss_worsened_ratio": float(summary.get("edss_worsened_ratio", 0.0) or 0.0),
+        "zscore_outlier_threshold": float(summary.get("zscore_outlier_threshold", 2.0) or 2.0),
         "correlation_method": str(
             summary.get("correlation_method", "Spearman rank correlation (Pearson computed on ranked values)")
         ),
@@ -2450,6 +3110,14 @@ def _normalize_ms_biomarker_metrics(
         "p90_days": int(followup_summary.get("p90_days", 0) or 0),
         "invalid_pairs": int(followup_summary.get("invalid_pairs", 0) or 0),
     }
+    normalized_distribution_profiles = []
+    for row in biomarker_distribution_profiles or []:
+        if not isinstance(row, dict):
+            continue
+        copied = dict(row)
+        copied["distribution_icon"] = _distribution_icon_for_name(str(row.get("distribution", "") or ""))
+        copied["distribution_icon_html"] = _distribution_icon_html_for_name(str(row.get("distribution", "") or ""))
+        normalized_distribution_profiles.append(copied)
     return {
         "summary": normalized_summary,
         "summary_json": json.dumps(normalized_summary),
@@ -2458,6 +3126,8 @@ def _normalize_ms_biomarker_metrics(
         "key_missingness": key_missingness or [],
         "sparse_biomarkers": sparse_biomarkers or [],
         "sparse_biomarkers_json": json.dumps(sparse_biomarkers or []),
+        "biomarker_distribution_profiles": normalized_distribution_profiles,
+        "biomarker_distribution_profiles_json": json.dumps(normalized_distribution_profiles),
         "edss_progression": normalized_edss,
         "edss_progression_json": json.dumps(normalized_edss),
         "course_distribution": course_distribution or [],
@@ -2483,4 +3153,119 @@ def _normalize_ms_biomarker_metrics(
         "correlation_matrix_last_low_json": json.dumps(correlation_matrix_last_low or {"columns": [], "rows": []}),
         "correlation_matrix_last_high": correlation_matrix_last_high or {"columns": [], "rows": []},
         "correlation_matrix_last_high_json": json.dumps(correlation_matrix_last_high or {"columns": [], "rows": []}),
+        "zscore_high_band_signal": zscore_high_band_signal or [],
+        "zscore_high_band_signal_json": json.dumps(zscore_high_band_signal or []),
+        "zscore_outlier_prevalence": zscore_outlier_prevalence or [],
+        "zscore_outlier_prevalence_json": json.dumps(zscore_outlier_prevalence or []),
+        "zscore_sample_edss_corr": zscore_sample_edss_corr or [],
+        "zscore_sample_edss_corr_json": json.dumps(zscore_sample_edss_corr or []),
+        "zscore_last_edss_corr": zscore_last_edss_corr or [],
+        "zscore_last_edss_corr_json": json.dumps(zscore_last_edss_corr or []),
+        "zscore_outlier_rows": zscore_outlier_rows or [],
+        "zscore_outlier_rows_json": json.dumps(zscore_outlier_rows or []),
+        "stat_validation_checks": stat_validation_checks or [],
+        "stat_validation_checks_json": json.dumps(stat_validation_checks or []),
     }
+
+
+def _distribution_icon_for_name(name: str) -> str:
+    n = name.strip().lower()
+    if n.startswith("bernoulli"):
+        return "â—¼â—»"
+    if n.startswith("binomial"):
+        return "ðŸŽ¯"
+    if n.startswith("geometric"):
+        return "âž¡âœ…"
+    if n.startswith("poisson"):
+        return "â±â€¢â€¢"
+    if n.startswith("uniform (discrete)"):
+        return "â–®â–®â–®"
+    if n.startswith("uniform (continuous)"):
+        return "â–â–â–"
+    if n.startswith("normal"):
+        return "/\\_/\\"
+    if n.startswith("exponential"):
+        return "exp"
+    if n.startswith("gamma"):
+        return "â–â–ƒâ–‡â–…â–ƒâ–‚â–"
+    if n.startswith("beta"):
+        return "âˆ©"
+    if n.startswith("chi-square"):
+        return "Ï‡Â²"
+    if n.startswith("t-distribution"):
+        return "t"
+    if n.startswith("f-distribution"):
+        return "F"
+    return "â—Œ"
+
+
+def _distribution_icon_html_for_name(name: str) -> str:
+    n = name.strip().lower()
+    if n.startswith("normal"):
+        return (
+            "<svg class='dist-icon-svg' viewBox='0 0 40 26' aria-hidden='true'>"
+            "<path d='M2 24 C8 24, 12 16, 16 9 C19 4, 21 4, 24 9 C28 16, 32 24, 38 24' />"
+            "</svg>"
+        )
+    if n.startswith("gamma"):
+        return (
+            "<svg class='dist-icon-svg' viewBox='0 0 40 26' aria-hidden='true'>"
+            "<path d='M2 24 C6 20, 9 10, 14 5 C18 1, 24 8, 29 14 C33 18, 36 21, 38 23' />"
+            "</svg>"
+        )
+    if n.startswith("exponential"):
+        return (
+            "<svg class='dist-icon-svg' viewBox='0 0 40 26' aria-hidden='true'>"
+            "<path d='M2 4 C8 6, 13 9, 18 13 C24 17, 30 20, 38 23' />"
+            "</svg>"
+        )
+    return html.escape(_distribution_icon_for_name(name))
+
+
+def _extract_wireshark_metrics(report: dict) -> dict | None:
+    if report.get("report_type_id") != "wireshark_capture_health":
+        return None
+    tables = report.get("tables", [])
+    for table in tables:
+        if table.get("name") == "metrics_payload" and table.get("rows"):
+            payload = table["rows"][0]
+            return _normalize_wireshark_metrics(
+                payload.get("summary", {}),
+                payload.get("protocol_breakdown", []),
+                payload.get("top_talkers", []),
+                payload.get("top_conversations", []),
+                payload.get("time_trend", []),
+            )
+    return _normalize_wireshark_metrics({}, [], [], [], [])
+
+
+def _normalize_wireshark_metrics(
+    summary: dict,
+    protocol_breakdown: list,
+    top_talkers: list,
+    top_conversations: list,
+    time_trend: list,
+) -> dict:
+    normalized_summary = {
+        "packets": int(summary.get("packets", 0) or 0),
+        "total_bytes": int(summary.get("total_bytes", 0) or 0),
+        "unique_src_ips": int(summary.get("unique_src_ips", 0) or 0),
+        "unique_dst_ips": int(summary.get("unique_dst_ips", 0) or 0),
+        "avg_packet_size_bytes": float(summary.get("avg_packet_size_bytes", 0.0) or 0.0),
+        "tcp_syn_packets": int(summary.get("tcp_syn_packets", 0) or 0),
+        "tcp_rst_packets": int(summary.get("tcp_rst_packets", 0) or 0),
+        "dns_query_packets": int(summary.get("dns_query_packets", 0) or 0),
+    }
+    return {
+        "summary": normalized_summary,
+        "summary_json": json.dumps(normalized_summary),
+        "protocol_breakdown": protocol_breakdown or [],
+        "protocol_breakdown_json": json.dumps(protocol_breakdown or []),
+        "top_talkers": top_talkers or [],
+        "top_talkers_json": json.dumps(top_talkers or []),
+        "top_conversations": top_conversations or [],
+        "top_conversations_json": json.dumps(top_conversations or []),
+        "time_trend": time_trend or [],
+        "time_trend_json": json.dumps(time_trend or []),
+    }
+

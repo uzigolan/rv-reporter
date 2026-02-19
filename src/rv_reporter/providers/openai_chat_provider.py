@@ -18,6 +18,7 @@ class OpenAIChatCompletionsProvider(ReportProvider):
         api_key: str | None = None,
         base_url: str | None = None,
         default_headers: dict[str, str] | None = None,
+        json_repair_model: str | None = None,
     ) -> None:
         try:
             from openai import OpenAI  # pylint: disable=import-outside-toplevel
@@ -32,6 +33,7 @@ class OpenAIChatCompletionsProvider(ReportProvider):
             kwargs["default_headers"] = default_headers
         self._client = OpenAI(**kwargs)
         self._model = model
+        self._json_repair_model = json_repair_model
         self.last_raw_response: dict[str, Any] | None = None
 
     def generate_report_json(
@@ -48,16 +50,12 @@ class OpenAIChatCompletionsProvider(ReportProvider):
             f"Schema:\n{json.dumps(definition.output_schema)}\n\n"
             f"Input:\n{json.dumps(payload)}"
         )
-        response = self._client.chat.completions.create(
+        response = self._chat_complete(
             model=self._model,
             messages=[
-                {
-                    "role": "system",
-                    "content": "You are a strict JSON report generator.",
-                },
+                {"role": "system", "content": "You are a strict JSON report generator."},
                 {"role": "user", "content": prompt},
             ],
-            temperature=0.2,
         )
         if hasattr(response, "model_dump"):
             self.last_raw_response = response.model_dump()
@@ -66,8 +64,69 @@ class OpenAIChatCompletionsProvider(ReportProvider):
 
         content = ""
         if getattr(response, "choices", None):
-            content = str(response.choices[0].message.content or "")
-        return _parse_json_object(content)
+            content = _extract_message_text(response.choices[0].message.content)
+        try:
+            return _parse_json_object(content)
+        except Exception:  # noqa: BLE001
+            repaired = self._repair_to_json(content=content, schema=definition.output_schema)
+            return _parse_json_object(repaired)
+
+    def _repair_to_json(self, content: str, schema: dict[str, Any]) -> str:
+        repair_prompt = (
+            "Convert the following content into one strict JSON object only. "
+            "No markdown, no comments, no extra text.\n\n"
+            f"Schema:\n{json.dumps(schema)}\n\n"
+            f"Content:\n{content}"
+        )
+        repair_model = self._json_repair_model or self._model
+        repair_response = self._chat_complete(
+            model=repair_model,
+            messages=[
+                {"role": "system", "content": "You output strict valid JSON only."},
+                {"role": "user", "content": repair_prompt},
+            ],
+        )
+        if hasattr(repair_response, "model_dump"):
+            self.last_raw_response = repair_response.model_dump()
+        if getattr(repair_response, "choices", None):
+            return _extract_message_text(repair_response.choices[0].message.content)
+        return content
+
+    def _chat_complete(self, model: str, messages: list[dict[str, Any]]) -> Any:
+        # Some OpenRouter models ignore or reject response_format=json_object.
+        try:
+            return self._client.chat.completions.create(
+                model=model,
+                messages=messages,
+                temperature=0,
+                response_format={"type": "json_object"},
+            )
+        except Exception:  # noqa: BLE001
+            return self._client.chat.completions.create(
+                model=model,
+                messages=messages,
+                temperature=0,
+            )
+
+
+def _extract_message_text(content: Any) -> str:
+    if content is None:
+        return ""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts: list[str] = []
+        for item in content:
+            if isinstance(item, dict):
+                text = item.get("text")
+                if isinstance(text, str):
+                    parts.append(text)
+            else:
+                text = getattr(item, "text", None)
+                if isinstance(text, str):
+                    parts.append(text)
+        return "\n".join(parts)
+    return str(content)
 
 
 def _parse_json_object(text: str) -> dict[str, Any]:

@@ -48,7 +48,7 @@
             <option value="recent" selected>Recent file</option>
           </select>
           <div id="new_upload_row" style="flex:1 1 auto; min-width: 0;">
-            <input type="file" name="csv_upload" id="csv_upload" accept=".csv,.xlsx,.xls" style="width:100%; max-width:24rem;" />
+            <input type="file" name="csv_upload" id="csv_upload" accept=".csv,.xlsx,.xls,.pcap,.pcapng" style="width:100%; max-width:24rem;" />
           </div>
           <div id="recent_upload_row" class="hidden" style="flex:1 1 auto; min-width: 0;">
             <select id="recent_upload_select" style="width:100%; max-width:24rem; min-width:0;">
@@ -59,7 +59,7 @@
           </select>
           </div>
         </div>
-        <span class="field-help">Upload your dataset in CSV or Excel format. For Excel files, sheet names are discovered automatically after selection.</span>
+        <span class="field-help">Upload CSV, Excel, or Wireshark capture (.pcap/.pcapng). For Excel files, sheet names are discovered automatically after selection.</span>
       </label>
 
       <label id="sheet_wrap">

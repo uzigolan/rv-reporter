@@ -1,0 +1,468 @@
+{% extends "layout.html" %}
+{% block title %}Benchmark | RV Reporter{% endblock %}
+{% macro provider_icon(provider, size_class='') -%}
+  {%- if provider == "openai" -%}
+    <img class="provider-favicon {{ size_class }}" src="https://openai.com/favicon.ico" alt="openai" title="openai" loading="lazy" onerror="this.onerror=null;this.src='{{ url_for('static', filename='favicon.svg') }}';">
+  {%- elif provider == "claude" -%}
+    <img class="provider-favicon {{ size_class }}" src="https://claude.ai/favicon.ico" alt="claude" title="claude" loading="lazy" onerror="this.onerror=null;this.src='https://www.anthropic.com/favicon.ico';this.onerror=function(){this.src='{{ url_for('static', filename='favicon.svg') }}';};">
+  {%- elif provider == "gemini" -%}
+    <img class="provider-favicon {{ size_class }}" src="https://gemini.google.com/favicon.ico" alt="gemini" title="gemini" loading="lazy" onerror="this.onerror=null;this.src='{{ url_for('static', filename='favicon.svg') }}';">
+  {%- elif provider == "xai" -%}
+    <img class="provider-favicon {{ size_class }}" src="{{ url_for('static', filename='icons/grok.svg') }}" alt="xai" title="xai" loading="lazy" onerror="this.onerror=null;this.src='{{ url_for('static', filename='favicon.svg') }}';">
+  {%- elif provider == "openrouter" -%}
+    <img class="provider-favicon {{ size_class }}" src="https://openrouter.ai/favicon.ico" alt="openrouter" title="openrouter" loading="lazy" onerror="this.onerror=null;this.src='{{ url_for('static', filename='favicon.svg') }}';">
+  {%- else -%}
+    <img class="provider-favicon {{ size_class }}" src="{{ url_for('static', filename='favicon.svg') }}" alt="{{ provider }}" title="{{ provider }}" loading="lazy">
+  {%- endif -%}
+{%- endmacro %}
+
+{% macro report_identity(name, provider, model) -%}
+  <span class="report-identity">
+    {{ provider_icon(provider, 'provider-favicon-inline') }}
+    <span class="cell-ellipsis" title="{{ name }}">{{ name }}</span>
+    <span class="muted small">({{ model }})</span>
+  </span>
+{%- endmacro %}
+
+{% block content %}
+<section class="panel">
+  <h1>Benchmark (From Existing Reports)</h1>
+  <p class="muted">Source: <code>{{ output_folder }}</code>. Select up to 4 reports and compare side by side.</p>
+
+  <form method="get" action="{{ url_for('benchmark') }}" class="actions" style="display:flex; gap:.6rem; align-items:center; flex-wrap:wrap;">
+    <label style="min-width: 13rem;">
+      <span>Report Type Filter</span>
+      <select name="report_type_id" onchange="this.form.submit()">
+        <option value="">All</option>
+        {% for rid in report_type_ids %}
+          <option value="{{ rid }}" {% if report_type_filter == rid %}selected{% endif %}>{{ rid }}</option>
+        {% endfor %}
+      </select>
+    </label>
+  </form>
+
+  {% if reports %}
+    <form method="get" action="{{ url_for('benchmark') }}" id="benchmark-compare-form">
+      {% if report_type_filter %}
+        <input type="hidden" name="report_type_id" value="{{ report_type_filter }}">
+      {% endif %}
+      <table class="table reports-table">
+        <thead>
+          <tr>
+            <th style="width: 5%;">Pick</th>
+            <th class="name-col">Name</th>
+            <th class="report-type-col">Type</th>
+            <th class="datetime-col">Time</th>
+            <th class="engine-col">Provider</th>
+            <th class="model-col">Model</th>
+            <th class="cost-col">Cost</th>
+            <th class="duration-col">Duration</th>
+            <th class="rows-col">Rows</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for item in reports %}
+            <tr>
+              <td>
+                <input
+                  type="checkbox"
+                  name="json_path"
+                  value="{{ item.json_path }}"
+                  {% if (not selected_reports) and (item.json_path in selected_paths) %}checked{% endif %}
+                />
+              </td>
+              <td class="name-col">
+                <span class="cell-ellipsis" title="{{ item.name }}">{{ item.name }}</span>
+              </td>
+              <td class="report-type-col"><span class="cell-ellipsis" title="{{ item.report_type_id }}">{{ item.report_type_label or item.report_type_id }}</span></td>
+              <td class="datetime-col"><span class="datetime-value">{{ item.created_at }}</span></td>
+              <td class="engine-col">
+                {{ provider_icon(item.backend) }}
+              </td>
+              <td class="model-col"><span class="cell-ellipsis" title="{{ item.model }}">{{ item.model }}</span></td>
+              <td class="cost-col">
+                {% if item.generation_cost_usd_est and item.generation_cost_usd_est not in ['none', 'None', '-'] %}
+                  {{ item.generation_cost_usd_est|replace('$', '') }}
+                {% else %}
+                  {{ "%.2f"|format((item.generation_cost_usd_est_raw or 0)|float) }}
+                {% endif %}
+              </td>
+              <td class="duration-col">{{ item.generation_duration_seconds }}</td>
+              <td class="rows-col">{{ item.source_rows_used }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      <div class="actions">
+        <button type="submit" class="btn-primary">Compare Selected</button>
+      </div>
+    </form>
+    <div id="floating-compare" class="floating-compare hidden" aria-live="polite">
+      <span id="floating-compare-count" class="small">0 selected</span>
+      <button type="button" class="btn-primary" id="floating-compare-btn">Compare Selected</button>
+    </div>
+  {% else %}
+    <p class="muted">No reports available.</p>
+  {% endif %}
+</section>
+
+{% if selected_reports %}
+<div id="benchmark-results-anchor"></div>
+{% if baseline_assessment %}
+<section class="panel">
+  <h2>Baseline Match Criteria</h2>
+  {% if baseline_assessment.supported %}
+    <p class="muted small">Selected reports: {{ baseline_assessment.selected_count }}. Baseline quality: <strong>{{ baseline_assessment.baseline_level|upper }}</strong> ({{ baseline_assessment.score }}/{{ baseline_assessment.score_max }}).</p>
+    <table class="table">
+      <thead>
+        <tr>
+          <th>Criteria</th>
+          <th>Match</th>
+          <th>Details</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for check in baseline_assessment.checks %}
+          <tr>
+            <td>{{ check.label }}</td>
+            <td>
+              {% if check.score > 0 %}
+                {% for _ in range(check.score) %}
+                  <span class="match-symbol match-symbol-check">✓</span>
+                {% endfor %}
+              {% else %}
+                <span class="match-symbol match-symbol-x">✕</span>
+              {% endif %}
+            </td>
+            <td>
+              {% if check.key == "same_source_file" %}
+                {{ baseline_assessment.sources_display }}
+              {% elif check.key == "same_report_type" %}
+                {{ baseline_assessment.report_types_display }}
+              {% elif check.key == "same_model_strength" %}
+                ratios:
+                {% for r in baseline_assessment.model_ratios %}
+                  {% if r is not none %}{{ r }}x{% else %}-{% endif %}{% if not loop.last %}, {% endif %}
+                {% endfor %}
+              {% elif check.key == "same_input_rows" %}
+                rows: {{ baseline_assessment.rows_display }}
+              {% else %}
+                -
+              {% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    <p class="muted small">{{ baseline_assessment.message }}</p>
+  {% endif %}
+</section>
+{% endif %}
+
+{% if comparison_brief %}
+<section class="panel">
+  <h2>{{ comparison_brief.title }}</h2>
+  <p class="muted small">
+    {% for label in comparison_brief.labels %}
+      <strong>{{ label }}</strong>=
+      {{ report_identity(comparison_brief.label_to_name[label], comparison_brief.label_to_provider[label], comparison_brief.label_to_model[label]) }}
+      {% if not loop.last %} | {% endif %}
+    {% endfor %}
+  </p>
+  <table class="table">
+    <thead>
+      <tr>
+        <th>Category</th>
+        {% for label in comparison_brief.labels %}
+          <th>Report {{ label }}</th>
+        {% endfor %}
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in comparison_brief.matrix_rows %}
+        <tr>
+          <td>{{ row.category }}</td>
+          {% for val in row["values"] %}
+            <td>{{ val }}</td>
+          {% endfor %}
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  {% if comparison_brief.key_differences %}
+    <h3 style="margin-top: .9rem;">Key Differences</h3>
+    <ul class="small">
+      {% for line in comparison_brief.key_differences %}
+        <li>{{ line }}</li>
+      {% endfor %}
+    </ul>
+  {% endif %}
+
+  <h3 style="margin-top: .9rem;">If You Need To Choose</h3>
+  <table class="table">
+    <thead>
+      <tr>
+        <th>Use Case</th>
+        <th>Best Option</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in comparison_brief.choose_rows %}
+        <tr>
+          <td>{{ row.use_case }}</td>
+          <td>
+            <strong>{{ row.best_label }}</strong>:
+            {% set ident = report_identity_by_name.get(row.best_name, {}) %}
+            {{ report_identity(row.best_name, ident.get("provider", "-"), ident.get("model", "-")) }}
+          </td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endif %}
+
+<section class="panel">
+  <h2>Analytics Summary</h2>
+  {% if analytics %}
+    <div class="stats-grid">
+      <article class="stat-card">
+        <div class="stat-label">Selected Reports</div>
+        <div class="stat-value">{{ analytics.selected_count }}</div>
+      </article>
+      <article class="stat-card">
+        <div class="stat-label">Avg Cost</div>
+        <div class="stat-value">{{ "%.4f"|format(analytics.avg_cost) }}</div>
+      </article>
+      <article class="stat-card">
+        <div class="stat-label">Avg Duration (sec)</div>
+        <div class="stat-value">{{ "%.1f"|format(analytics.avg_duration) }}</div>
+      </article>
+      <article class="stat-card">
+        <div class="stat-label">Avg Tokens</div>
+        <div class="stat-value">{{ analytics.avg_tokens|int }}</div>
+      </article>
+    </div>
+
+    <h3 style="margin-top: .9rem;">Winners</h3>
+    <table class="table">
+      <thead>
+        <tr>
+          <th>Category</th>
+          <th>Report</th>
+          <th>Value</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Lowest cost</td>
+          {% set ident = report_identity_by_name.get(analytics.cheapest.name, {}) %}
+          <td>{{ report_identity(analytics.cheapest.name, ident.get("provider", "-"), ident.get("model", "-")) }}</td>
+          <td>{{ "%.4f"|format(analytics.cheapest.cost) }}</td>
+        </tr>
+        <tr>
+          <td>Fastest</td>
+          {% set ident = report_identity_by_name.get(analytics.fastest.name, {}) %}
+          <td>{{ report_identity(analytics.fastest.name, ident.get("provider", "-"), ident.get("model", "-")) }}</td>
+          <td>{{ "%.1f"|format(analytics.fastest.duration) }} sec</td>
+        </tr>
+        <tr>
+          <td>Lowest tokens</td>
+          {% set ident = report_identity_by_name.get(analytics.lowest_tokens.name, {}) %}
+          <td>{{ report_identity(analytics.lowest_tokens.name, ident.get("provider", "-"), ident.get("model", "-")) }}</td>
+          <td>{{ analytics.lowest_tokens.tokens|int }}</td>
+        </tr>
+        <tr>
+          <td>Best cost efficiency</td>
+          {% set ident = report_identity_by_name.get(analytics.best_cost_eff.name, {}) %}
+          <td>{{ report_identity(analytics.best_cost_eff.name, ident.get("provider", "-"), ident.get("model", "-")) }}</td>
+          <td>{{ "%.4f"|format(analytics.best_cost_eff.cost_per_1k_tokens) }} /1k tok</td>
+        </tr>
+        <tr>
+          <td>Best speed efficiency</td>
+          {% set ident = report_identity_by_name.get(analytics.best_speed_eff.name, {}) %}
+          <td>{{ report_identity(analytics.best_speed_eff.name, ident.get("provider", "-"), ident.get("model", "-")) }}</td>
+          <td>{{ "%.2f"|format(analytics.best_speed_eff.duration_per_1k_tokens) }} sec/1k tok</td>
+        </tr>
+        <tr>
+          <td>Highest signal density</td>
+          {% set ident = report_identity_by_name.get(analytics.best_signal_density.name, {}) %}
+          <td>{{ report_identity(analytics.best_signal_density.name, ident.get("provider", "-"), ident.get("model", "-")) }}</td>
+          <td>{{ "%.2f"|format(analytics.best_signal_density.insights_per_1k_tokens) }} insights/1k tok</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h3 style="margin-top: .9rem;">Per-Report Metrics</h3>
+    <table class="table">
+      <thead>
+        <tr>
+          <th>Report</th>
+          <th>Provider</th>
+          <th>Model</th>
+          <th>Cost</th>
+          <th>Duration</th>
+          <th>Tokens</th>
+          <th>Sections</th>
+          <th>Alerts</th>
+          <th>Recs</th>
+          <th>Summary Words</th>
+          <th>Cost / 1k Tok</th>
+          <th>Sec / 1k Tok</th>
+          <th>Insights / 1k Tok</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in comparison_rows %}
+          <tr>
+            <td>{{ report_identity(row.name, row.provider, row.model) }}</td>
+            <td>{{ row.provider }}</td>
+            <td>{{ row.model }}</td>
+            <td>{{ "%.4f"|format(row.cost) }}</td>
+            <td>{{ "%.1f"|format(row.duration) }}</td>
+            <td>{{ row.tokens|int }}</td>
+            <td>{{ row.sections }}</td>
+            <td>{{ row.alerts }}</td>
+            <td>{{ row.recommendations }}</td>
+            <td>{{ row.summary_words }}</td>
+            <td>{{ "%.4f"|format(row.cost_per_1k_tokens) }}</td>
+            <td>{{ "%.2f"|format(row.duration_per_1k_tokens) }}</td>
+            <td>{{ "%.2f"|format(row.insights_per_1k_tokens) }}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+
+    {% if similarity_rows %}
+      <h3 style="margin-top: .9rem;">Summary Similarity</h3>
+      <table class="table">
+        <thead>
+          <tr>
+            <th>Report A</th>
+            <th>Report B</th>
+            <th>Similarity %</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in similarity_rows %}
+            <tr>
+              {% set left_ident = report_identity_by_name.get(row.left, {}) %}
+              {% set right_ident = report_identity_by_name.get(row.right, {}) %}
+              <td>{{ report_identity(row.left, left_ident.get("provider", "-"), left_ident.get("model", "-")) }}</td>
+              <td>{{ report_identity(row.right, right_ident.get("provider", "-"), right_ident.get("model", "-")) }}</td>
+              <td>{{ "%.1f"|format(row.similarity_pct) }}%</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% endif %}
+  {% endif %}
+</section>
+
+<section class="panel">
+  <h2>Comparison</h2>
+  <div class="benchmark-grid">
+    {% for r in selected_reports %}
+      <article class="benchmark-card">
+        <h3>{{ report_identity(r.name, r.backend, r.model) }}</h3>
+        <p class="muted small">
+          {{ r.report_type_label or r.report_type_id }} |
+          {{ r.backend }} |
+          {{ r.model }} |
+          {{ r.created_at }}
+        </p>
+        <p class="muted small">
+          Cost:
+          {% if r.generation_cost_usd_est and r.generation_cost_usd_est not in ['none', 'None', '-'] %}
+            {{ r.generation_cost_usd_est|replace('$', '') }}
+          {% else %}
+            {{ "%.2f"|format((r.generation_cost_usd_est_raw or 0)|float) }}
+          {% endif %}
+          |
+          Duration: {{ r.generation_duration_seconds }} |
+          Rows: {{ r.source_rows_used }}
+        </p>
+        <p class="actions">
+          <a class="btn-link" href="{{ url_for('view_json', path=r.json_path) }}">JSON</a>
+          <a class="btn-link" href="{{ url_for('view_html', path=r.html_path) }}">HTML</a>
+          {% if r.pdf_path %}<a class="btn-link" href="{{ url_for('view_pdf', path=r.pdf_path) }}">PDF</a>{% endif %}
+          {% if r.raw_path %}<a class="btn-link" href="{{ url_for('view_raw', path=r.raw_path) }}">RAW</a>{% endif %}
+        </p>
+        <h4>Summary</h4>
+        <p class="small">{{ r.summary_text }}</p>
+
+        <h4>Alerts</h4>
+        {% if r.alerts %}
+          <ul class="small">
+            {% for a in r.alerts[:8] %}
+              <li><strong>{{ a.severity or 'info' }}</strong>: {{ a.message or '' }}</li>
+            {% endfor %}
+          </ul>
+        {% else %}
+          <p class="muted small">No alerts.</p>
+        {% endif %}
+
+        <h4>Recommendations</h4>
+        {% if r.recommendations %}
+          <ul class="small">
+            {% for a in r.recommendations[:8] %}
+              <li><strong>{{ a.priority or 'medium' }}</strong>: {{ a.action or '' }}</li>
+            {% endfor %}
+          </ul>
+        {% else %}
+          <p class="muted small">No recommendations.</p>
+        {% endif %}
+      </article>
+    {% endfor %}
+  </div>
+</section>
+{% endif %}
+<script>
+  (function () {
+    const form = document.getElementById("benchmark-compare-form");
+    const floating = document.getElementById("floating-compare");
+    const countEl = document.getElementById("floating-compare-count");
+    const actionBtn = document.getElementById("floating-compare-btn");
+    if (!form || !floating || !countEl || !actionBtn) return;
+
+    const boxes = Array.from(form.querySelectorAll('input[type="checkbox"][name="json_path"]'));
+    const maxSelected = 4;
+    const updateFloating = () => {
+      const selected = boxes.filter((b) => b.checked).length;
+      countEl.textContent = selected + " selected";
+      const show = selected >= 2 && selected <= maxSelected;
+      floating.classList.toggle("hidden", !show);
+      actionBtn.disabled = !show;
+      const selectedNow = boxes.filter((b) => b.checked).length;
+      boxes.forEach((b) => {
+        if (!b.checked) b.disabled = selectedNow >= maxSelected;
+      });
+    };
+
+    boxes.forEach((box) => box.addEventListener("change", () => {
+      const selected = boxes.filter((b) => b.checked).length;
+      if (selected > maxSelected) {
+        box.checked = false;
+      }
+      updateFloating();
+    }));
+    actionBtn.addEventListener("click", () => {
+      if (!actionBtn.disabled) form.submit();
+    });
+    updateFloating();
+  })();
+
+  (function () {
+    const hasSelection = {{ 'true' if selected_reports else 'false' }};
+    if (!hasSelection) return;
+    const anchor = document.getElementById("benchmark-results-anchor");
+    if (!anchor) return;
+    // Jump directly to comparison output after compare submit/reload.
+    requestAnimationFrame(() => {
+      anchor.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+  })();
+</script>
+{% endblock %}

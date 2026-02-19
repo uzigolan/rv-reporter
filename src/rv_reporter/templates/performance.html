@@ -60,6 +60,87 @@
 </section>
 
 <section class="panel">
+  <h2>Report Type + Provider + Model</h2>
+  <form method="get" action="{{ url_for('performance') }}" class="actions" style="display:flex; align-items:flex-end; margin-bottom:.75rem; gap:.6rem; flex-wrap: wrap;">
+    <label>
+      <span>Report Type</span>
+      <select name="report_type">
+        <option value="">All</option>
+        {% for v in filter_report_type_options %}
+          <option value="{{ v }}" {% if report_type_filter == v|lower %}selected{% endif %}>{{ v }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>
+      <span>Provider</span>
+      <select name="provider">
+        <option value="">All</option>
+        {% for v in filter_provider_options %}
+          <option value="{{ v }}" {% if provider_filter == v|lower %}selected{% endif %}>{{ v }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>
+      <span>Model</span>
+      <select name="model">
+        <option value="">All</option>
+        {% for v in filter_model_options %}
+          <option value="{{ v }}" {% if model_filter == v|lower %}selected{% endif %}>{{ v }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <div style="display:flex; align-items:flex-end; gap:.5rem;">
+      <button type="submit" class="btn-primary">Apply</button>
+      <a href="{{ url_for('performance') }}" class="btn-link">Reset</a>
+    </div>
+  </form>
+  {% if report_provider_model_rows %}
+  <table class="table">
+    <thead>
+      <tr>
+        <th>Report Type</th>
+        <th>Provider</th>
+        <th>Model</th>
+        <th>Runs</th>
+        <th>Total Cost</th>
+        <th>Avg Duration (sec)</th>
+        <th>Total Tokens</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in report_provider_model_rows %}
+      <tr>
+        <td>{{ row.report_type }}</td>
+        <td>{{ row.provider }}</td>
+        <td>{{ row.model }}</td>
+        <td>{{ row.runs }}</td>
+        <td>${{ "%.4f"|format(row.total_cost) }}</td>
+        <td>{{ "%.1f"|format(row.avg_duration) }}</td>
+        <td>{{ "{:,}".format(row.total_tokens) }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="muted">No report-level combinations with measurable metadata yet.</p>
+  {% endif %}
+</section>
+
+<section class="panel">
+  <h2>Report/Provider/Model Charts</h2>
+  <div class="chart-grid">
+    <div class="chart-wrap">
+      <div class="chart-title">Top Report-Provider-Model by Cost</div>
+      <canvas id="tripletCostChart"></canvas>
+    </div>
+    <div class="chart-wrap">
+      <div class="chart-title">Top Report-Provider-Model by Avg Duration</div>
+      <canvas id="tripletDurationChart"></canvas>
+    </div>
+  </div>
+</section>
+
+<section class="panel">
   <h2>Charts</h2>
   <div class="chart-grid">
     <div class="chart-wrap">
@@ -96,6 +177,8 @@
   const modelTokensRows = {{ model_tokens_rows | tojson }};
   const modelCostRows = {{ model_cost_rows | tojson }};
   const scatterRows = {{ scatter_rows | tojson }};
+  const topTripletCostRows = {{ top_triplet_cost_rows | tojson }};
+  const topTripletDurationRows = {{ top_triplet_duration_rows | tojson }};
 
   const providerLabels = providerRows.map(r => r.provider);
   const providerCosts = providerRows.map(r => Number(r.total_cost || 0));
@@ -128,6 +211,62 @@
     });
   }
 
+  const ellipsize = (txt, max = 34) => {
+    const s = String(txt || "");
+    return s.length > max ? `${s.slice(0, max - 3)}...` : s;
+  };
+  const tripletCostLabelsFull = topTripletCostRows.map(r => `${r.report_type} | ${r.provider} | ${r.model}`);
+  const tripletCostLabels = tripletCostLabelsFull.map(v => ellipsize(v, 34));
+  const tripletCostValues = topTripletCostRows.map(r => Number(r.total_cost || 0));
+  if (tripletCostLabels.length) {
+    new Chart(document.getElementById("tripletCostChart"), {
+      type: "bar",
+      data: { labels: tripletCostLabels, datasets: [{ data: tripletCostValues, backgroundColor: "#7c3aed" }] },
+      options: {
+        ...barOpts,
+        indexAxis: "y",
+        scales: {
+          x: { beginAtZero: true },
+          y: { ticks: { autoSkip: false } }
+        },
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            callbacks: {
+              title: (items) => tripletCostLabelsFull[items?.[0]?.dataIndex ?? 0] || "",
+            }
+          }
+        }
+      }
+    });
+  }
+
+  const tripletDurationLabelsFull = topTripletDurationRows.map(r => `${r.report_type} | ${r.provider} | ${r.model}`);
+  const tripletDurationLabels = tripletDurationLabelsFull.map(v => ellipsize(v, 34));
+  const tripletDurationValues = topTripletDurationRows.map(r => Number(r.avg_duration || 0));
+  if (tripletDurationLabels.length) {
+    new Chart(document.getElementById("tripletDurationChart"), {
+      type: "bar",
+      data: { labels: tripletDurationLabels, datasets: [{ data: tripletDurationValues, backgroundColor: "#ea580c" }] },
+      options: {
+        ...barOpts,
+        indexAxis: "y",
+        scales: {
+          x: { beginAtZero: true },
+          y: { ticks: { autoSkip: false } }
+        },
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            callbacks: {
+              title: (items) => tripletDurationLabelsFull[items?.[0]?.dataIndex ?? 0] || "",
+            }
+          }
+        }
+      }
+    });
+  }
+
   if (modelLabelsByTokens.length) {
     new Chart(document.getElementById("modelTokensChart"), {
       type: "bar",
@@ -145,20 +284,101 @@
   }
 
   if (scatterRows.length) {
+    const providerIconUrl = (provider) => {
+      const p = String(provider || "").toLowerCase();
+      if (p === "openai") return "https://openai.com/favicon.ico";
+      if (p === "claude") return "https://claude.ai/favicon.ico";
+      if (p === "gemini") return "https://gemini.google.com/favicon.ico";
+      if (p === "xai") return "{{ url_for('static', filename='icons/grok.svg') }}";
+      if (p === "openrouter") return "https://openrouter.ai/favicon.ico";
+      return "{{ url_for('static', filename='favicon.svg') }}";
+    };
+    const fallbackIcon = "{{ url_for('static', filename='favicon.svg') }}";
+    const getOrCreateTooltip = (chart) => {
+      let el = chart.canvas.parentNode.querySelector(".chartjs-ext-tooltip");
+      if (el) return el;
+      el = document.createElement("div");
+      el.className = "chartjs-ext-tooltip";
+      el.style.background = "rgba(15, 23, 42, 0.95)";
+      el.style.borderRadius = "8px";
+      el.style.color = "#fff";
+      el.style.opacity = 0;
+      el.style.pointerEvents = "none";
+      el.style.position = "absolute";
+      el.style.transform = "translate(-50%, 0)";
+      el.style.transition = "all .08s ease";
+      el.style.padding = "8px 10px";
+      el.style.fontSize = "12px";
+      el.style.whiteSpace = "nowrap";
+      chart.canvas.parentNode.style.position = "relative";
+      chart.canvas.parentNode.appendChild(el);
+      return el;
+    };
+    const externalScatterTooltip = (context) => {
+      const { chart, tooltip } = context;
+      const el = getOrCreateTooltip(chart);
+      if (!tooltip || tooltip.opacity === 0 || !tooltip.dataPoints || !tooltip.dataPoints.length) {
+        el.style.opacity = 0;
+        return;
+      }
+      const dp = tooltip.dataPoints[0];
+      const raw = dp.raw || {};
+      const provider = String(raw.provider || "");
+      const model = String(raw.model || "-");
+      const duration = Number(raw.x || 0);
+      const tokens = Number(raw.y || 0);
+      const rows = Number(raw.rows || 0);
+      const cost = Number(raw.cost || 0);
+      const icon = providerIconUrl(provider);
+      el.innerHTML = `
+        <div style="display:flex;align-items:center;gap:7px;margin-bottom:4px;">
+          <img src="${icon}" alt="${provider}" style="width:14px;height:14px;border-radius:3px;object-fit:cover;" onerror="this.onerror=null;this.src='${fallbackIcon}';">
+          <strong style="font-size:12px;">${provider || "unknown"}</strong>
+        </div>
+        <div>Model: ${model}</div>
+        <div>Duration: ${duration.toFixed(1)} sec</div>
+        <div>Tokens: ${Math.round(tokens).toLocaleString()}</div>
+        <div>Rows: ${rows > 0 ? Math.round(rows).toLocaleString() : "-"}</div>
+        <div>Cost: $${cost.toFixed(4)}</div>
+      `;
+      const { offsetLeft: positionX, offsetTop: positionY } = chart.canvas;
+      el.style.opacity = 1;
+      el.style.left = positionX + tooltip.caretX + "px";
+      el.style.top = positionY + tooltip.caretY + 10 + "px";
+    };
     new Chart(document.getElementById("durationTokensScatter"), {
       type: "scatter",
       data: {
         datasets: [{
           label: "Runs",
-          data: scatterRows.map(r => ({ x: Number(r.x || 0), y: Number(r.y || 0) })),
+          data: scatterRows.map(r => ({
+            x: Number(r.x || 0),
+            y: Number(r.y || 0),
+            provider: String(r.provider || ""),
+            model: String(r.model || "-"),
+            rows: Number(r.rows || 0),
+            cost: Number(r.cost || 0),
+          })),
           pointRadius: 5,
+          pointHoverRadius: 7,
+          pointHitRadius: 16,
           pointBackgroundColor: "#2563eb"
         }]
       },
       options: {
         responsive: true,
         maintainAspectRatio: false,
-        plugins: { legend: { display: false } },
+        interaction: {
+          mode: "nearest",
+          intersect: false,
+        },
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            enabled: false,
+            external: externalScatterTooltip,
+          }
+        },
         scales: {
           x: { title: { display: true, text: "Duration (sec)" } },
           y: { title: { display: true, text: "Tokens" } }

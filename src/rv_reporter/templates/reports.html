@@ -56,13 +56,21 @@
               {% elif item.backend == "gemini" %}
                 <img class="provider-favicon" src="https://gemini.google.com/favicon.ico" alt="gemini" title="gemini" loading="lazy" onerror="this.onerror=null;this.src='{{ url_for('static', filename='favicon.svg') }}';">
               {% elif item.backend == "xai" %}
-                <img class="provider-favicon" src="https://x.ai/favicon.ico" alt="xai" title="xai" loading="lazy" onerror="this.onerror=null;this.src='{{ url_for('static', filename='favicon.svg') }}';">
+                <img class="provider-favicon" src="{{ url_for('static', filename='icons/grok.svg') }}" alt="xai" title="xai" loading="lazy" onerror="this.onerror=null;this.src='{{ url_for('static', filename='favicon.svg') }}';">
+              {% elif item.backend == "openrouter" %}
+                <img class="provider-favicon" src="https://openrouter.ai/favicon.ico" alt="openrouter" title="openrouter" loading="lazy" onerror="this.onerror=null;this.src='{{ url_for('static', filename='favicon.svg') }}';">
               {% else %}
                 <img class="provider-favicon" src="{{ url_for('static', filename='favicon.svg') }}" alt="{{ item.backend }}" title="{{ item.backend }}" loading="lazy">
               {% endif %}
             </td>
             <td class="model-col advanced-col">
-              <span class="cell-ellipsis" title="{{ item.model }}">{{ item.model }}</span>
+              {% set model_val = item.model or "-" %}
+              {% set model_tail_len = 18 %}
+              {% if model_val|length > model_tail_len %}
+                <span class="model-tail-fixed" title="{{ model_val }}">...{{ model_val[-model_tail_len:] }}</span>
+              {% else %}
+                <span class="model-tail-fixed" title="{{ model_val }}">{{ model_val }}</span>
+              {% endif %}
             </td>
             <td class="source-col advanced-col">
               <div class="cell-ellipsis" title="{{ item.source_csv }}">{{ item.source_csv }}</div>

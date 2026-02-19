@@ -1,29 +1,33 @@
-report_type_id: twamp_session_health
+report_type_id: wireshark_capture_health
 version: "1.0.0"
-title: "TWAMP Session Health Report"
+title: "Wireshark Capture Health Report"
 required_columns:
-  - DateTimeUTC
-  - DiscardRatePct_Emulated
-  - YellowTrafficPct_Emulated
-  - FwdTotalPackets_Emulated
-  - ColorDiscardTotalPackets_Emulated
-  - twampReportCurrentDelayAverage
-  - twampReportCurrentIpdvMax
-metrics_profile: twamp_session_health
+  - frame_time_epoch
+  - frame_len
+  - src_ip
+  - dst_ip
+  - transport
+  - src_port
+  - dst_port
+  - frame_protocols
+metrics_profile: wireshark_capture_health
 default_prefs:
   tone: technical
   audience: engineering
   focus: anomalies
-  alert_discard_rate_pct: 0.15
-  top_n_intervals: 5
+  top_n_talkers: 12
+  top_n_conversations: 12
+  time_bucket: 1min
+  large_packet_avg_threshold: 1200
 prompt_instructions: |
-  Summarize TWAMP session quality with emphasis on discard rate, yellow traffic behavior,
-  and interval-level hotspots. Interpret results in L2/QoS context using color discard behavior
-  (green/yellow/red), packet-vs-byte discard patterns, and likely congestion/policy causes.
-  Distinguish sessions by class-of-service using DSCP when present in the source; if DSCP is
-  not present, explicitly state that CoS distinction is unknown from the dataset.
-  Provide confidence levels for hypotheses and clearly state that physical-layer faults cannot be
-  confirmed without direct L2 error counters (CRC/FCS/link-flap).
+  Analyze this packet capture summary from Wireshark/tshark parsing.
+  Focus on:
+  - protocol mix and dominant traffic classes
+  - top talkers and top conversations
+  - packet/byte time trend and potential burst windows
+  - TCP reset/SYN signal and possible stability implications
+  - DNS/HTTP/TLS visibility observations and blind spots
+  Distinguish observed facts from inferred risk.
 output_schema:
   type: object
   additionalProperties: false

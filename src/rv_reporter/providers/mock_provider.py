@@ -95,4 +95,10 @@ def _recommendations_for(metrics_profile: str, metrics: dict[str, Any]) -> list[
             {"priority": "medium", "action": "Standardize disease-course labels to reduce taxonomy drift (e.g., RRMS variants)."},
             {"priority": "medium", "action": "Validate date fields and enforce consistent date formats at ingestion."},
         ]
+    if metrics_profile == "wireshark_capture_health":
+        return [
+            {"priority": "high", "action": "Investigate top talkers and top conversations for concentration or suspicious traffic."},
+            {"priority": "medium", "action": "Review elevated TCP reset patterns and correlate with policy/firewall logs."},
+            {"priority": "medium", "action": "Inspect packet-rate spikes and protocol shifts across time buckets."},
+        ]
     return [{"priority": "medium", "action": "Review computed metrics with domain owner."}]

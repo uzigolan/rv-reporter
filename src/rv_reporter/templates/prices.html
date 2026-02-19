@@ -26,7 +26,6 @@
         <td>
           {% if p.model_count > 0 %}
             <strong>{{ p.model_count }}</strong> models
-            <div class="muted small">{{ p.models_preview }}</div>
             {% if p.model_prices %}
             <div class="muted small" style="margin-top:.3rem;">
               {% for mp in p.model_prices[:8] %}

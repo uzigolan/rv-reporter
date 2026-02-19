@@ -28,7 +28,7 @@ def list_report_types(config_dir: str = "configs/report_types") -> None:
 
 @app.command("build-report")
 def build_report(
-    csv: str = typer.Option(..., help="Path to input file (.csv/.xlsx/.xls)"),
+    csv: str = typer.Option(..., help="Path to input file (.csv/.xlsx/.xls/.pcap/.pcapng)"),
     report_type: str = typer.Option(..., help="Report type id"),
     prefs: Optional[str] = typer.Option(None, help="Path to user prefs JSON"),
     output_dir: str = typer.Option("outputs", help="Output directory"),
@@ -39,7 +39,7 @@ def build_report(
     model: str = typer.Option("gpt-5-mini", help="Model for openai provider"),
     api_key: Optional[str] = typer.Option(None, help="Provider API token override"),
     api_base_url: Optional[str] = typer.Option(None, help="Provider base URL override"),
-    row_limit: Optional[int] = typer.Option(None, help="Optional max number of rows to load from CSV"),
+    row_limit: Optional[int] = typer.Option(None, help="Optional max number of rows to load from source"),
     sheet_name: Optional[str] = typer.Option(None, help="Excel sheet name for .xlsx/.xls inputs"),
     ignore_column: list[str] = typer.Option(
         [],

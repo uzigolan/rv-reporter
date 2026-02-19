@@ -79,6 +79,17 @@ def run_pipeline(
     elapsed_seconds = int(round(perf_counter() - start_time))
     _stamp_report_metadata(report_json, run_id=run_id, generated_at=generated_at)
     context = dict(generation_context or {})
+    provider_usage = getattr(report_provider, "last_usage", None)
+    if isinstance(provider_usage, dict):
+        in_actual = provider_usage.get("input_tokens")
+        out_actual = provider_usage.get("output_tokens")
+        if isinstance(in_actual, int):
+            context["generation_input_tokens_actual"] = in_actual
+        if isinstance(out_actual, int):
+            context["generation_output_tokens_actual"] = out_actual
+    provider_cost_actual = getattr(report_provider, "last_usage_cost_usd", None)
+    if provider_cost_actual is not None:
+        context["generation_cost_usd_actual"] = provider_cost_actual
     context["generation_duration_seconds"] = elapsed_seconds
     _stamp_generation_metadata(report_json, context)
     validate_report_schema(report_json, definition.output_schema)
@@ -178,6 +189,24 @@ def _stamp_generation_metadata(report_json: dict[str, Any], generation_context: 
             metadata["generation_output_tokens_est"] = int(round(float(out_tokens)))
         except (TypeError, ValueError):
             pass
+    in_tokens_actual = generation_context.get("generation_input_tokens_actual")
+    if in_tokens_actual is not None:
+        try:
+            metadata["generation_input_tokens_actual"] = int(round(float(in_tokens_actual)))
+        except (TypeError, ValueError):
+            pass
+    out_tokens_actual = generation_context.get("generation_output_tokens_actual")
+    if out_tokens_actual is not None:
+        try:
+            metadata["generation_output_tokens_actual"] = int(round(float(out_tokens_actual)))
+        except (TypeError, ValueError):
+            pass
+    cost_actual = generation_context.get("generation_cost_usd_actual")
+    if cost_actual is not None:
+        try:
+            metadata["generation_cost_usd_actual"] = round(float(cost_actual), 6)
+        except (TypeError, ValueError):
+            pass
 
 
 def _ensure_metrics_payload_for_charted_reports(
@@ -191,6 +220,7 @@ def _ensure_metrics_payload_for_charted_reports(
         "pm_export_health",
         "jira_issue_portfolio",
         "ms_biomarker_registry_health",
+        "wireshark_capture_health",
     }:
         return
     tables = report_json.get("tables")
@@ -394,6 +424,12 @@ def _default_recommendations(metrics_profile: str) -> list[dict[str, str]]:
             {"priority": "high", "action": "Escalate overloaded owners and rebalance high in-progress backlogs."},
             {"priority": "medium", "action": "Prioritize stale unresolved issues with explicit closure owners."},
             {"priority": "medium", "action": "Track project-level open/in-progress/closed trend weekly."},
+        ]
+    if metrics_profile == "wireshark_capture_health":
+        return [
+            {"priority": "high", "action": "Investigate top talkers and high-byte conversations for abnormal concentration."},
+            {"priority": "medium", "action": "Review TCP reset bursts against device logs and policy boundaries."},
+            {"priority": "medium", "action": "Correlate packet-rate spikes with service events and change windows."},
         ]
     return [
         {"priority": "high", "action": "Investigate top-risk findings and assign an owner with due date."},

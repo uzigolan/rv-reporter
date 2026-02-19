@@ -1,8 +1,59 @@
 from __future__ import annotations
 
+import io
+import os
+import subprocess
 from pathlib import Path
 
 import pandas as pd
+
+_PCAP_COLUMN_MAP: list[tuple[str, str]] = [
+    ("frame_time_epoch", "frame.time_epoch"),
+    ("frame_len", "frame.len"),
+    ("ip_src", "ip.src"),
+    ("ipv6_src", "ipv6.src"),
+    ("ip_dst", "ip.dst"),
+    ("ipv6_dst", "ipv6.dst"),
+    ("ip_proto", "ip.proto"),
+    ("transport", "_ws.col.Protocol"),
+    ("tcp_srcport", "tcp.srcport"),
+    ("tcp_dstport", "tcp.dstport"),
+    ("udp_srcport", "udp.srcport"),
+    ("udp_dstport", "udp.dstport"),
+    ("tcp_flags_syn", "tcp.flags.syn"),
+    ("tcp_flags_ack", "tcp.flags.ack"),
+    ("tcp_flags_fin", "tcp.flags.fin"),
+    ("tcp_flags_reset", "tcp.flags.reset"),
+    ("dns_query", "dns.qry.name"),
+    ("http_host", "http.host"),
+    ("http_uri", "http.request.uri"),
+    ("tls_sni", "tls.handshake.extensions_server_name"),
+    ("icmp_type", "icmp.type"),
+    ("arp_opcode", "arp.opcode"),
+    ("frame_protocols", "frame.protocols"),
+]
+
+_PCAP_COLUMNS = [
+    "frame_time_epoch",
+    "frame_len",
+    "src_ip",
+    "dst_ip",
+    "ip_proto",
+    "transport",
+    "src_port",
+    "dst_port",
+    "tcp_flags_syn",
+    "tcp_flags_ack",
+    "tcp_flags_fin",
+    "tcp_flags_reset",
+    "dns_query",
+    "http_host",
+    "http_uri",
+    "tls_sni",
+    "icmp_type",
+    "arp_opcode",
+    "frame_protocols",
+]
 
 
 def describe_tabular_source(path: str | Path, sheet_name: str | None = None) -> dict[str, object]:
@@ -31,6 +82,13 @@ def describe_tabular_source(path: str | Path, sheet_name: str | None = None) -> 
             "sheets": sheets,
             "selected_sheet": selected_sheet,
             "columns": columns,
+        }
+    if suffix in {".pcap", ".pcapng"}:
+        return {
+            "file_type": "pcap",
+            "sheets": [],
+            "selected_sheet": "",
+            "columns": list(_PCAP_COLUMNS),
         }
     return {
         "file_type": "unknown",
@@ -72,8 +130,10 @@ def load_csv_with_limit(
         return pd.read_csv(data_path, nrows=nrows)
     if suffix in {".xlsx", ".xls"}:
         return _read_excel(data_path, sheet_name=sheet_name, nrows=nrows)
+    if suffix in {".pcap", ".pcapng"}:
+        return _read_pcap(data_path, nrows=nrows)
 
-    raise ValueError("Unsupported file type. Supported: .csv, .xlsx, .xls")
+    raise ValueError("Unsupported file type. Supported: .csv, .xlsx, .xls, .pcap, .pcapng")
 
 
 def _read_excel(path: Path, sheet_name: str | None, nrows: int | None) -> pd.DataFrame:
@@ -90,6 +150,103 @@ def _read_excel(path: Path, sheet_name: str | None, nrows: int | None) -> pd.Dat
         "Excel file has multiple sheets. Please provide 'Sheet Name'. "
         f"Available sheets: {sheets}"
     )
+
+
+def _read_pcap(path: Path, nrows: int | None) -> pd.DataFrame:
+    tshark_exe = _resolve_tshark_executable()
+    command = [
+        tshark_exe,
+        "-r",
+        str(path),
+        "-T",
+        "fields",
+        "-E",
+        "header=y",
+        "-E",
+        "separator=,",
+        "-E",
+        "quote=d",
+        "-E",
+        "occurrence=f",
+    ]
+    if nrows is not None:
+        command.extend(["-c", str(nrows)])
+    for _, tshark_field in _PCAP_COLUMN_MAP:
+        command.extend(["-e", tshark_field])
+
+    try:
+        completed = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except FileNotFoundError as exc:
+        raise ValueError(
+            "tshark was not found. Set TSHARK_PATH in .env.sandbox "
+            "(for example: C:\\Program Files\\Wireshark\\tshark.exe) "
+            "or install Wireshark/tshark and ensure it is in PATH."
+        ) from exc
+
+    if completed.returncode != 0:
+        stderr = (completed.stderr or "").strip()
+        raise ValueError(
+            "Failed to parse capture with tshark. "
+            + (f"Details: {stderr}" if stderr else "Check capture file integrity and tshark installation.")
+        )
+
+    raw = completed.stdout or ""
+    if not raw.strip():
+        return pd.DataFrame(columns=_PCAP_COLUMNS)
+    frame = pd.read_csv(io.StringIO(raw), dtype=str)
+    frame = frame.rename(columns={src: dst for src, dst in _PCAP_COLUMN_MAP if src in frame.columns})
+
+    if "src_ip" not in frame.columns:
+        frame["src_ip"] = ""
+    if "dst_ip" not in frame.columns:
+        frame["dst_ip"] = ""
+    frame["src_ip"] = frame["src_ip"].fillna("")
+    frame["dst_ip"] = frame["dst_ip"].fillna("")
+    if "ipv6_src" in frame.columns:
+        frame["src_ip"] = frame["src_ip"].where(frame["src_ip"] != "", frame["ipv6_src"].fillna(""))
+        frame = frame.drop(columns=["ipv6_src"])
+    if "ipv6_dst" in frame.columns:
+        frame["dst_ip"] = frame["dst_ip"].where(frame["dst_ip"] != "", frame["ipv6_dst"].fillna(""))
+        frame = frame.drop(columns=["ipv6_dst"])
+
+    if "src_port" not in frame.columns:
+        frame["src_port"] = ""
+    if "dst_port" not in frame.columns:
+        frame["dst_port"] = ""
+    frame["src_port"] = frame["src_port"].fillna("")
+    frame["dst_port"] = frame["dst_port"].fillna("")
+    if "tcp_srcport" in frame.columns:
+        frame["src_port"] = frame["src_port"].where(frame["src_port"] != "", frame["tcp_srcport"].fillna(""))
+        frame = frame.drop(columns=["tcp_srcport"])
+    if "udp_srcport" in frame.columns:
+        frame["src_port"] = frame["src_port"].where(frame["src_port"] != "", frame["udp_srcport"].fillna(""))
+        frame = frame.drop(columns=["udp_srcport"])
+    if "tcp_dstport" in frame.columns:
+        frame["dst_port"] = frame["dst_port"].where(frame["dst_port"] != "", frame["tcp_dstport"].fillna(""))
+        frame = frame.drop(columns=["tcp_dstport"])
+    if "udp_dstport" in frame.columns:
+        frame["dst_port"] = frame["dst_port"].where(frame["dst_port"] != "", frame["udp_dstport"].fillna(""))
+        frame = frame.drop(columns=["udp_dstport"])
+
+    for col in _PCAP_COLUMNS:
+        if col not in frame.columns:
+            frame[col] = ""
+    return frame[_PCAP_COLUMNS]
+
+
+def _resolve_tshark_executable() -> str:
+    configured = (os.getenv("TSHARK_PATH", "") or os.getenv("RV_TSHARK_PATH", "")).strip()
+    if not configured:
+        return "tshark"
+    candidate = Path(configured.strip('"'))
+    if candidate.name.lower() == "wireshark.exe":
+        candidate = candidate.with_name("tshark.exe")
+    return str(candidate)
 
 
 def validate_required_columns(df: pd.DataFrame, required_columns: list[str]) -> None:

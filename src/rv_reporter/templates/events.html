@@ -54,7 +54,9 @@
           {% elif e.provider == "gemini" %}
             <img class="provider-favicon" src="https://gemini.google.com/favicon.ico" alt="gemini" title="gemini" loading="lazy" onerror="this.onerror=null;this.src='{{ url_for('static', filename='favicon.svg') }}';">
           {% elif e.provider == "xai" %}
-            <img class="provider-favicon" src="https://x.ai/favicon.ico" alt="xai" title="xai" loading="lazy" onerror="this.onerror=null;this.src='{{ url_for('static', filename='favicon.svg') }}';">
+            <img class="provider-favicon" src="{{ url_for('static', filename='icons/grok.svg') }}" alt="xai" title="xai" loading="lazy" onerror="this.onerror=null;this.src='{{ url_for('static', filename='favicon.svg') }}';">
+          {% elif e.provider == "openrouter" %}
+            <img class="provider-favicon" src="https://openrouter.ai/favicon.ico" alt="openrouter" title="openrouter" loading="lazy" onerror="this.onerror=null;this.src='{{ url_for('static', filename='favicon.svg') }}';">
           {% else %}
             <img class="provider-favicon" src="{{ url_for('static', filename='favicon.svg') }}" alt="{{ e.provider }}" title="{{ e.provider }}" loading="lazy">
           {% endif %}

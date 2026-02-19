@@ -26,6 +26,10 @@ default_prefs:
   top_n_corr_biomarkers: 15
   top_n_biomarker_pairs: 12
   min_biomarker_non_null: 100
+  zscore_outlier_threshold: 2.0
+  top_n_zscore_biomarkers: 12
+  zscore_outlier_rows_limit: 25
+  stat_corr_min_pairs: 20
   corr_band_very_weak_max: 0.10
   corr_band_weak_max: 0.29
   corr_band_moderate_max: 0.49
@@ -45,6 +49,8 @@ prompt_instructions: |
   - biomarker-to-Sample-EDSS correlations (state contributing vs weak/non-contributing markers)
   - grouped biomarker correlations to Sample EDSS by two bands: 0-3.5 and 4+
   - grouped biomarker correlations to Last EDSS by two bands: 0-3.5 and 4+
+  - z-score-based biomarker signal summary: top mean |z| in Sample EDSS 4+, outlier prevalence by biomarker, and top outlier rows
+  - statistical validation checks: MAD robust z-score, IQR outlier rule, partial Spearman, Mann-Whitney U, Cliff's delta, permutation p-value, bootstrap CI, FDR correction, PCA latent factor, and longitudinal slope proxy
   - strongest biomarker-to-biomarker correlations and what clusters may indicate
   - disease-course transitions (sample vs last course)
   - biomarker panel completeness and which markers are too sparse for reliable inference

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import time
 from typing import Any
 from urllib import request
@@ -23,6 +24,8 @@ class AnthropicMessagesProvider(ReportProvider):
         self._api_key = api_key
         self._base_url = (base_url or "https://api.anthropic.com/v1").rstrip("/")
         self.last_raw_response: dict[str, Any] | None = None
+        self.last_usage: dict[str, int] | None = None
+        self.last_usage_cost_usd: float | None = None
 
     def generate_report_json(
         self,
@@ -67,6 +70,11 @@ class AnthropicMessagesProvider(ReportProvider):
         raw = self._perform_request_with_retry(req)
         parsed = json.loads(raw)
         self.last_raw_response = parsed if isinstance(parsed, dict) else {"raw": raw}
+        self.last_usage = _extract_usage(parsed)
+        if self.last_usage:
+            self.last_usage_cost_usd = _estimate_usage_cost_usd(self._model, self.last_usage)
+        else:
+            self.last_usage_cost_usd = None
 
         text = ""
         blocks = parsed.get("content", []) if isinstance(parsed, dict) else []
@@ -122,3 +130,75 @@ class AnthropicMessagesProvider(ReportProvider):
         if last_exc is not None:
             raise RuntimeError(f"Anthropic request failed: {last_exc}") from last_exc
         raise RuntimeError("Anthropic request failed for unknown reason.")
+
+
+def _extract_usage(payload: dict[str, Any]) -> dict[str, int] | None:
+    if not isinstance(payload, dict):
+        return None
+    usage = payload.get("usage")
+    if not isinstance(usage, dict):
+        return None
+    in_tokens = usage.get("input_tokens")
+    out_tokens = usage.get("output_tokens")
+    try:
+        input_val = int(in_tokens)
+        output_val = int(out_tokens)
+    except (TypeError, ValueError):
+        return None
+    if input_val < 0 or output_val < 0:
+        return None
+    return {"input_tokens": input_val, "output_tokens": output_val}
+
+
+def _estimate_usage_cost_usd(model: str, usage: dict[str, int]) -> float | None:
+    input_tokens = int(usage.get("input_tokens", 0))
+    output_tokens = int(usage.get("output_tokens", 0))
+    if input_tokens < 0 or output_tokens < 0:
+        return None
+    key = _canonical_anthropic_model_key(model)
+    pricing_per_m = {
+        "claude-sonnet-4": (3.0, 15.0),
+        "claude-sonnet-4-5": (3.0, 15.0),
+        "claude-sonnet-4-6": (3.0, 15.0),
+        "claude-opus-4": (15.0, 75.0),
+        "claude-opus-4-1": (15.0, 75.0),
+        "claude-opus-4-5": (5.0, 25.0),
+        "claude-opus-4-6": (5.0, 25.0),
+        "claude-haiku-4-5": (1.0, 5.0),
+        "claude-3-haiku": (0.25, 1.25),
+        "claude-3-7-sonnet-latest": (3.0, 15.0),
+    }
+    prices = pricing_per_m.get(key)
+    if prices is None:
+        return None
+    input_per_1m, output_per_1m = prices
+    total = (input_tokens / 1_000_000) * input_per_1m + (output_tokens / 1_000_000) * output_per_1m
+    return round(total, 6)
+
+
+def _canonical_anthropic_model_key(model: str) -> str:
+    key = str(model or "").strip().lower()
+    tail = key.split("/", 1)[1] if "/" in key else key
+    tail = tail.replace(".", "-")
+    tail = re.sub(r"-\d{8}$", "", tail)
+    if tail.startswith("claude-sonnet-4-6"):
+        return "claude-sonnet-4-6"
+    if tail.startswith("claude-sonnet-4-5"):
+        return "claude-sonnet-4-5"
+    if tail.startswith("claude-sonnet-4"):
+        return "claude-sonnet-4"
+    if tail.startswith("claude-opus-4-6"):
+        return "claude-opus-4-6"
+    if tail.startswith("claude-opus-4-5"):
+        return "claude-opus-4-5"
+    if tail.startswith("claude-opus-4-1"):
+        return "claude-opus-4-1"
+    if tail.startswith("claude-opus-4"):
+        return "claude-opus-4"
+    if tail.startswith("claude-haiku-4-5"):
+        return "claude-haiku-4-5"
+    if tail.startswith("claude-3-7-sonnet"):
+        return "claude-3-7-sonnet-latest"
+    if tail.startswith("claude-3-haiku") or tail.startswith("claude-3-5-haiku"):
+        return "claude-3-haiku"
+    return tail

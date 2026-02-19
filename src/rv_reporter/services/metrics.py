@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import math
+import random
 from typing import Any
 
 import pandas as pd
@@ -20,6 +22,8 @@ def compute_metrics(profile: str, df: pd.DataFrame, prefs: dict[str, Any]) -> di
         return _compute_jira_issue_portfolio(df, prefs)
     if profile == "ms_biomarker_registry_health":
         return _compute_ms_biomarker_registry_health(df, prefs)
+    if profile == "wireshark_capture_health":
+        return _compute_wireshark_capture_health(df, prefs)
     raise ValueError(f"Unsupported metrics profile '{profile}'.")
 
 
@@ -348,6 +352,7 @@ def _compute_twamp_session_health(df: pd.DataFrame, prefs: dict[str, Any]) -> di
         "YellowTrafficPct_Emulated",
         "FwdTotalPackets_Emulated",
         "ColorDiscardTotalPackets_Emulated",
+        "twampReportCurrentLossPackets",
         "DiscardGreenPackets_Emulated",
         "DiscardYellowPackets_Emulated",
         "DiscardRedPackets_Emulated",
@@ -366,6 +371,19 @@ def _compute_twamp_session_health(df: pd.DataFrame, prefs: dict[str, Any]) -> di
             working[col] = 0.0
 
     working = working.dropna(subset=["DateTimeUTC"]).copy()
+    if "twampContSessionId" not in working.columns:
+        working["twampContSessionId"] = "unknown"
+    if "twampPeerAddr" not in working.columns:
+        working["twampPeerAddr"] = "unknown"
+    working["session_key"] = (
+        working["twampContSessionId"].fillna("unknown").astype(str).str.strip()
+        + "|"
+        + working["twampPeerAddr"].fillna("unknown").astype(str).str.strip()
+    )
+
+    dscp_series = _extract_twamp_dscp_series(working)
+    working["dscp_value"] = dscp_series
+    working["cos_class"] = working["dscp_value"].apply(_dscp_to_cos_class)
     if working.empty:
         return {
             "summary": {
@@ -375,9 +393,12 @@ def _compute_twamp_session_health(df: pd.DataFrame, prefs: dict[str, Any]) -> di
                 "avg_yellow_traffic_pct": 0.0,
                 "total_forward_packets": 0,
                 "total_discard_packets": 0,
+                "sessions": 0,
+                "sessions_with_dscp": 0,
             },
             "top_discard_intervals": [],
             "time_trend": [],
+            "session_cos_summary": [],
             "alerts": [],
         }
 
@@ -393,6 +414,7 @@ def _compute_twamp_session_health(df: pd.DataFrame, prefs: dict[str, Any]) -> di
             "yellow_traffic_pct": round(float(row["YellowTrafficPct_Emulated"]), 4),
             "forward_packets": int(row["FwdTotalPackets_Emulated"] or 0),
             "discard_packets": int(row["ColorDiscardTotalPackets_Emulated"] or 0),
+            "loss_packets": int(row["twampReportCurrentLossPackets"] or 0),
             "discard_green_packets": int(row["DiscardGreenPackets_Emulated"] or 0),
             "discard_yellow_packets": int(row["DiscardYellowPackets_Emulated"] or 0),
             "discard_red_packets": int(row["DiscardRedPackets_Emulated"] or 0),
@@ -457,6 +479,8 @@ def _compute_twamp_session_health(df: pd.DataFrame, prefs: dict[str, Any]) -> di
         p95_discard_rate_pct=p95_discard_rate,
         avg_yellow_traffic_pct=avg_yellow_pct,
     )
+    session_cos_summary = _compute_twamp_session_cos_summary(working)
+    sessions_with_dscp = int(sum(1 for row in session_cos_summary if row.get("dscp") is not None))
 
     return {
         "summary": {
@@ -466,19 +490,148 @@ def _compute_twamp_session_health(df: pd.DataFrame, prefs: dict[str, Any]) -> di
             "avg_yellow_traffic_pct": round(avg_yellow_pct, 4),
             "total_forward_packets": int(working["FwdTotalPackets_Emulated"].sum()),
             "total_discard_packets": int(working["ColorDiscardTotalPackets_Emulated"].sum()),
+            "total_loss_packets": int(working["twampReportCurrentLossPackets"].sum()),
             "avg_delay": round(float(working["twampReportCurrentDelayAverage"].mean()), 4),
             "p95_ipdv_max": round(p95_ipdv, 4),
             "risk_score": risk_score,
             "risk_band": risk_band,
+            "sessions": int(len(session_cos_summary)),
+            "sessions_with_dscp": sessions_with_dscp,
         },
         "color_discard_packets": color_totals_packets,
         "color_discard_bytes": color_totals_bytes,
         "color_packet_share_pct": color_packet_share,
         "l2_qos_insights": hypotheses,
+        "session_cos_summary": session_cos_summary,
         "top_discard_intervals": top_discard,
         "time_trend": trend,
         "alerts": alerts,
     }
+
+
+def _extract_twamp_dscp_series(working: pd.DataFrame) -> pd.Series:
+    candidates = [
+        "twampReportCurrentDscp",
+        "twampSessionDscp",
+        "twampDscp",
+        "DSCP",
+        "dscp",
+        "ip_dscp",
+        "twampReportCurrentTos",
+        "ip_tos",
+        "tos",
+    ]
+    for col in candidates:
+        if col not in working.columns:
+            continue
+        parsed = working[col].apply(_parse_dscp_value)
+        if int(parsed.notna().sum()) > 0:
+            return parsed
+    return pd.Series([None] * len(working), index=working.index, dtype=object)
+
+
+def _parse_dscp_value(value: Any) -> int | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text or text.lower() in {"nan", "none", "null"}:
+        return None
+    upper = text.upper()
+    if upper == "EF":
+        return 46
+    if upper.startswith("CS") and upper[2:].isdigit():
+        cs = int(upper[2:])
+        if 0 <= cs <= 7:
+            return cs * 8
+    if upper.startswith("AF") and len(upper) == 4 and upper[2:].isdigit():
+        x = int(upper[2])
+        y = int(upper[3])
+        if 1 <= x <= 4 and 1 <= y <= 3:
+            return 8 * x + 2 * y
+    num: int | None = None
+    try:
+        if upper.startswith("0X"):
+            num = int(upper, 16)
+        else:
+            num = int(float(text))
+    except (TypeError, ValueError):
+        return None
+    if num is None or num < 0:
+        return None
+    if num <= 63:
+        return int(num)
+    if num <= 255:
+        return int((num >> 2) & 0x3F)
+    return None
+
+
+def _dscp_to_cos_class(dscp: Any) -> str:
+    if dscp is None:
+        return "Unknown (DSCP not present)"
+    try:
+        v = int(dscp)
+    except (TypeError, ValueError):
+        return "Unknown (DSCP not present)"
+    if v == 46:
+        return "EF (real-time)"
+    if v == 48:
+        return "CS6 (network-control)"
+    if v == 40:
+        return "CS5 (signaling)"
+    af_map = {
+        10: "AF11",
+        12: "AF12",
+        14: "AF13",
+        18: "AF21",
+        20: "AF22",
+        22: "AF23",
+        26: "AF31",
+        28: "AF32",
+        30: "AF33",
+        34: "AF41",
+        36: "AF42",
+        38: "AF43",
+    }
+    if v in af_map:
+        return f"{af_map[v]} (assured-forwarding)"
+    if v == 8:
+        return "CS1 (low-priority)"
+    if v == 0:
+        return "CS0 (best-effort)"
+    if v % 8 == 0 and 0 <= v <= 56:
+        return f"CS{v // 8}"
+    return f"DSCP {v}"
+
+
+def _compute_twamp_session_cos_summary(working: pd.DataFrame) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    grouped = working.groupby("session_key", dropna=False)
+    for key, g in grouped:
+        key_str = str(key)
+        session_id = str(g.get("twampContSessionId", pd.Series(["unknown"])).iloc[0])
+        peer_addr = str(g.get("twampPeerAddr", pd.Series(["unknown"])).iloc[0])
+        dscp_candidates = [v for v in g.get("dscp_value", pd.Series(dtype=object)).dropna().tolist()]
+        dscp = int(dscp_candidates[0]) if dscp_candidates else None
+        cos_class = _dscp_to_cos_class(dscp)
+        samples = int(len(g))
+        avg_discard = float(pd.to_numeric(g["DiscardRatePct_Emulated"], errors="coerce").mean())
+        p95_discard = float(pd.to_numeric(g["DiscardRatePct_Emulated"], errors="coerce").quantile(0.95))
+        avg_yellow = float(pd.to_numeric(g["YellowTrafficPct_Emulated"], errors="coerce").mean())
+        rows.append(
+            {
+                "session_key": key_str,
+                "session_id": session_id,
+                "peer_addr": peer_addr,
+                "dscp": dscp,
+                "cos_class": cos_class,
+                "samples": samples,
+                "avg_discard_rate_pct": round(avg_discard, 4),
+                "p95_discard_rate_pct": round(p95_discard, 4),
+                "avg_yellow_traffic_pct": round(avg_yellow, 4),
+            }
+        )
+    rows.sort(key=lambda r: (r["avg_discard_rate_pct"], r["samples"]), reverse=True)
+    return rows
 
 
 def _infer_twamp_cause(
@@ -1281,7 +1434,11 @@ def _compute_ms_biomarker_registry_health(df: pd.DataFrame, prefs: dict[str, Any
     weak_corr_threshold = float(prefs.get("weak_corr_threshold", 0.10))
     top_n_corr_biomarkers = int(prefs.get("top_n_corr_biomarkers", 15))
     top_n_biomarker_pairs = int(prefs.get("top_n_biomarker_pairs", 12))
+    stat_corr_min_pairs = int(prefs.get("stat_corr_min_pairs", max(12, corr_min_pairs // 2)))
     min_biomarker_non_null = int(prefs.get("min_biomarker_non_null", 100))
+    zscore_outlier_threshold = float(prefs.get("zscore_outlier_threshold", 2.0))
+    top_n_zscore_biomarkers = int(prefs.get("top_n_zscore_biomarkers", 12))
+    zscore_outlier_rows_limit = int(prefs.get("zscore_outlier_rows_limit", 25))
     corr_band_very_weak_max = float(prefs.get("corr_band_very_weak_max", 0.10))
     corr_band_weak_max = float(prefs.get("corr_band_weak_max", 0.29))
     corr_band_moderate_max = float(prefs.get("corr_band_moderate_max", 0.49))
@@ -1310,6 +1467,7 @@ def _compute_ms_biomarker_registry_health(df: pd.DataFrame, prefs: dict[str, Any
         filtered_biomarker_columns.append(col)
     biomarker_columns = filtered_biomarker_columns
     excluded_low_count_biomarkers = sorted(excluded_low_count_biomarkers, key=lambda x: x["non_null"])
+    biomarker_distribution_profiles = _compute_biomarker_distribution_profiles(working, biomarker_columns)
 
     missingness_rows = []
     for col in required:
@@ -1470,6 +1628,19 @@ def _compute_ms_biomarker_registry_health(df: pd.DataFrame, prefs: dict[str, Any
         lower_bound=4.0,
         upper_bound=None,
     )
+    zscore_insights = _compute_biomarker_zscore_insights(
+        working=working,
+        biomarker_columns=biomarker_columns,
+        corr_min_pairs=max(12, corr_min_pairs // 2),
+        top_n=top_n_zscore_biomarkers,
+        outlier_threshold=zscore_outlier_threshold,
+        max_outlier_rows=zscore_outlier_rows_limit,
+    )
+    stat_validation_checks = _compute_stat_validation_checks(
+        working=working,
+        biomarker_columns=biomarker_columns,
+        corr_min_pairs=max(8, stat_corr_min_pairs),
+    )
 
     alerts: list[dict[str, str]] = []
     if total_edss_pairs >= 20 and worsened_ratio >= edss_worsened_alert_ratio:
@@ -1539,6 +1710,7 @@ def _compute_ms_biomarker_registry_health(df: pd.DataFrame, prefs: dict[str, Any
             "strong_contributors": int(len(strong_contributors)),
             "weak_contributors": int(len(weak_contributors)),
             "correlation_method": "Spearman rank correlation (Pearson computed on ranked values)",
+            "zscore_outlier_threshold": round(zscore_outlier_threshold, 3),
             "corr_strength_config": {
                 "very_weak_max": round(corr_band_very_weak_max, 4),
                 "weak_max": round(corr_band_weak_max, 4),
@@ -1554,6 +1726,7 @@ def _compute_ms_biomarker_registry_health(df: pd.DataFrame, prefs: dict[str, Any
             },
         },
         "excluded_low_count_biomarkers": excluded_low_count_biomarkers,
+        "biomarker_distribution_profiles": biomarker_distribution_profiles,
         "sid_distribution": [{"sid": int(k), "count": int(v)} for k, v in sid_counts.items()],
         "key_missingness": missingness_rows,
         "sparse_biomarkers": sparse_biomarkers,
@@ -1581,8 +1754,151 @@ def _compute_ms_biomarker_registry_health(df: pd.DataFrame, prefs: dict[str, Any
         "correlation_matrix_sample_high": correlation_matrix_sample_high,
         "correlation_matrix_last_low": correlation_matrix_last_low,
         "correlation_matrix_last_high": correlation_matrix_last_high,
+        "zscore_high_band_signal": zscore_insights.get("high_band_signal", []),
+        "zscore_outlier_prevalence": zscore_insights.get("outlier_prevalence", []),
+        "zscore_sample_edss_corr": zscore_insights.get("sample_edss_corr", []),
+        "zscore_last_edss_corr": zscore_insights.get("last_edss_corr", []),
+        "zscore_outlier_rows": zscore_insights.get("outlier_rows", []),
+        "stat_validation_checks": stat_validation_checks,
         "correlation_method": "Spearman rank correlation (Pearson computed on ranked values)",
         "alerts": alerts,
+    }
+
+
+def _compute_biomarker_distribution_profiles(
+    working: pd.DataFrame,
+    biomarker_columns: list[str],
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for col in biomarker_columns:
+        s = pd.to_numeric(working.get(col), errors="coerce").dropna()
+        if s.empty:
+            continue
+        rows.append(_infer_distribution_row(str(col), s))
+    rows.sort(key=lambda r: (int(r.get("non_null", 0)), str(r.get("biomarker", ""))), reverse=True)
+    return rows
+
+
+def _infer_distribution_row(name: str, s: pd.Series) -> dict[str, Any]:
+    n = int(s.shape[0])
+    mean = float(s.mean())
+    var = float(s.var(ddof=0)) if n > 1 else 0.0
+    min_v = float(s.min())
+    max_v = float(s.max())
+    skew = float(s.skew()) if n > 2 and s.nunique() > 1 else 0.0
+    kurt = float(s.kurt()) if n > 3 and s.nunique() > 1 else 0.0
+    integer_like = bool(((s - s.round()).abs() < 1e-9).all())
+    unique_vals = int(s.nunique())
+
+    dist = "Normal (Gaussian)"
+    dist_type = "Continuous"
+    params = f"mu={mean:.4f}, sigma2={var:.4f}"
+    used_for = "Natural variation"
+    fit_quality = "Weak"
+
+    if unique_vals == 2 and set(round(float(v)) for v in s.unique()).issubset({0, 1}):
+        p = mean
+        dist = "Bernoulli"
+        dist_type = "Discrete"
+        params = f"p={p:.4f}"
+        used_for = "Single yes/no trial"
+        fit_quality = "Good" if n >= 30 and 0.02 <= p <= 0.98 else "Weak"
+    elif integer_like and min_v >= 0:
+        freq = s.value_counts(normalize=True)
+        uniform_like = bool(freq.shape[0] > 2 and (float(freq.max()) - float(freq.min()) <= 0.06))
+        if uniform_like:
+            dist = "Uniform (Discrete)"
+            dist_type = "Discrete"
+            params = f"a={int(round(min_v))}, b={int(round(max_v))}"
+            used_for = "Equal probability integers"
+            spread = float(freq.max()) - float(freq.min())
+            fit_quality = "Good" if n >= 40 and spread <= 0.04 else "Weak"
+        elif mean > 0 and abs(var - mean) / mean <= 0.35:
+            dist = "Poisson"
+            dist_type = "Discrete"
+            params = f"lambda={mean:.4f}"
+            used_for = "Rare events in time/space"
+            poisson_gap = abs(var - mean) / mean
+            fit_quality = "Good" if n >= 40 and poisson_gap <= 0.20 else "Weak"
+        elif min_v >= 1 and mean > 1 and abs(var - (mean * (mean - 1))) / max(1.0, var) <= 0.35:
+            p = 1.0 / max(mean, 1e-9)
+            dist = "Geometric"
+            dist_type = "Discrete"
+            params = f"p={p:.4f}"
+            used_for = "Trials until first success"
+            geom_gap = abs(var - (mean * (mean - 1))) / max(1.0, var)
+            fit_quality = "Good" if n >= 40 and geom_gap <= 0.20 else "Weak"
+        elif max_v <= 30 and var < mean and mean > 0:
+            n_est = max(int(round(max_v)), 1)
+            p_est = min(max(mean / max(n_est, 1), 0.0001), 0.9999)
+            dist = "Binomial"
+            dist_type = "Discrete"
+            params = f"n={n_est}, p={p_est:.4f}"
+            used_for = "# successes in n trials"
+            fit_quality = "Good" if n >= 40 else "Weak"
+    else:
+        if min_v >= 0 and max_v <= 1:
+            # Beta moments estimation when possible.
+            eps = 1e-9
+            mean_b = min(max(mean, eps), 1 - eps)
+            var_max = mean_b * (1 - mean_b)
+            var_b = min(max(var, eps), var_max - eps)
+            common = (mean_b * (1 - mean_b) / var_b) - 1
+            alpha = max(mean_b * common, eps)
+            beta = max((1 - mean_b) * common, eps)
+            dist = "Beta"
+            dist_type = "Continuous"
+            params = f"alpha={alpha:.3f}, beta={beta:.3f}"
+            used_for = "Probabilities (0-1 range)"
+            fit_quality = "Good" if n >= 40 and 0.0 < var < var_max else "Weak"
+        elif min_v >= 0 and mean > 0:
+            if abs(math.sqrt(max(var, 0.0)) - mean) / mean <= 0.25:
+                rate = 1.0 / max(mean, 1e-9)
+                dist = "Exponential"
+                dist_type = "Continuous"
+                params = f"lambda={rate:.4f}"
+                used_for = "Waiting time"
+                exp_gap = abs(math.sqrt(max(var, 0.0)) - mean) / mean
+                fit_quality = "Good" if n >= 40 and exp_gap <= 0.15 and skew > 1.0 else "Weak"
+            elif skew > 0.8:
+                shape = (mean * mean) / max(var, 1e-9)
+                rate = mean / max(var, 1e-9)
+                dist = "Gamma"
+                dist_type = "Continuous"
+                params = f"alpha={shape:.3f}, beta={rate:.3f}"
+                used_for = "Sum of exponentials"
+                fit_quality = "Good" if n >= 40 and skew >= 1.0 else "Weak"
+            elif abs(skew) < 0.2 and abs(kurt) < 0.6:
+                spread = max_v - min_v
+                if spread > 0:
+                    dist = "Uniform (Continuous)"
+                    dist_type = "Continuous"
+                    params = f"a={min_v:.4f}, b={max_v:.4f}"
+                    used_for = "Equal probability interval"
+                    fit_quality = "Good" if n >= 40 and abs(skew) < 0.15 and abs(kurt) < 0.3 else "Weak"
+        elif kurt > 3.0 and abs(mean) < 0.5:
+            dist = "t-distribution"
+            dist_type = "Continuous"
+            params = "nu~estimated (heavy tails)"
+            used_for = "Small samples"
+            fit_quality = "Good" if n >= 40 and kurt > 3.5 else "Weak"
+        elif abs(skew) < 0.5 and abs(kurt) < 1.2:
+            dist = "Normal (Gaussian)"
+            dist_type = "Continuous"
+            params = f"mu={mean:.4f}, sigma2={var:.4f}"
+            used_for = "Natural variation"
+            fit_quality = "Good" if n >= 40 and abs(skew) < 0.2 and abs(kurt) < 0.6 else "Weak"
+
+    return {
+        "biomarker": name,
+        "distribution": dist,
+        "type": dist_type,
+        "parameters": params,
+        "mean": round(mean, 4),
+        "variance": round(var, 4),
+        "used_for": used_for,
+        "non_null": n,
+        "fit_quality": fit_quality,
     }
 
 
@@ -1767,6 +2083,705 @@ def _compute_biomarker_pair_correlations(
             )
     rows.sort(key=lambda r: (r["abs_corr"], r["paired_rows"]), reverse=True)
     return rows[:top_n]
+
+
+def _compute_biomarker_zscore_insights(
+    *,
+    working: pd.DataFrame,
+    biomarker_columns: list[str],
+    corr_min_pairs: int,
+    top_n: int,
+    outlier_threshold: float,
+    max_outlier_rows: int,
+) -> dict[str, list[dict[str, Any]]]:
+    if outlier_threshold <= 0:
+        outlier_threshold = 2.0
+
+    z_pairs: list[tuple[str, str]] = []
+    for col in biomarker_columns:
+        s = pd.to_numeric(working.get(col), errors="coerce")
+        if int(s.notna().sum()) < max(8, corr_min_pairs):
+            continue
+        std = float(s.std(ddof=0))
+        if std <= 0 or pd.isna(std):
+            continue
+        mean = float(s.mean())
+        z_col = f"__z__{col}"
+        working[z_col] = (s - mean) / std
+        z_pairs.append((col, z_col))
+
+    if not z_pairs:
+        return {
+            "high_band_signal": [],
+            "outlier_prevalence": [],
+            "sample_edss_corr": [],
+            "last_edss_corr": [],
+            "outlier_rows": [],
+        }
+
+    sample_edss = pd.to_numeric(working.get("Sample EDSS"), errors="coerce")
+    last_edss = pd.to_numeric(working.get("Last EDSS"), errors="coerce")
+    high_band_mask = sample_edss >= 4.0
+
+    high_band_signal: list[dict[str, Any]] = []
+    outlier_prevalence: list[dict[str, Any]] = []
+    outlier_rows: list[dict[str, Any]] = []
+
+    for biomarker, z_col in z_pairs:
+        z = pd.to_numeric(working.get(z_col), errors="coerce")
+        z_non_null = z.dropna()
+        n_all = int(z_non_null.shape[0])
+        if n_all == 0:
+            continue
+        abs_z = z_non_null.abs()
+        outlier_count = int((abs_z >= outlier_threshold).sum())
+        outlier_pct = (outlier_count / n_all) * 100.0
+        outlier_prevalence.append(
+            {
+                "biomarker": biomarker,
+                "rows": n_all,
+                "outlier_count": outlier_count,
+                "outlier_pct": round(outlier_pct, 2),
+                "mean_abs_z": round(float(abs_z.mean()), 4),
+            }
+        )
+
+        z_high = z[high_band_mask].dropna()
+        n_high = int(z_high.shape[0])
+        if n_high >= corr_min_pairs:
+            abs_high = z_high.abs()
+            high_band_signal.append(
+                {
+                    "biomarker": biomarker,
+                    "high_band_rows": n_high,
+                    "mean_abs_z": round(float(abs_high.mean()), 4),
+                    "p95_abs_z": round(float(abs_high.quantile(0.95)), 4),
+                    "outlier_pct_high_band": round(float((abs_high >= outlier_threshold).mean() * 100.0), 2),
+                }
+            )
+
+        idx = z[(z.abs() >= outlier_threshold)].index
+        if len(idx) > 0:
+            for i in idx:
+                outlier_rows.append(
+                    {
+                        "pid": int(working.at[i, "PID"]) if pd.notna(working.at[i, "PID"]) else None,
+                        "sid": int(working.at[i, "SID"]) if pd.notna(working.at[i, "SID"]) else None,
+                        "biomarker": biomarker,
+                        "z_score": round(float(z.at[i]), 4),
+                        "abs_z": round(abs(float(z.at[i])), 4),
+                        "sample_edss": round(float(sample_edss.at[i]), 2) if pd.notna(sample_edss.at[i]) else None,
+                        "last_edss": round(float(last_edss.at[i]), 2) if pd.notna(last_edss.at[i]) else None,
+                    }
+                )
+
+    high_band_signal.sort(key=lambda r: (r["mean_abs_z"], r["high_band_rows"]), reverse=True)
+    outlier_prevalence.sort(key=lambda r: (r["outlier_pct"], r["rows"]), reverse=True)
+    outlier_rows.sort(key=lambda r: r["abs_z"], reverse=True)
+    outlier_rows = outlier_rows[: max(1, max_outlier_rows)]
+
+    z_columns = [z_col for _, z_col in z_pairs]
+    sample_corr = _compute_biomarker_to_target_edss_correlations(
+        working=working,
+        biomarker_columns=z_columns,
+        target_column="Sample EDSS",
+        min_pairs=corr_min_pairs,
+        top_n=top_n,
+    )
+    last_corr = _compute_biomarker_to_target_edss_correlations(
+        working=working,
+        biomarker_columns=z_columns,
+        target_column="Last EDSS",
+        min_pairs=corr_min_pairs,
+        top_n=top_n,
+    )
+    for row in sample_corr:
+        row["biomarker"] = str(row.get("biomarker", "")).replace("__z__", "")
+    for row in last_corr:
+        row["biomarker"] = str(row.get("biomarker", "")).replace("__z__", "")
+
+    return {
+        "high_band_signal": high_band_signal[:top_n],
+        "outlier_prevalence": outlier_prevalence[:top_n],
+        "sample_edss_corr": sample_corr,
+        "last_edss_corr": last_corr,
+        "outlier_rows": outlier_rows,
+    }
+
+
+def _compute_stat_validation_checks(
+    *,
+    working: pd.DataFrame,
+    biomarker_columns: list[str],
+    corr_min_pairs: int,
+) -> list[dict[str, Any]]:
+    checks: list[dict[str, Any]] = []
+    if not biomarker_columns:
+        return checks
+
+    sample_edss = pd.to_numeric(working.get("Sample EDSS"), errors="coerce")
+    last_edss = pd.to_numeric(working.get("Last EDSS"), errors="coerce")
+    followup_days = pd.to_numeric((working.get("last_date_norm") - working.get("sample_date_norm")).dt.days, errors="coerce")
+    low_mask = sample_edss.between(0.0, 3.5, inclusive="both")
+    high_mask = sample_edss >= 4.0
+
+    # 1) MAD robust z-score coverage
+    robust_ok = 0
+    robust_total = 0
+    for col in biomarker_columns:
+        s = pd.to_numeric(working.get(col), errors="coerce").dropna()
+        if int(s.shape[0]) < corr_min_pairs:
+            continue
+        med = float(s.median())
+        mad = float((s - med).abs().median())
+        robust_total += 1
+        if mad > 0:
+            robust_ok += 1
+    checks.append(
+        {
+            "test": "MAD robust z-score",
+            "result": f"{robust_ok}/{max(1, robust_total)} biomarkers with stable MAD (>0).",
+            "score": "Good" if robust_ok >= max(5, robust_total // 2) else "Not good",
+        }
+    )
+
+    # 2) IQR outlier test
+    iqr_evaluable = 0
+    iqr_balanced = 0
+    for col in biomarker_columns:
+        s = pd.to_numeric(working.get(col), errors="coerce").dropna()
+        if int(s.shape[0]) < corr_min_pairs:
+            continue
+        q1 = float(s.quantile(0.25))
+        q3 = float(s.quantile(0.75))
+        iqr = q3 - q1
+        if iqr <= 0:
+            continue
+        iqr_evaluable += 1
+        low_fence = q1 - 1.5 * iqr
+        high_fence = q3 + 1.5 * iqr
+        out_pct = float(((s < low_fence) | (s > high_fence)).mean() * 100.0)
+        if 1.0 <= out_pct <= 20.0:
+            iqr_balanced += 1
+    checks.append(
+        {
+            "test": "IQR outlier test",
+            "result": f"{iqr_balanced}/{max(1, iqr_evaluable)} biomarkers in balanced outlier range (1-20%).",
+            "score": "Good" if iqr_balanced >= max(5, iqr_evaluable // 2) else "Not good",
+        }
+    )
+
+    # 3) Partial Spearman corr controlling follow-up days
+    partial_rows = 0
+    partial_strong = 0
+    for col in biomarker_columns:
+        x = pd.to_numeric(working.get(col), errors="coerce")
+        pair = pd.DataFrame({"x": x, "y": sample_edss, "z": followup_days}).dropna()
+        if int(pair.shape[0]) < corr_min_pairs:
+            continue
+        c = _partial_spearman_corr(pair["x"], pair["y"], pair["z"])
+        if c is None:
+            continue
+        partial_rows += 1
+        if abs(c) >= 0.20:
+            partial_strong += 1
+    checks.append(
+        {
+            "test": "Partial Spearman (control follow-up days)",
+            "result": f"{partial_strong} biomarkers with |partial rho|>=0.20 (evaluated={partial_rows}).",
+            "score": "Good" if partial_strong >= 3 else "Not good",
+        }
+    )
+
+    # 4) Mann-Whitney U between EDSS bands
+    pvals: list[float] = []
+    tested = 0
+    sig = 0
+    for col in biomarker_columns:
+        low_vals = pd.to_numeric(working.loc[low_mask, col], errors="coerce").dropna()
+        high_vals = pd.to_numeric(working.loc[high_mask, col], errors="coerce").dropna()
+        if int(low_vals.shape[0]) < corr_min_pairs or int(high_vals.shape[0]) < corr_min_pairs:
+            continue
+        p = _mann_whitney_pvalue(low_vals, high_vals)
+        if p is None:
+            continue
+        tested += 1
+        pvals.append(p)
+        if p < 0.05:
+            sig += 1
+    checks.append(
+        {
+            "test": "Mann-Whitney U (EDSS 0-3.5 vs 4+)",
+            "result": f"{sig}/{max(1, tested)} biomarkers significant at p<0.05.",
+            "score": "Good" if tested >= 5 and sig >= 2 else "Not good",
+        }
+    )
+
+    # 5) Cliff's delta effect size
+    cliff_tested = 0
+    cliff_meaningful = 0
+    for col in biomarker_columns:
+        low_vals = pd.to_numeric(working.loc[low_mask, col], errors="coerce").dropna()
+        high_vals = pd.to_numeric(working.loc[high_mask, col], errors="coerce").dropna()
+        if int(low_vals.shape[0]) < corr_min_pairs or int(high_vals.shape[0]) < corr_min_pairs:
+            continue
+        d = _cliffs_delta(low_vals, high_vals)
+        cliff_tested += 1
+        if abs(d) >= 0.147:
+            cliff_meaningful += 1
+    checks.append(
+        {
+            "test": "Cliff's delta effect size",
+            "result": f"{cliff_meaningful}/{max(1, cliff_tested)} biomarkers with non-negligible effect (|delta|>=0.147).",
+            "score": "Good" if cliff_meaningful >= 2 else "Not good",
+        }
+    )
+
+    # Select top biomarkers by absolute sample EDSS correlation for computational tests.
+    corr_rows = _compute_biomarker_to_target_edss_correlations(
+        working=working,
+        biomarker_columns=biomarker_columns,
+        target_column="Sample EDSS",
+        min_pairs=corr_min_pairs,
+        top_n=min(8, max(3, len(biomarker_columns))),
+    )
+    top_biomarkers = [str(r.get("biomarker")) for r in corr_rows if str(r.get("biomarker", "")).strip()]
+
+    # 6) Permutation test for correlation
+    perm_good = 0
+    perm_tested = 0
+    for col in top_biomarkers:
+        pair = pd.DataFrame({"x": pd.to_numeric(working.get(col), errors="coerce"), "y": sample_edss}).dropna()
+        if int(pair.shape[0]) < corr_min_pairs:
+            continue
+        p_perm = _permutation_corr_pvalue(pair["x"], pair["y"], permutations=200, seed=42)
+        if p_perm is None:
+            continue
+        perm_tested += 1
+        if p_perm < 0.05:
+            perm_good += 1
+    checks.append(
+        {
+            "test": "Permutation test (Spearman corr)",
+            "result": f"{perm_good}/{max(1, perm_tested)} top biomarkers pass p<0.05.",
+            "score": "Good" if perm_good >= 2 else "Not good",
+        }
+    )
+
+    # 7) Bootstrap CI for correlation
+    boot_stable = 0
+    boot_tested = 0
+    for col in top_biomarkers:
+        pair = pd.DataFrame({"x": pd.to_numeric(working.get(col), errors="coerce"), "y": sample_edss}).dropna()
+        if int(pair.shape[0]) < corr_min_pairs:
+            continue
+        ci = _bootstrap_corr_ci(pair["x"], pair["y"], boot=200, seed=43)
+        if ci is None:
+            continue
+        boot_tested += 1
+        lo, hi = ci
+        if not (lo <= 0 <= hi):
+            boot_stable += 1
+    checks.append(
+        {
+            "test": "Bootstrap CI (correlation)",
+            "result": f"{boot_stable}/{max(1, boot_tested)} top biomarkers have CI excluding 0.",
+            "score": "Good" if boot_stable >= 2 else "Not good",
+        }
+    )
+
+    # 8) FDR correction (Benjamini-Hochberg)
+    fdr_sig = 0
+    if pvals:
+        adj = _benjamini_hochberg(pvals)
+        fdr_sig = int(sum(1 for p in adj if p < 0.05))
+    checks.append(
+        {
+            "test": "Multiple-testing correction (FDR/BH)",
+            "result": f"{fdr_sig}/{max(1, len(pvals))} biomarkers remain significant after FDR.",
+            "score": "Good" if fdr_sig >= 1 else "Not good",
+        }
+    )
+
+    # 9) PCA/factor proxy (first principal component)
+    pca_res = _first_pc_explained_variance(working, biomarker_columns, min_rows=max(corr_min_pairs, 30), max_cols=10)
+    if pca_res is None:
+        checks.append(
+            {
+                "test": "PCA / latent factor structure",
+                "result": "Insufficient complete rows for stable PCA estimate.",
+                "score": "Not good",
+            }
+        )
+    else:
+        evr, rows_used, cols_used = pca_res
+        checks.append(
+            {
+                "test": "PCA / latent factor structure",
+                "result": f"PC1 explains {evr:.2%} (rows={rows_used}, biomarkers={cols_used}).",
+                "score": "Good" if evr >= 0.30 else "Not good",
+            }
+        )
+
+    # 10) Mixed-effects longitudinal proxy via per-PID slope signal
+    slope = _longitudinal_slope_proxy(working, biomarker_columns, corr_min_pairs=max(corr_min_pairs, 20))
+    checks.append(
+        {
+            "test": "Longitudinal mixed-effects proxy",
+            "result": (
+                f"{slope['strong_markers']} biomarkers with |rho(biomarker, annualized EDSS slope)|>=0.20 "
+                f"(evaluated={slope['tested']})."
+            ),
+            "score": "Good" if slope["strong_markers"] >= 2 else "Not good",
+        }
+    )
+    return checks
+
+
+def _partial_spearman_corr(x: pd.Series, y: pd.Series, z: pd.Series) -> float | None:
+    df = pd.DataFrame({"x": x, "y": y, "z": z}).dropna()
+    if int(df.shape[0]) < 8:
+        return None
+    xr = df["x"].rank(method="average")
+    yr = df["y"].rank(method="average")
+    zr = df["z"].rank(method="average")
+    rx = _linear_residual(xr, zr)
+    ry = _linear_residual(yr, zr)
+    c = rx.corr(ry, method="pearson")
+    if pd.isna(c):
+        return None
+    return float(c)
+
+
+def _linear_residual(y: pd.Series, x: pd.Series) -> pd.Series:
+    x_mean = float(x.mean())
+    y_mean = float(y.mean())
+    cov = float(((x - x_mean) * (y - y_mean)).sum())
+    var = float(((x - x_mean) ** 2).sum())
+    if var <= 0:
+        return y - y_mean
+    b = cov / var
+    a = y_mean - b * x_mean
+    return y - (a + b * x)
+
+
+def _mann_whitney_pvalue(a: pd.Series, b: pd.Series) -> float | None:
+    if a.empty or b.empty:
+        return None
+    x = pd.Series(list(a.values) + list(b.values))
+    g = pd.Series([0] * len(a) + [1] * len(b))
+    ranks = x.rank(method="average")
+    n1 = float(len(a))
+    n2 = float(len(b))
+    r1 = float(ranks[g == 0].sum())
+    u1 = r1 - (n1 * (n1 + 1) / 2.0)
+    u2 = n1 * n2 - u1
+    u = min(u1, u2)
+    mu = n1 * n2 / 2.0
+    sigma = math.sqrt(max(1e-12, n1 * n2 * (n1 + n2 + 1.0) / 12.0))
+    z = (u - mu) / sigma
+    p = math.erfc(abs(z) / math.sqrt(2.0))
+    return float(max(0.0, min(1.0, p)))
+
+
+def _cliffs_delta(a: pd.Series, b: pd.Series) -> float:
+    left = sorted(float(v) for v in a.values)
+    right = sorted(float(v) for v in b.values)
+    n1 = len(left)
+    n2 = len(right)
+    if n1 == 0 or n2 == 0:
+        return 0.0
+    import bisect
+
+    greater = 0
+    lower = 0
+    for v in left:
+        li = bisect.bisect_left(right, v)
+        ri = bisect.bisect_right(right, v)
+        lower += li
+        greater += n2 - ri
+    return float((greater - lower) / (n1 * n2))
+
+
+def _permutation_corr_pvalue(x: pd.Series, y: pd.Series, permutations: int, seed: int) -> float | None:
+    pair = pd.DataFrame({"x": x, "y": y}).dropna()
+    if int(pair.shape[0]) < 8:
+        return None
+    obs = pair["x"].rank(method="average").corr(pair["y"].rank(method="average"), method="pearson")
+    if pd.isna(obs):
+        return None
+    obs_abs = abs(float(obs))
+    rng = random.Random(seed)
+    ys = list(pair["y"].values)
+    xs_rank = pair["x"].rank(method="average")
+    ge = 0
+    total = max(20, int(permutations))
+    for _ in range(total):
+        rng.shuffle(ys)
+        y_perm = pd.Series(ys).rank(method="average")
+        c = xs_rank.corr(y_perm, method="pearson")
+        if not pd.isna(c) and abs(float(c)) >= obs_abs:
+            ge += 1
+    return float((ge + 1) / (total + 1))
+
+
+def _bootstrap_corr_ci(x: pd.Series, y: pd.Series, boot: int, seed: int) -> tuple[float, float] | None:
+    pair = pd.DataFrame({"x": x, "y": y}).dropna().reset_index(drop=True)
+    n = int(pair.shape[0])
+    if n < 8:
+        return None
+    rng = random.Random(seed)
+    vals: list[float] = []
+    for _ in range(max(40, int(boot))):
+        idx = [rng.randrange(0, n) for _ in range(n)]
+        sample = pair.iloc[idx]
+        c = sample["x"].rank(method="average").corr(sample["y"].rank(method="average"), method="pearson")
+        if not pd.isna(c):
+            vals.append(float(c))
+    if len(vals) < 10:
+        return None
+    vals.sort()
+    lo = vals[int(0.025 * (len(vals) - 1))]
+    hi = vals[int(0.975 * (len(vals) - 1))]
+    return float(lo), float(hi)
+
+
+def _benjamini_hochberg(p_values: list[float]) -> list[float]:
+    m = len(p_values)
+    if m == 0:
+        return []
+    order = sorted(range(m), key=lambda i: p_values[i])
+    adj = [1.0] * m
+    prev = 1.0
+    for rank, idx in enumerate(reversed(order), start=1):
+        i = m - rank + 1
+        p = max(0.0, min(1.0, float(p_values[idx])))
+        q = min(prev, (p * m) / max(1, i))
+        adj[idx] = q
+        prev = q
+    return adj
+
+
+def _first_pc_explained_variance(
+    working: pd.DataFrame,
+    biomarker_columns: list[str],
+    min_rows: int,
+    max_cols: int,
+) -> tuple[float, int, int] | None:
+    # Choose most complete biomarkers for stable complete-case matrix.
+    ranked = sorted(
+        biomarker_columns,
+        key=lambda c: int(pd.to_numeric(working.get(c), errors="coerce").notna().sum()),
+        reverse=True,
+    )[: max(2, max_cols)]
+    mat = working[ranked].apply(pd.to_numeric, errors="coerce").dropna()
+    if int(mat.shape[0]) < min_rows or int(mat.shape[1]) < 2:
+        return None
+    corr = mat.corr(method="pearson").fillna(0.0)
+    cols = list(corr.columns)
+    n = len(cols)
+    a = [[float(corr.iat[i, j]) for j in range(n)] for i in range(n)]
+    v = [1.0 / n] * n
+    for _ in range(40):
+        w = [sum(a[i][j] * v[j] for j in range(n)) for i in range(n)]
+        norm = math.sqrt(sum(x * x for x in w))
+        if norm <= 1e-12:
+            return None
+        v = [x / norm for x in w]
+    av = [sum(a[i][j] * v[j] for j in range(n)) for i in range(n)]
+    eig = sum(v[i] * av[i] for i in range(n))
+    trace = sum(a[i][i] for i in range(n))
+    if trace <= 0:
+        return None
+    evr = max(0.0, min(1.0, eig / trace))
+    return float(evr), int(mat.shape[0]), int(mat.shape[1])
+
+
+def _longitudinal_slope_proxy(
+    working: pd.DataFrame,
+    biomarker_columns: list[str],
+    corr_min_pairs: int,
+) -> dict[str, int]:
+    days = pd.to_numeric((working.get("last_date_norm") - working.get("sample_date_norm")).dt.days, errors="coerce")
+    sample = pd.to_numeric(working.get("Sample EDSS"), errors="coerce")
+    last = pd.to_numeric(working.get("Last EDSS"), errors="coerce")
+    denom = days / 365.25
+    slope = (last - sample) / denom
+    slope = slope.where((days > 0) & (days <= 36500))
+    tested = 0
+    strong = 0
+    for col in biomarker_columns:
+        pair = pd.DataFrame({"x": pd.to_numeric(working.get(col), errors="coerce"), "y": slope}).dropna()
+        if int(pair.shape[0]) < corr_min_pairs:
+            continue
+        c = pair["x"].rank(method="average").corr(pair["y"].rank(method="average"), method="pearson")
+        if pd.isna(c):
+            continue
+        tested += 1
+        if abs(float(c)) >= 0.20:
+            strong += 1
+    return {"tested": tested, "strong_markers": strong}
+
+
+def _compute_wireshark_capture_health(df: pd.DataFrame, prefs: dict[str, Any]) -> dict[str, Any]:
+    working = df.copy()
+    for col in [
+        "frame_time_epoch",
+        "frame_len",
+        "src_port",
+        "dst_port",
+        "tcp_flags_syn",
+        "tcp_flags_ack",
+        "tcp_flags_fin",
+        "tcp_flags_reset",
+        "ip_proto",
+    ]:
+        if col in working.columns:
+            working[col] = pd.to_numeric(working[col], errors="coerce")
+
+    if "frame_time_epoch" in working.columns:
+        working["timestamp_utc"] = pd.to_datetime(working["frame_time_epoch"], unit="s", errors="coerce", utc=True)
+    else:
+        working["timestamp_utc"] = pd.NaT
+
+    for col in ["transport", "src_ip", "dst_ip", "frame_protocols"]:
+        if col not in working.columns:
+            working[col] = ""
+        working[col] = working[col].fillna("").astype(str).str.strip()
+
+    total_packets = int(len(working))
+    if total_packets == 0:
+        return {
+            "summary": {
+                "packets": 0,
+                "total_bytes": 0,
+                "unique_src_ips": 0,
+                "unique_dst_ips": 0,
+                "avg_packet_size_bytes": 0.0,
+            },
+            "protocol_breakdown": [],
+            "top_talkers": [],
+            "top_conversations": [],
+            "time_trend": [],
+            "alerts": [],
+        }
+
+    working["frame_len"] = pd.to_numeric(working.get("frame_len"), errors="coerce").fillna(0)
+    total_bytes = int(working["frame_len"].sum())
+    avg_packet_size = float(working["frame_len"].mean())
+    unique_src_ips = int(working["src_ip"].replace("", pd.NA).dropna().nunique())
+    unique_dst_ips = int(working["dst_ip"].replace("", pd.NA).dropna().nunique())
+
+    transport = working["transport"].str.upper().replace("", "UNKNOWN")
+    proto_group = transport.value_counts(dropna=False).reset_index()
+    proto_group.columns = ["protocol", "packets"]
+    protocol_breakdown: list[dict[str, Any]] = []
+    for _, row in proto_group.iterrows():
+        packets = int(row["packets"])
+        protocol_breakdown.append(
+            {
+                "protocol": str(row["protocol"]),
+                "packets": packets,
+                "pct": round((packets / max(1, total_packets)) * 100.0, 2),
+            }
+        )
+
+    talker_group = (
+        working.groupby("src_ip", dropna=False)[["frame_len"]]
+        .agg(packets=("frame_len", "size"), bytes=("frame_len", "sum"))
+        .reset_index()
+        .rename(columns={"src_ip": "source_ip"})
+        .sort_values(["bytes", "packets"], ascending=False)
+        .head(int(prefs.get("top_n_talkers", 12)))
+    )
+    top_talkers = [
+        {"source_ip": str(r["source_ip"]) if str(r["source_ip"]) else "unknown", "packets": int(r["packets"]), "bytes": int(r["bytes"])}
+        for _, r in talker_group.iterrows()
+    ]
+
+    conv_group = (
+        working.groupby(["src_ip", "dst_ip", "transport", "dst_port"], dropna=False)[["frame_len"]]
+        .agg(packets=("frame_len", "size"), bytes=("frame_len", "sum"))
+        .reset_index()
+        .sort_values(["bytes", "packets"], ascending=False)
+        .head(int(prefs.get("top_n_conversations", 12)))
+    )
+    top_conversations = []
+    for _, r in conv_group.iterrows():
+        top_conversations.append(
+            {
+                "src_ip": str(r["src_ip"]) if str(r["src_ip"]) else "unknown",
+                "dst_ip": str(r["dst_ip"]) if str(r["dst_ip"]) else "unknown",
+                "transport": str(r["transport"]).upper() if str(r["transport"]) else "UNKNOWN",
+                "dst_port": int(r["dst_port"]) if pd.notna(r["dst_port"]) else None,
+                "packets": int(r["packets"]),
+                "bytes": int(r["bytes"]),
+            }
+        )
+
+    time_trend: list[dict[str, Any]] = []
+    time_bucket = prefs.get("time_bucket", "1min")
+    valid_ts = working.dropna(subset=["timestamp_utc"]).copy()
+    if not valid_ts.empty:
+        valid_ts["bucket"] = valid_ts["timestamp_utc"].dt.floor(str(time_bucket))
+        tg = (
+            valid_ts.groupby("bucket")[["frame_len"]]
+            .agg(packets=("frame_len", "size"), bytes=("frame_len", "sum"))
+            .reset_index()
+            .sort_values("bucket")
+        )
+        for _, r in tg.iterrows():
+            time_trend.append(
+                {
+                    "time_utc": str(r["bucket"]),
+                    "packets": int(r["packets"]),
+                    "bytes": int(r["bytes"]),
+                }
+            )
+
+    syn_count = int(pd.to_numeric(working.get("tcp_flags_syn"), errors="coerce").fillna(0).sum())
+    rst_count = int(pd.to_numeric(working.get("tcp_flags_reset"), errors="coerce").fillna(0).sum())
+    dns_count = int(working.get("dns_query", pd.Series(dtype=str)).fillna("").astype(str).str.strip().ne("").sum())
+    alerts: list[dict[str, str]] = []
+    if rst_count > max(20, total_packets * 0.02):
+        alerts.append(
+            {
+                "severity": "medium",
+                "message": f"TCP resets are elevated ({rst_count} packets), indicating possible instability or policy rejects.",
+            }
+        )
+    if dns_count == 0:
+        alerts.append(
+            {
+                "severity": "low",
+                "message": "No DNS queries detected in capture; verify if capture scope excludes DNS or traffic is encrypted/pre-resolved.",
+            }
+        )
+    if avg_packet_size > float(prefs.get("large_packet_avg_threshold", 1200)):
+        alerts.append(
+            {
+                "severity": "low",
+                "message": f"Average packet size is high ({avg_packet_size:.1f} bytes), suggesting bulk transfer dominant traffic.",
+            }
+        )
+
+    return {
+        "summary": {
+            "packets": total_packets,
+            "total_bytes": total_bytes,
+            "unique_src_ips": unique_src_ips,
+            "unique_dst_ips": unique_dst_ips,
+            "avg_packet_size_bytes": round(avg_packet_size, 2),
+            "tcp_syn_packets": syn_count,
+            "tcp_rst_packets": rst_count,
+            "dns_query_packets": dns_count,
+        },
+        "protocol_breakdown": protocol_breakdown,
+        "top_talkers": top_talkers,
+        "top_conversations": top_conversations,
+        "time_trend": time_trend,
+        "alerts": alerts,
+    }
 
 
 def _compute_biomarker_correlation_matrix(
