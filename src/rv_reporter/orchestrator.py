@@ -271,6 +271,8 @@ def _enrich_sparse_report(
 
     if _is_sparse_sections(normalized_sections):
         normalized_sections = _default_sections(csv_profile, metrics)
+    if metrics_profile == "ms_biomarker_registry_health":
+        normalized_sections = _ensure_ms_methods_section(normalized_sections, csv_profile, metrics)
     report_json["sections"] = normalized_sections
 
     alerts = report_json.get("alerts")
@@ -315,6 +317,46 @@ def _enrich_sparse_report(
             if len(cleaned_recos) >= 3:
                 break
     report_json["recommendations"] = cleaned_recos
+
+
+def _ensure_ms_methods_section(
+    sections: list[dict[str, str]],
+    csv_profile: dict[str, Any],
+    metrics: dict[str, Any],
+) -> list[dict[str, str]]:
+    for section in sections:
+        title = str(section.get("title", "")).strip().lower()
+        if "method" in title:
+            return sections
+
+    summary = metrics.get("summary", {}) if isinstance(metrics.get("summary"), dict) else {}
+    corr_method = str(summary.get("correlation_method", "Spearman rank correlation")).strip()
+    corr_min_pairs = int(summary.get("corr_min_pairs", 30) or 30)
+    strong_corr = float(summary.get("strong_corr_threshold", 0.35) or 0.35)
+    weak_corr = float(summary.get("weak_corr_threshold", 0.10) or 0.10)
+    z_thr = float(summary.get("zscore_outlier_threshold", 2.0) or 2.0)
+    rows = int(csv_profile.get("row_count", 0) or 0)
+    cols = int(csv_profile.get("column_count", 0) or 0)
+
+    methods_body = (
+        "Study design and data source: This observational registry analysis used a single extracted table "
+        f"({rows} rows, {cols} columns) with longitudinal pairing by participant identifier where baseline "
+        "and follow-up records were both available.\n"
+        f"Data preprocessing: Empty cells were treated as missing values; no blanket imputation was applied to "
+        f"biomarkers. Correlation analyses required at least {corr_min_pairs} paired observations per marker.\n"
+        f"Statistical methods: Primary association testing used {corr_method}. Correlation strength was interpreted "
+        f"with configured thresholds (weak <= {weak_corr:.2f}, strong >= {strong_corr:.2f}). EDSS-stratified analyses "
+        "were performed for 0-3.5 and 4+ bands for both Sample EDSS and Last EDSS.\n"
+        f"Robustness and outlier handling: Z-score based signal screens used an outlier threshold of |z| >= {z_thr:.2f}, "
+        "with additional validation metrics (robust/MAD and non-parametric checks) reported in the statistical validation section.\n"
+        "Limitations: Inference is constrained by missingness, unequal follow-up intervals, and observational confounding; "
+        "results should be interpreted as hypothesis-generating rather than causal."
+    )
+
+    methods_section = {"title": "Methods", "body": methods_body}
+    if len(sections) <= 1:
+        return sections + [methods_section]
+    return [sections[0], methods_section, *sections[1:]]
 
 
 def _build_default_summary(existing: str, csv_profile: dict[str, Any], metrics: dict[str, Any]) -> str:

@@ -10,12 +10,12 @@ import pandas as pd
 _PCAP_COLUMN_MAP: list[tuple[str, str]] = [
     ("frame_time_epoch", "frame.time_epoch"),
     ("frame_len", "frame.len"),
-    ("ip_src", "ip.src"),
+    ("src_ip", "ip.src"),
     ("ipv6_src", "ipv6.src"),
-    ("ip_dst", "ip.dst"),
+    ("dst_ip", "ip.dst"),
     ("ipv6_dst", "ipv6.dst"),
     ("ip_proto", "ip.proto"),
-    ("transport", "_ws.col.Protocol"),
+    ("transport", "_ws.col.protocol"),
     ("tcp_srcport", "tcp.srcport"),
     ("tcp_dstport", "tcp.dstport"),
     ("udp_srcport", "udp.srcport"),
@@ -60,7 +60,8 @@ def describe_tabular_source(path: str | Path, sheet_name: str | None = None) -> 
     data_path = Path(path)
     suffix = data_path.suffix.lower()
     if suffix == ".csv":
-        header = pd.read_csv(data_path, nrows=0)
+        header = _read_delimited_auto(data_path, nrows=0)
+        header = _normalize_wireshark_export_frame(header)
         return {
             "file_type": "csv",
             "sheets": [],
@@ -127,9 +128,11 @@ def load_csv_with_limit(
 
     suffix = data_path.suffix.lower()
     if suffix == ".csv":
-        return pd.read_csv(data_path, nrows=nrows)
+        frame = _read_delimited_auto(data_path, nrows=nrows)
+        return _normalize_wireshark_export_frame(frame)
     if suffix in {".xlsx", ".xls"}:
-        return _read_excel(data_path, sheet_name=sheet_name, nrows=nrows)
+        frame = _read_excel(data_path, sheet_name=sheet_name, nrows=nrows)
+        return _normalize_wireshark_export_frame(frame)
     if suffix in {".pcap", ".pcapng"}:
         return _read_pcap(data_path, nrows=nrows)
 
@@ -152,6 +155,11 @@ def _read_excel(path: Path, sheet_name: str | None, nrows: int | None) -> pd.Dat
     )
 
 
+def _read_delimited_auto(path: Path, nrows: int | None) -> pd.DataFrame:
+    # Wireshark exports are commonly tab-delimited even with .csv extension.
+    return pd.read_csv(path, nrows=nrows, sep=None, engine="python")
+
+
 def _read_pcap(path: Path, nrows: int | None) -> pd.DataFrame:
     tshark_exe = _resolve_tshark_executable()
     command = [
@@ -163,9 +171,9 @@ def _read_pcap(path: Path, nrows: int | None) -> pd.DataFrame:
         "-E",
         "header=y",
         "-E",
-        "separator=,",
+        "separator=/t",
         "-E",
-        "quote=d",
+        "quote=n",
         "-E",
         "occurrence=f",
     ]
@@ -198,8 +206,11 @@ def _read_pcap(path: Path, nrows: int | None) -> pd.DataFrame:
     raw = completed.stdout or ""
     if not raw.strip():
         return pd.DataFrame(columns=_PCAP_COLUMNS)
-    frame = pd.read_csv(io.StringIO(raw), dtype=str)
-    frame = frame.rename(columns={src: dst for src, dst in _PCAP_COLUMN_MAP if src in frame.columns})
+    frame = pd.read_csv(io.StringIO(raw), dtype=str, sep="\t", na_filter=False)
+    # Fallback for unexpected tshark formatting variants.
+    if len(frame.columns) <= 1:
+        frame = pd.read_csv(io.StringIO(raw), dtype=str, sep=None, engine="python", na_filter=False)
+    frame = frame.rename(columns={tshark_field: internal_name for internal_name, tshark_field in _PCAP_COLUMN_MAP if tshark_field in frame.columns})
 
     if "src_ip" not in frame.columns:
         frame["src_ip"] = ""
@@ -247,6 +258,84 @@ def _resolve_tshark_executable() -> str:
     if candidate.name.lower() == "wireshark.exe":
         candidate = candidate.with_name("tshark.exe")
     return str(candidate)
+
+
+def _normalize_wireshark_export_frame(frame: pd.DataFrame) -> pd.DataFrame:
+    if frame.empty and not list(frame.columns):
+        return frame
+
+    cols = {str(c).strip().lower(): c for c in frame.columns}
+    alias_map = {
+        "time": "frame_time_epoch",
+        "length": "frame_len",
+        "source": "src_ip",
+        "destination": "dst_ip",
+        "protocol": "transport",
+        "info": "info",
+        "no.": "frame_number",
+        "no": "frame_number",
+    }
+
+    rename_map: dict[str, str] = {}
+    for alias, canonical in alias_map.items():
+        src = cols.get(alias)
+        if src is not None and src != canonical and canonical not in frame.columns:
+            rename_map[src] = canonical
+    if rename_map:
+        frame = frame.rename(columns=rename_map)
+
+    # If this is not a Wireshark-export-like table, keep original frame unchanged.
+    expected_hit = sum(1 for name in ("frame_time_epoch", "frame_len", "src_ip", "dst_ip", "transport") if name in frame.columns)
+    if expected_hit < 3:
+        return frame
+
+    for col in (
+        "frame_time_epoch",
+        "frame_len",
+        "src_ip",
+        "dst_ip",
+        "transport",
+        "src_port",
+        "dst_port",
+        "tcp_flags_syn",
+        "tcp_flags_ack",
+        "tcp_flags_fin",
+        "tcp_flags_reset",
+        "dns_query",
+        "http_host",
+        "http_uri",
+        "tls_sni",
+        "icmp_type",
+        "arp_opcode",
+        "frame_protocols",
+    ):
+        if col not in frame.columns:
+            frame[col] = ""
+
+    if "frame_protocols" in frame.columns:
+        frame["frame_protocols"] = frame["frame_protocols"].fillna("").astype(str)
+    frame["frame_protocols"] = frame["frame_protocols"].where(
+        frame["frame_protocols"].str.strip() != "",
+        frame["transport"].fillna("").astype(str).str.lower(),
+    )
+
+    # Parse ports and TCP flags from Wireshark "Info" text where available.
+    if "info" in frame.columns:
+        info = frame["info"].fillna("").astype(str)
+        ports = info.str.extract(r"(?P<src>\d+)\s*[→>]\s*(?P<dst>\d+)", expand=True)
+        frame["src_port"] = frame["src_port"].where(frame["src_port"].astype(str).str.strip() != "", ports["src"].fillna(""))
+        frame["dst_port"] = frame["dst_port"].where(frame["dst_port"].astype(str).str.strip() != "", ports["dst"].fillna(""))
+
+        upper = info.str.upper()
+        frame["tcp_flags_syn"] = frame["tcp_flags_syn"].where(frame["tcp_flags_syn"].astype(str).str.strip() != "", upper.str.contains(r"\bSYN\b").astype(int).astype(str))
+        frame["tcp_flags_ack"] = frame["tcp_flags_ack"].where(frame["tcp_flags_ack"].astype(str).str.strip() != "", upper.str.contains(r"\bACK\b").astype(int).astype(str))
+        frame["tcp_flags_fin"] = frame["tcp_flags_fin"].where(frame["tcp_flags_fin"].astype(str).str.strip() != "", upper.str.contains(r"\bFIN\b").astype(int).astype(str))
+        frame["tcp_flags_reset"] = frame["tcp_flags_reset"].where(frame["tcp_flags_reset"].astype(str).str.strip() != "", upper.str.contains(r"\bRST\b").astype(int).astype(str))
+
+        dns_q = info.str.extract(r"(?i)standard\s+query\s+[0-9a-fx]+\s+(.+)$", expand=False).fillna("")
+        frame["dns_query"] = frame["dns_query"].where(frame["dns_query"].astype(str).str.strip() != "", dns_q)
+
+    return frame
 
 
 def validate_required_columns(df: pd.DataFrame, required_columns: list[str]) -> None:

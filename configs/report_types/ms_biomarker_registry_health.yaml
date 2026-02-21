@@ -42,6 +42,9 @@ default_prefs:
 prompt_instructions: |
   Analyze this MS registry dataset with strong attention to data quality and longitudinal signal.
   Ignore biomarkers with non-null values below the configured minimum threshold.
+  Include a dedicated section titled "Methods" written in scientific-paper style paragraphs (not bullets).
+  Methods must clearly describe: study design/data source, preprocessing/missing-data handling, statistical tests/correlation method,
+  EDSS banding strategy (0-3.5 vs 4+), outlier handling, and key analytical limitations.
   Must include:
   - participant coverage (unique PID, SID distribution, missingness profile)
   - handling of empty cells and impact on confidence
