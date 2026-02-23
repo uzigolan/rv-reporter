@@ -34,8 +34,8 @@
       <span>Report Type Filter</span>
       <select name="report_type_id" onchange="this.form.submit()">
         <option value="">All</option>
-        {% for rid in report_type_ids %}
-          <option value="{{ rid }}" {% if report_type_filter == rid %}selected{% endif %}>{{ rid }}</option>
+        {% for option in report_type_options %}
+          <option value="{{ option.value }}" {% if report_type_filter == option.value %}selected{% endif %}>{{ option.label }}</option>
         {% endfor %}
       </select>
     </label>
@@ -139,6 +139,12 @@
                 {{ baseline_assessment.sources_display }}
               {% elif check.key == "same_report_type" %}
                 {{ baseline_assessment.report_types_display }}
+              {% elif check.key == "same_tone" %}
+                {{ baseline_assessment.tones_display }}
+              {% elif check.key == "same_audience" %}
+                {{ baseline_assessment.audiences_display }}
+              {% elif check.key == "same_focus" %}
+                {{ baseline_assessment.focuses_display }}
               {% elif check.key == "same_model_strength" %}
                 ratios:
                 {% for r in baseline_assessment.model_ratios %}
@@ -221,6 +227,85 @@
       {% endfor %}
     </tbody>
   </table>
+</section>
+{% endif %}
+
+{% if ptp_benchmark and ptp_benchmark.supported %}
+<section class="panel">
+  <h2>PTP Benchmark (Wireshark)</h2>
+  <p class="muted small">
+    Best lock likelihood:
+    <strong>{{ ptp_benchmark.best_lock.lock_likelihood|upper }}</strong>
+    ({{ ptp_benchmark.best_lock.lock_score }} pts) -
+    {{ report_identity(ptp_benchmark.best_lock.name, ptp_benchmark.best_lock.provider, ptp_benchmark.best_lock.model) }}
+  </p>
+  <table class="table">
+    <thead>
+      <tr>
+        <th>Report</th>
+        <th>Lock Likelihood</th>
+        <th>Score</th>
+        <th>Sync/FU/Announce</th>
+        <th>Correction Median/P95 (ns)</th>
+        <th>Abs Timestamp Delta Median (ns)</th>
+        <th>Sync Interval Median/P95 (ms)</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in ptp_benchmark.rows %}
+      <tr>
+        <td>{{ report_identity(row.name, row.provider, row.model) }}</td>
+        <td>{{ row.lock_likelihood|upper }}</td>
+        <td>{{ row.lock_score }}</td>
+        <td>{{ row.sync_packets }} / {{ row.follow_up_packets }} / {{ row.announce_packets }}</td>
+        <td>
+          {% if row.correction_ns_median is not none %}
+            {{ "%.2f"|format(row.correction_ns_median) }} / {{ "%.2f"|format(row.correction_ns_p95) }}
+          {% else %}
+            -
+          {% endif %}
+        </td>
+        <td>
+          {% if row.timestamp_delta_ns_median is not none %}
+            {{ "%.2f"|format((row.timestamp_delta_ns_median|float)|abs) }}
+          {% else %}
+            -
+          {% endif %}
+        </td>
+        <td>
+          {% if row.sync_interval_ms_median is not none %}
+            {{ "%.3f"|format(row.sync_interval_ms_median) }} / {{ "%.3f"|format(row.sync_interval_ms_p95) }}
+          {% else %}
+            -
+          {% endif %}
+        </td>
+      </tr>
+      <tr>
+        <td colspan="7" class="small muted">
+          {% for reason in row.reasons %}{{ reason }}{% if not loop.last %} | {% endif %}{% endfor %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% if ptp_benchmark.pair_delta %}
+  <p class="muted small">
+    Pair delta:
+    lock score diff={{ ptp_benchmark.pair_delta.lock_score_delta }};
+    correction p95 diff=
+    {% if ptp_benchmark.pair_delta.correction_p95_delta is not none %}
+      {{ "%.2f"|format(ptp_benchmark.pair_delta.correction_p95_delta) }} ns
+    {% else %}
+      -
+    {% endif %};
+    abs timestamp-delta diff=
+    {% if ptp_benchmark.pair_delta.timestamp_delta_abs_diff is not none %}
+      {{ "%.2f"|format(ptp_benchmark.pair_delta.timestamp_delta_abs_diff) }} ns
+    {% else %}
+      -
+    {% endif %}
+  </p>
+  {% endif %}
 </section>
 {% endif %}
 

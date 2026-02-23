@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import os
 import subprocess
+from functools import lru_cache
 from pathlib import Path
 
 import pandas as pd
@@ -33,6 +34,17 @@ _PCAP_COLUMN_MAP: list[tuple[str, str]] = [
     ("frame_protocols", "frame.protocols"),
 ]
 
+_PCAP_OPTIONAL_COLUMN_MAP: list[tuple[str, tuple[str, ...]]] = [
+    ("ptp_message_type", ("ptp.v2.messagetype", "ptp.messagetype")),
+    ("ptp_domain_number", ("ptp.v2.domainnumber",)),
+    ("ptp_sequence_id", ("ptp.v2.sequenceid", "ptp.sequenceid")),
+    ("ptp_source_port_identity", ("ptp.v2.sourceportid", "ptp.sourceportid")),
+    ("ptp_correction_ns", ("ptp.v2.correction.ns",)),
+    ("ptp_origin_ts_seconds", ("ptp.v2.sdr.origintimestamp.seconds", "ptp.sdr.origintimestamp_seconds")),
+    ("ptp_origin_ts_nanoseconds", ("ptp.v2.sdr.origintimestamp.nanoseconds", "ptp.sdr.origintimestamp_nanoseconds")),
+    ("ptp_two_step", ("ptp.v2.flags.twostep",)),
+]
+
 _PCAP_COLUMNS = [
     "frame_time_epoch",
     "frame_len",
@@ -53,12 +65,21 @@ _PCAP_COLUMNS = [
     "icmp_type",
     "arp_opcode",
     "frame_protocols",
+    "ptp_message_type",
+    "ptp_domain_number",
+    "ptp_sequence_id",
+    "ptp_source_port_identity",
+    "ptp_correction_ns",
+    "ptp_origin_ts_seconds",
+    "ptp_origin_ts_nanoseconds",
+    "ptp_two_step",
 ]
 
 
 def describe_tabular_source(path: str | Path, sheet_name: str | None = None) -> dict[str, object]:
     data_path = Path(path)
     suffix = data_path.suffix.lower()
+    row_count: int | None = _source_row_count(data_path, sheet_name=sheet_name)
     if suffix == ".csv":
         header = _read_delimited_auto(data_path, nrows=0)
         header = _normalize_wireshark_export_frame(header)
@@ -67,6 +88,7 @@ def describe_tabular_source(path: str | Path, sheet_name: str | None = None) -> 
             "sheets": [],
             "selected_sheet": "",
             "columns": [str(c) for c in header.columns],
+            "row_count": row_count,
         }
     if suffix in {".xlsx", ".xls"}:
         workbook = pd.ExcelFile(data_path)
@@ -83,6 +105,7 @@ def describe_tabular_source(path: str | Path, sheet_name: str | None = None) -> 
             "sheets": sheets,
             "selected_sheet": selected_sheet,
             "columns": columns,
+            "row_count": row_count,
         }
     if suffix in {".pcap", ".pcapng"}:
         return {
@@ -90,13 +113,23 @@ def describe_tabular_source(path: str | Path, sheet_name: str | None = None) -> 
             "sheets": [],
             "selected_sheet": "",
             "columns": list(_PCAP_COLUMNS),
+            "row_count": row_count,
         }
     return {
         "file_type": "unknown",
         "sheets": [],
         "selected_sheet": "",
         "columns": [],
+        "row_count": None,
     }
+
+
+def _source_row_count(path: Path, sheet_name: str | None = None) -> int | None:
+    try:
+        frame = load_csv_with_limit(path, row_limit=None, sheet_name=sheet_name)
+        return int(len(frame))
+    except Exception:  # noqa: BLE001
+        return None
 
 
 def list_excel_sheets(path: str | Path) -> list[str]:
@@ -181,6 +214,14 @@ def _read_pcap(path: Path, nrows: int | None) -> pd.DataFrame:
         command.extend(["-c", str(nrows)])
     for _, tshark_field in _PCAP_COLUMN_MAP:
         command.extend(["-e", tshark_field])
+    available_fields = _tshark_field_catalog(tshark_exe)
+    selected_optional: list[tuple[str, str]] = []
+    for internal_name, candidates in _PCAP_OPTIONAL_COLUMN_MAP:
+        selected = next((field for field in candidates if field in available_fields), "")
+        if selected:
+            selected_optional.append((internal_name, selected))
+    for _, tshark_field in selected_optional:
+        command.extend(["-e", tshark_field])
 
     try:
         completed = subprocess.run(
@@ -210,7 +251,8 @@ def _read_pcap(path: Path, nrows: int | None) -> pd.DataFrame:
     # Fallback for unexpected tshark formatting variants.
     if len(frame.columns) <= 1:
         frame = pd.read_csv(io.StringIO(raw), dtype=str, sep=None, engine="python", na_filter=False)
-    frame = frame.rename(columns={tshark_field: internal_name for internal_name, tshark_field in _PCAP_COLUMN_MAP if tshark_field in frame.columns})
+    rename_pairs = _PCAP_COLUMN_MAP + selected_optional
+    frame = frame.rename(columns={tshark_field: internal_name for internal_name, tshark_field in rename_pairs if tshark_field in frame.columns})
 
     if "src_ip" not in frame.columns:
         frame["src_ip"] = ""
@@ -258,6 +300,32 @@ def _resolve_tshark_executable() -> str:
     if candidate.name.lower() == "wireshark.exe":
         candidate = candidate.with_name("tshark.exe")
     return str(candidate)
+
+
+@lru_cache(maxsize=4)
+def _tshark_field_catalog(tshark_exe: str) -> set[str]:
+    try:
+        completed = subprocess.run(
+            [tshark_exe, "-G", "fields"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except Exception:  # noqa: BLE001
+        return set()
+    if completed.returncode != 0:
+        return set()
+    fields: set[str] = set()
+    for line in (completed.stdout or "").splitlines():
+        parts = line.split("\t")
+        if len(parts) < 3:
+            continue
+        if parts[0] != "F":
+            continue
+        name = parts[2].strip()
+        if name:
+            fields.add(name)
+    return fields
 
 
 def _normalize_wireshark_export_frame(frame: pd.DataFrame) -> pd.DataFrame:

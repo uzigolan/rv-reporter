@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import math
 import random
+import re
 from typing import Any
 
 import pandas as pd
@@ -2623,6 +2624,81 @@ def _longitudinal_slope_proxy(
     return {"tested": tested, "strong_markers": strong}
 
 
+def _to_int_maybe(value: Any) -> int | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    try:
+        if text.lower().startswith("0x"):
+            return int(text, 16)
+        if "." in text:
+            return int(float(text))
+        return int(text)
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _ptp_message_name(value: Any) -> str:
+    parsed = _to_int_maybe(value)
+    mapping = {
+        0: "Sync",
+        1: "Delay_Req",
+        2: "Pdelay_Req",
+        3: "Pdelay_Resp",
+        8: "Follow_Up",
+        9: "Delay_Resp",
+        10: "Pdelay_Resp_Follow_Up",
+        11: "Announce",
+        12: "Signaling",
+        13: "Management",
+    }
+    if parsed is None:
+        raw = str(value or "").strip()
+        return raw or "Unknown"
+    return mapping.get(parsed, f"Type_{parsed}")
+
+
+def _ptp_port_from_identity(value: Any) -> int | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    if text.isdigit():
+        return int(text)
+    parts = re.split(r"[:.\-/\s]+", text)
+    for token in reversed(parts):
+        if not token:
+            continue
+        try:
+            if all(ch in "0123456789abcdefABCDEF" for ch in token):
+                return int(token, 16)
+            if token.isdigit():
+                return int(token)
+        except Exception:  # noqa: BLE001
+            continue
+    return None
+
+
+def _safe_round(value: float | int | None, digits: int = 2) -> float | None:
+    if value is None:
+        return None
+    try:
+        if pd.isna(value):  # type: ignore[arg-type]
+            return None
+    except Exception:  # noqa: BLE001
+        return None
+    return round(float(value), digits)
+
+
+def _ptp_state_from_score(score: float) -> str:
+    if score >= 75.0:
+        return "stable"
+    if score >= 45.0:
+        return "warning"
+    return "unstable"
+
+
 def _compute_wireshark_capture_health(df: pd.DataFrame, prefs: dict[str, Any]) -> dict[str, Any]:
     working = df.copy()
     for col in [
@@ -2635,6 +2711,12 @@ def _compute_wireshark_capture_health(df: pd.DataFrame, prefs: dict[str, Any]) -
         "tcp_flags_fin",
         "tcp_flags_reset",
         "ip_proto",
+        "ptp_domain_number",
+        "ptp_sequence_id",
+        "ptp_correction_ns",
+        "ptp_origin_ts_seconds",
+        "ptp_origin_ts_nanoseconds",
+        "ptp_two_step",
     ]:
         if col in working.columns:
             working[col] = pd.to_numeric(working[col], errors="coerce")
@@ -2739,9 +2821,474 @@ def _compute_wireshark_capture_health(df: pd.DataFrame, prefs: dict[str, Any]) -
                 }
             )
 
-    syn_count = int(pd.to_numeric(working.get("tcp_flags_syn"), errors="coerce").fillna(0).sum())
-    rst_count = int(pd.to_numeric(working.get("tcp_flags_reset"), errors="coerce").fillna(0).sum())
+    syn_count = int(
+        pd.to_numeric(working.get("tcp_flags_syn", pd.Series(index=working.index, dtype=float)), errors="coerce")
+        .fillna(0)
+        .sum()
+    )
+    rst_count = int(
+        pd.to_numeric(working.get("tcp_flags_reset", pd.Series(index=working.index, dtype=float)), errors="coerce")
+        .fillna(0)
+        .sum()
+    )
     dns_count = int(working.get("dns_query", pd.Series(dtype=str)).fillna("").astype(str).str.strip().ne("").sum())
+
+    ptp_mask = (
+        working["transport"].str.upper().eq("PTP")
+        | working["frame_protocols"].str.contains(r"(?:^|[:;,\s])ptp(?:$|[:;,\s])", case=False, regex=True)
+        | working.get("src_port", pd.Series(dtype=float)).fillna(-1).isin([319, 320])
+        | working.get("dst_port", pd.Series(dtype=float)).fillna(-1).isin([319, 320])
+    )
+    ptp_rows = working[ptp_mask].copy()
+    ptp_packets = int(len(ptp_rows))
+    ptp_message_mix: list[dict[str, Any]] = []
+    ptp_port_health: list[dict[str, Any]] = []
+    ptp_timing: list[dict[str, Any]] = []
+    ptp_source_comparison: list[dict[str, Any]] = []
+    ptp_message_time_trend: list[dict[str, Any]] = []
+    ptp_state_flow: list[dict[str, Any]] = []
+    ptp_time_sync_logic: dict[str, Any] = {
+        "focus_scope": "all_ptpv2",
+        "focus_packets": 0,
+        "sync_packets": 0,
+        "follow_up_packets": 0,
+        "announce_packets": 0,
+        "ptp_mode_inferred": "unknown",
+        "follow_up_to_sync_ratio": None,
+        "sync_interval_ms_median": None,
+        "sync_interval_ms_p95": None,
+        "sync_sequence_gap_rate_pct": None,
+        "sync_sequence_out_of_order": 0,
+        "correction_ns_median": None,
+        "correction_ns_p95": None,
+        "correction_jitter_ns_p95_minus_median": None,
+        "timestamp_delta_ns_median": None,
+        "timestamp_delta_drift_ns_per_s": None,
+        "lock_score": 0,
+        "lock_likelihood": "unknown",
+        "lock_reasons": [],
+        "state_counts": {"stable": 0, "warning": 0, "unstable": 0},
+        "worst_state": None,
+        "worst_state_time_utc": None,
+    }
+    ptp_summary: dict[str, Any] = {
+        "packets": ptp_packets,
+        "share_pct": round((ptp_packets / max(1, total_packets)) * 100.0, 2),
+        "event_port_packets": int(
+            ptp_rows.get("dst_port", pd.Series(dtype=float)).fillna(-1).eq(319).sum()
+            + ptp_rows.get("src_port", pd.Series(dtype=float)).fillna(-1).eq(319).sum()
+        ),
+        "general_port_packets": int(
+            ptp_rows.get("dst_port", pd.Series(dtype=float)).fillna(-1).eq(320).sum()
+            + ptp_rows.get("src_port", pd.Series(dtype=float)).fillna(-1).eq(320).sum()
+        ),
+        "g8275_1_likely": False,
+        "sync_packets": 0,
+        "follow_up_packets": 0,
+        "announce_packets": 0,
+        "two_step_pct": None,
+        "correction_ns_p95": None,
+        "correction_ns_median": None,
+        "timestamp_delta_ns_median": None,
+    }
+    if ptp_packets > 0:
+        msg_name = ptp_rows.get("ptp_message_type", pd.Series(index=ptp_rows.index, dtype=object)).apply(_ptp_message_name)
+        ptp_rows["ptp_message_name"] = msg_name
+        msg_counts = msg_name.value_counts(dropna=False)
+        for name, count in msg_counts.items():
+            packets = int(count)
+            ptp_message_mix.append(
+                {
+                    "message_type": str(name),
+                    "packets": packets,
+                    "pct": round((packets / max(1, ptp_packets)) * 100.0, 2),
+                }
+            )
+        sync_packets = int((msg_name == "Sync").sum())
+        follow_up_packets = int((msg_name == "Follow_Up").sum())
+        announce_packets = int((msg_name == "Announce").sum())
+        ptp_summary["sync_packets"] = sync_packets
+        ptp_summary["follow_up_packets"] = follow_up_packets
+        ptp_summary["announce_packets"] = announce_packets
+        two_step = pd.to_numeric(ptp_rows.get("ptp_two_step", pd.Series(index=ptp_rows.index, dtype=float)), errors="coerce").fillna(0)
+        if int(two_step.shape[0]) > 0:
+            ptp_summary["two_step_pct"] = round(float((two_step > 0).mean() * 100.0), 2)
+
+        correction = pd.to_numeric(
+            ptp_rows.get("ptp_correction_ns", pd.Series(index=ptp_rows.index, dtype=float)),
+            errors="coerce",
+        )
+        correction_non_null = correction.dropna()
+        if not correction_non_null.empty:
+            ptp_summary["correction_ns_p95"] = round(float(correction_non_null.quantile(0.95)), 2)
+            ptp_summary["correction_ns_median"] = round(float(correction_non_null.median()), 2)
+            ptp_rows["ptp_correction_effective_ns"] = correction
+        else:
+            ptp_rows["ptp_correction_effective_ns"] = pd.NA
+
+        origin_seconds = pd.to_numeric(ptp_rows.get("ptp_origin_ts_seconds"), errors="coerce")
+        origin_nanos = pd.to_numeric(ptp_rows.get("ptp_origin_ts_nanoseconds"), errors="coerce")
+        origin_epoch = origin_seconds + (origin_nanos / 1_000_000_000.0)
+        frame_epoch = pd.to_numeric(ptp_rows.get("frame_time_epoch"), errors="coerce")
+        ts_delta_ns = (frame_epoch - origin_epoch) * 1_000_000_000.0
+        valid_ts_delta = ts_delta_ns.dropna()
+        if not valid_ts_delta.empty:
+            ptp_summary["timestamp_delta_ns_median"] = round(float(valid_ts_delta.median()), 2)
+        ptp_rows["ptp_timestamp_delta_ns"] = ts_delta_ns
+
+        ptp_rows["ptp_port_number"] = ptp_rows.get("ptp_source_port_identity", pd.Series(dtype=str)).apply(_ptp_port_from_identity)
+        domain_non_null = pd.to_numeric(ptp_rows.get("ptp_domain_number"), errors="coerce").dropna()
+        if not domain_non_null.empty and int(domain_non_null.iloc[0]) == 24:
+            ptp_summary["g8275_1_likely"] = True
+        if not ptp_summary["g8275_1_likely"]:
+            multicast_hits = int(
+                ptp_rows.get("dst_ip", pd.Series(dtype=str))
+                .fillna("")
+                .astype(str)
+                .str.strip()
+                .isin({"224.0.1.129", "FF0E::181", "ff0e::181"})
+                .sum()
+            )
+            ptp_summary["g8275_1_likely"] = multicast_hits > 0
+
+        key = ptp_rows["ptp_port_number"].where(ptp_rows["ptp_port_number"].notna(), ptp_rows.get("src_ip", "unknown"))
+        ptp_rows["ptp_sender_key"] = key.astype(str)
+        grouped = ptp_rows.groupby("ptp_sender_key", dropna=False)
+        for sender, g in grouped:
+            if g.empty:
+                continue
+            g_sorted = g.sort_values("frame_time_epoch")
+            sync_g = g_sorted[g_sorted["ptp_message_name"] == "Sync"]
+            sync_intervals_ms = (
+                pd.to_numeric(sync_g.get("frame_time_epoch"), errors="coerce").diff().dropna() * 1000.0
+            )
+            corr_g = pd.to_numeric(g_sorted.get("ptp_correction_effective_ns"), errors="coerce").dropna()
+            ptp_port_health.append(
+                {
+                    "sender": str(sender),
+                    "port_number": int(g["ptp_port_number"].dropna().iloc[0]) if int(g["ptp_port_number"].notna().sum()) > 0 else None,
+                    "packets": int(len(g)),
+                    "sync_packets": int((g["ptp_message_name"] == "Sync").sum()),
+                    "follow_up_packets": int((g["ptp_message_name"] == "Follow_Up").sum()),
+                    "announce_packets": int((g["ptp_message_name"] == "Announce").sum()),
+                    "sync_interval_ms_median": round(float(sync_intervals_ms.median()), 3) if not sync_intervals_ms.empty else None,
+                    "sync_interval_ms_p95": round(float(sync_intervals_ms.quantile(0.95)), 3) if not sync_intervals_ms.empty else None,
+                    "correction_ns_median": round(float(corr_g.median()), 2) if not corr_g.empty else None,
+                    "correction_ns_p95": round(float(corr_g.quantile(0.95)), 2) if not corr_g.empty else None,
+                }
+            )
+            if len(ptp_timing) < 8:
+                deltas = pd.to_numeric(g_sorted.get("ptp_timestamp_delta_ns"), errors="coerce").dropna()
+                ptp_timing.append(
+                    {
+                        "sender": str(sender),
+                        "first_rx_utc": str(g_sorted["timestamp_utc"].dropna().iloc[0]) if int(g_sorted["timestamp_utc"].notna().sum()) > 0 else "",
+                        "last_rx_utc": str(g_sorted["timestamp_utc"].dropna().iloc[-1]) if int(g_sorted["timestamp_utc"].notna().sum()) > 0 else "",
+                        "rx_packets": int(len(g_sorted)),
+                        "rx_time_span_s": round(
+                            float(
+                                pd.to_numeric(g_sorted.get("frame_time_epoch"), errors="coerce").dropna().max()
+                                - pd.to_numeric(g_sorted.get("frame_time_epoch"), errors="coerce").dropna().min()
+                            ),
+                            6,
+                        )
+                        if int(pd.to_numeric(g_sorted.get("frame_time_epoch"), errors="coerce").dropna().shape[0]) >= 2
+                        else None,
+                        "timestamp_delta_ns_median": round(float(deltas.median()), 2) if not deltas.empty else None,
+                    }
+                )
+        ptp_port_health.sort(key=lambda r: int(r.get("packets", 0)), reverse=True)
+        if "source_file" in ptp_rows.columns:
+            by_source = ptp_rows.groupby("source_file", dropna=False)
+            for source, g in by_source:
+                g_msg = g["ptp_message_name"] if "ptp_message_name" in g.columns else pd.Series(index=g.index, dtype=str)
+                g_corr = pd.to_numeric(g.get("ptp_correction_effective_ns", pd.Series(index=g.index, dtype=float)), errors="coerce").dropna()
+                g_two = pd.to_numeric(g.get("ptp_two_step", pd.Series(index=g.index, dtype=float)), errors="coerce").fillna(0)
+                g_ts = pd.to_numeric(g.get("ptp_timestamp_delta_ns", pd.Series(index=g.index, dtype=float)), errors="coerce").dropna()
+                ptp_source_comparison.append(
+                    {
+                        "source_file": str(source),
+                        "source_label": str(g.get("source_label", pd.Series([source])).iloc[0]),
+                        "packets": int(len(g)),
+                        "sync_packets": int((g_msg == "Sync").sum()),
+                        "follow_up_packets": int((g_msg == "Follow_Up").sum()),
+                        "announce_packets": int((g_msg == "Announce").sum()),
+                        "two_step_pct": round(float((g_two > 0).mean() * 100.0), 2) if int(g_two.shape[0]) > 0 else None,
+                        "correction_ns_median": round(float(g_corr.median()), 2) if not g_corr.empty else None,
+                        "correction_ns_p95": round(float(g_corr.quantile(0.95)), 2) if not g_corr.empty else None,
+                        "timestamp_delta_ns_median": round(float(g_ts.median()), 2) if not g_ts.empty else None,
+                    }
+                )
+            ptp_source_comparison.sort(key=lambda r: str(r.get("source_file", "")))
+
+        valid_ptp_ts = ptp_rows.dropna(subset=["timestamp_utc"]).copy()
+        if not valid_ptp_ts.empty:
+            valid_ptp_ts["bucket"] = valid_ptp_ts["timestamp_utc"].dt.floor(str(time_bucket))
+            bucketed = valid_ptp_ts.groupby("bucket", dropna=False)
+            for bucket, g in bucketed:
+                g_msg = g.get("ptp_message_name", pd.Series(index=g.index, dtype=str))
+                g_corr = pd.to_numeric(g.get("ptp_correction_effective_ns", pd.Series(index=g.index, dtype=float)), errors="coerce").dropna()
+                ptp_message_time_trend.append(
+                    {
+                        "time_utc": str(bucket),
+                        "ptp_packets": int(len(g)),
+                        "sync_packets": int((g_msg == "Sync").sum()),
+                        "follow_up_packets": int((g_msg == "Follow_Up").sum()),
+                        "announce_packets": int((g_msg == "Announce").sum()),
+                        "correction_ns_median": round(float(g_corr.median()), 2) if not g_corr.empty else None,
+                        "correction_ns_p95": round(float(g_corr.quantile(0.95)), 2) if not g_corr.empty else None,
+                    }
+                )
+
+        focus_rows = ptp_rows.copy()
+        domain_focus = pd.to_numeric(focus_rows.get("ptp_domain_number"), errors="coerce")
+        if int(domain_focus.notna().sum()) > 0:
+            domain24 = focus_rows[domain_focus == 24].copy()
+            if not domain24.empty:
+                focus_rows = domain24
+                ptp_time_sync_logic["focus_scope"] = "g8275_1_domain24"
+            else:
+                ptp_time_sync_logic["focus_scope"] = "all_ptpv2_no_domain24_seen"
+        ptp_time_sync_logic["focus_packets"] = int(len(focus_rows))
+
+        if not focus_rows.empty:
+            focus_msg = focus_rows.get("ptp_message_name", pd.Series(index=focus_rows.index, dtype=str))
+            focus_sync_packets = int((focus_msg == "Sync").sum())
+            focus_fu_packets = int((focus_msg == "Follow_Up").sum())
+            focus_announce_packets = int((focus_msg == "Announce").sum())
+            ptp_time_sync_logic["sync_packets"] = focus_sync_packets
+            ptp_time_sync_logic["follow_up_packets"] = focus_fu_packets
+            ptp_time_sync_logic["announce_packets"] = focus_announce_packets
+            fu_ratio = (focus_fu_packets / max(1, focus_sync_packets)) if focus_sync_packets > 0 else None
+            ptp_time_sync_logic["follow_up_to_sync_ratio"] = _safe_round(fu_ratio, 3)
+
+            two_step_pct = float(ptp_summary.get("two_step_pct") or 0.0)
+            if focus_sync_packets > 0 and focus_fu_packets == 0 and two_step_pct <= 5.0:
+                ptp_time_sync_logic["ptp_mode_inferred"] = "one_step_or_follow_up_not_captured"
+            elif focus_sync_packets > 0 and focus_fu_packets > 0 and two_step_pct > 5.0:
+                ptp_time_sync_logic["ptp_mode_inferred"] = "two_step"
+            elif focus_sync_packets > 0:
+                ptp_time_sync_logic["ptp_mode_inferred"] = "mixed_or_partial"
+
+            focus_sorted = focus_rows.sort_values("frame_time_epoch")
+            sync_focus = focus_sorted[focus_sorted["ptp_message_name"] == "Sync"].copy()
+            sync_time = pd.to_numeric(sync_focus.get("frame_time_epoch"), errors="coerce").dropna()
+            sync_intervals_ms = sync_time.diff().dropna() * 1000.0
+            ptp_time_sync_logic["sync_interval_ms_median"] = _safe_round(
+                float(sync_intervals_ms.median()) if not sync_intervals_ms.empty else None,
+                3,
+            )
+            ptp_time_sync_logic["sync_interval_ms_p95"] = _safe_round(
+                float(sync_intervals_ms.quantile(0.95)) if not sync_intervals_ms.empty else None,
+                3,
+            )
+
+            sync_seq = pd.to_numeric(
+                sync_focus.get("ptp_sequence_id", pd.Series(index=sync_focus.index, dtype=float)),
+                errors="coerce",
+            ).dropna()
+            gap_rate_pct = None
+            out_of_order = 0
+            if int(sync_seq.shape[0]) >= 2:
+                seq_diff = sync_seq.diff().dropna()
+                positive_diff = seq_diff[seq_diff > 0]
+                gap_count = int((positive_diff > 1).sum())
+                out_of_order = int((seq_diff <= 0).sum())
+                gap_rate_pct = (gap_count / max(1, len(seq_diff))) * 100.0
+                ptp_time_sync_logic["sync_sequence_gap_rate_pct"] = _safe_round(gap_rate_pct, 2)
+                ptp_time_sync_logic["sync_sequence_out_of_order"] = out_of_order
+
+            corr_focus = pd.to_numeric(focus_sorted.get("ptp_correction_effective_ns"), errors="coerce").dropna()
+            corr_med = float(corr_focus.median()) if not corr_focus.empty else None
+            corr_p95 = float(corr_focus.quantile(0.95)) if not corr_focus.empty else None
+            jitter = (corr_p95 - corr_med) if corr_med is not None and corr_p95 is not None else None
+            ptp_time_sync_logic["correction_ns_median"] = _safe_round(corr_med, 2)
+            ptp_time_sync_logic["correction_ns_p95"] = _safe_round(corr_p95, 2)
+            ptp_time_sync_logic["correction_jitter_ns_p95_minus_median"] = _safe_round(jitter, 2)
+
+            delta_focus = pd.to_numeric(focus_sorted.get("ptp_timestamp_delta_ns"), errors="coerce").dropna()
+            delta_med = float(delta_focus.median()) if not delta_focus.empty else None
+            ptp_time_sync_logic["timestamp_delta_ns_median"] = _safe_round(delta_med, 2)
+            drift = None
+            if int(delta_focus.shape[0]) >= 3:
+                drift_df = focus_sorted.loc[delta_focus.index, ["frame_time_epoch", "ptp_timestamp_delta_ns"]].dropna()
+                if int(len(drift_df)) >= 3:
+                    x = pd.to_numeric(drift_df["frame_time_epoch"], errors="coerce")
+                    y = pd.to_numeric(drift_df["ptp_timestamp_delta_ns"], errors="coerce")
+                    x_mean = float(x.mean())
+                    y_mean = float(y.mean())
+                    x_centered = x - x_mean
+                    var_x = float((x_centered * x_centered).sum())
+                    if var_x > 0:
+                        cov_xy = float((x_centered * (y - y_mean)).sum())
+                        drift = cov_xy / var_x
+            ptp_time_sync_logic["timestamp_delta_drift_ns_per_s"] = _safe_round(drift, 2)
+
+            lock_score = 50.0
+            lock_reasons: list[str] = []
+
+            if ptp_time_sync_logic["sync_interval_ms_median"] is not None and ptp_time_sync_logic["sync_interval_ms_p95"] is not None:
+                cadence_ratio = float(ptp_time_sync_logic["sync_interval_ms_p95"]) / max(
+                    0.001,
+                    float(ptp_time_sync_logic["sync_interval_ms_median"]),
+                )
+                if cadence_ratio <= 1.35:
+                    lock_score += 18.0
+                    lock_reasons.append("Sync cadence is stable.")
+                elif cadence_ratio <= 1.8:
+                    lock_score += 6.0
+                    lock_reasons.append("Sync cadence has moderate jitter.")
+                else:
+                    lock_score -= 12.0
+                    lock_reasons.append("Sync cadence jitter is high.")
+            else:
+                lock_score -= 8.0
+                lock_reasons.append("Not enough Sync intervals for cadence confidence.")
+
+            if jitter is not None:
+                if jitter <= 1500.0:
+                    lock_score += 16.0
+                    lock_reasons.append("Correction-field jitter is low.")
+                elif jitter <= 4000.0:
+                    lock_score += 6.0
+                    lock_reasons.append("Correction-field jitter is moderate.")
+                else:
+                    lock_score -= 12.0
+                    lock_reasons.append("Correction-field jitter is high.")
+            else:
+                lock_score -= 6.0
+                lock_reasons.append("Correction field is missing.")
+
+            if delta_med is not None:
+                abs_delta = abs(delta_med)
+                if abs_delta <= 1_000_000_000.0:
+                    lock_score += 10.0
+                    lock_reasons.append("Frame time and origin timestamp are closely aligned.")
+                elif abs_delta <= 5_000_000_000.0:
+                    lock_score += 2.0
+                    lock_reasons.append("Timestamp offset is present but moderate.")
+                else:
+                    lock_score -= 16.0
+                    lock_reasons.append("Large frame-to-origin timestamp offset observed.")
+            else:
+                lock_score -= 6.0
+                lock_reasons.append("Origin timestamp coverage is incomplete.")
+
+            if drift is not None:
+                if abs(drift) > 2_000_000.0:
+                    lock_score -= 10.0
+                    lock_reasons.append("Timestamp delta drift over time is high.")
+                elif abs(drift) > 500_000.0:
+                    lock_score -= 4.0
+                    lock_reasons.append("Timestamp delta drift is noticeable.")
+
+            if gap_rate_pct is not None:
+                if gap_rate_pct > 5.0:
+                    lock_score -= 14.0
+                    lock_reasons.append("Sync sequence gaps are frequent.")
+                elif gap_rate_pct > 1.0:
+                    lock_score -= 6.0
+                    lock_reasons.append("Sync sequence gaps are occasional.")
+            if out_of_order > 0:
+                lock_score -= min(10.0, float(out_of_order) * 2.0)
+                lock_reasons.append("Out-of-order Sync sequence IDs were seen.")
+
+            if two_step_pct > 5.0 and fu_ratio is not None:
+                if fu_ratio >= 0.85:
+                    lock_score += 8.0
+                    lock_reasons.append("Follow_Up coverage matches expected two-step behavior.")
+                else:
+                    lock_score -= 12.0
+                    lock_reasons.append("Follow_Up coverage is low for two-step traffic.")
+
+            lock_score = max(0.0, min(100.0, lock_score))
+            if lock_score >= 75.0:
+                likelihood = "high"
+            elif lock_score >= 50.0:
+                likelihood = "medium"
+            else:
+                likelihood = "low"
+            ptp_time_sync_logic["lock_score"] = int(round(lock_score))
+            ptp_time_sync_logic["lock_likelihood"] = likelihood
+            ptp_time_sync_logic["lock_reasons"] = lock_reasons
+
+            flow_rows = focus_rows.dropna(subset=["timestamp_utc"]).copy()
+            if not flow_rows.empty:
+                flow_rows["bucket"] = flow_rows["timestamp_utc"].dt.floor(str(time_bucket))
+                for bucket, g in flow_rows.groupby("bucket", dropna=False):
+                    g_sorted = g.sort_values("frame_time_epoch")
+                    g_msg = g_sorted.get("ptp_message_name", pd.Series(index=g_sorted.index, dtype=str))
+                    g_sync = int((g_msg == "Sync").sum())
+                    g_fu = int((g_msg == "Follow_Up").sum())
+                    g_ann = int((g_msg == "Announce").sum())
+                    g_corr = pd.to_numeric(g_sorted.get("ptp_correction_effective_ns"), errors="coerce").dropna()
+                    g_corr_med = float(g_corr.median()) if not g_corr.empty else None
+                    g_corr_p95 = float(g_corr.quantile(0.95)) if not g_corr.empty else None
+                    g_corr_jitter = (g_corr_p95 - g_corr_med) if g_corr_med is not None and g_corr_p95 is not None else None
+                    g_delta = pd.to_numeric(g_sorted.get("ptp_timestamp_delta_ns"), errors="coerce").dropna()
+                    g_delta_med = float(g_delta.median()) if not g_delta.empty else None
+                    g_sync_only = g_sorted[g_sorted["ptp_message_name"] == "Sync"]
+                    g_sync_seq = pd.to_numeric(
+                        g_sync_only.get("ptp_sequence_id", pd.Series(index=g_sync_only.index, dtype=float)),
+                        errors="coerce",
+                    ).dropna()
+                    g_gap_rate = None
+                    if int(g_sync_seq.shape[0]) >= 2:
+                        g_diff = g_sync_seq.diff().dropna()
+                        g_gap_rate = float((g_diff[g_diff > 1].shape[0]) / max(1, g_diff.shape[0])) * 100.0
+
+                    state_score = 100.0
+                    state_reasons: list[str] = []
+                    if g_sync == 0:
+                        state_score -= 45.0
+                        state_reasons.append("No Sync frames in this time bucket.")
+                    if two_step_pct > 5.0 and g_sync > 0:
+                        bucket_fu_ratio = g_fu / max(1, g_sync)
+                        if bucket_fu_ratio < 0.7:
+                            state_score -= 22.0
+                            state_reasons.append("Low Follow_Up coverage for two-step flow.")
+                    if g_corr_jitter is not None and g_corr_jitter > max(2500.0, (g_corr_med or 0.0) * 0.25):
+                        state_score -= 18.0
+                        state_reasons.append("Correction-field jitter increased.")
+                    if g_delta_med is not None and abs(g_delta_med) > 5_000_000_000.0:
+                        state_score -= 22.0
+                        state_reasons.append("Large frame/origin timestamp offset.")
+                    if g_gap_rate is not None and g_gap_rate > 5.0:
+                        state_score -= 16.0
+                        state_reasons.append("Sync sequence gaps detected.")
+                    if not state_reasons:
+                        state_reasons.append("No major timing anomalies detected in this bucket.")
+
+                    state = _ptp_state_from_score(state_score)
+                    ptp_state_flow.append(
+                        {
+                            "time_utc": str(bucket),
+                            "ptp_packets": int(len(g_sorted)),
+                            "sync_packets": g_sync,
+                            "follow_up_packets": g_fu,
+                            "announce_packets": g_ann,
+                            "correction_ns_median": _safe_round(g_corr_med, 2),
+                            "correction_ns_p95": _safe_round(g_corr_p95, 2),
+                            "timestamp_delta_ns_median": _safe_round(g_delta_med, 2),
+                            "sync_sequence_gap_rate_pct": _safe_round(g_gap_rate, 2),
+                            "state_score": int(round(max(0.0, min(100.0, state_score)))),
+                            "state": state,
+                            "reason": " ".join(state_reasons),
+                        }
+                    )
+
+            if ptp_state_flow:
+                counts = {
+                    "stable": int(sum(1 for row in ptp_state_flow if row.get("state") == "stable")),
+                    "warning": int(sum(1 for row in ptp_state_flow if row.get("state") == "warning")),
+                    "unstable": int(sum(1 for row in ptp_state_flow if row.get("state") == "unstable")),
+                }
+                ptp_time_sync_logic["state_counts"] = counts
+                severity_rank = {"stable": 0, "warning": 1, "unstable": 2}
+                worst = max(ptp_state_flow, key=lambda row: (severity_rank.get(str(row.get("state")), -1), -int(row.get("state_score", 0))))
+                ptp_time_sync_logic["worst_state"] = str(worst.get("state"))
+                ptp_time_sync_logic["worst_state_time_utc"] = str(worst.get("time_utc"))
+
     alerts: list[dict[str, str]] = []
     if rst_count > max(20, total_packets * 0.02):
         alerts.append(
@@ -2764,6 +3311,47 @@ def _compute_wireshark_capture_health(df: pd.DataFrame, prefs: dict[str, Any]) -
                 "message": f"Average packet size is high ({avg_packet_size:.1f} bytes), suggesting bulk transfer dominant traffic.",
             }
         )
+    if ptp_packets > 0:
+        follow_up_expected = (ptp_summary.get("two_step_pct") or 0.0) > 5.0
+        if ptp_summary["sync_packets"] > 0 and follow_up_expected:
+            ratio = ptp_summary["follow_up_packets"] / max(1, ptp_summary["sync_packets"])
+            if ratio < 0.7:
+                alerts.append(
+                    {
+                        "severity": "medium",
+                        "message": (
+                            f"PTP Follow_Up to Sync ratio is low ({ratio:.2f}); this may indicate incomplete two-step timing flow "
+                            "and can prevent slave lock."
+                        ),
+                    }
+                )
+        if ptp_summary["correction_ns_p95"] is None:
+            alerts.append(
+                {
+                    "severity": "low",
+                    "message": "PTP correction field was not decoded in capture; verify dissector visibility and hardware timestamp export.",
+                }
+            )
+        if len(ptp_port_health) >= 2:
+            port4 = next((r for r in ptp_port_health if r.get("port_number") == 4), None)
+            port3 = next((r for r in ptp_port_health if r.get("port_number") == 3), None)
+            if port3 and port4:
+                p3_sync = int(port3.get("sync_packets") or 0)
+                p3_fu = int(port3.get("follow_up_packets") or 0)
+                p4_sync = int(port4.get("sync_packets") or 0)
+                p4_fu = int(port4.get("follow_up_packets") or 0)
+                p3_ratio = p3_fu / max(1, p3_sync)
+                p4_ratio = p4_fu / max(1, p4_sync)
+                if p3_ratio + 0.2 < p4_ratio:
+                    alerts.append(
+                        {
+                            "severity": "high",
+                            "message": (
+                                f"PTP source port 3 appears weaker than port 4 (Follow_Up/Sync {p3_ratio:.2f} vs {p4_ratio:.2f}); "
+                                "this aligns with a potential non-locking slave on port 3."
+                            ),
+                        }
+                    )
 
     return {
         "summary": {
@@ -2775,11 +3363,22 @@ def _compute_wireshark_capture_health(df: pd.DataFrame, prefs: dict[str, Any]) -
             "tcp_syn_packets": syn_count,
             "tcp_rst_packets": rst_count,
             "dns_query_packets": dns_count,
+            "ptp_packets": ptp_summary["packets"],
+            "ptp_share_pct": ptp_summary["share_pct"],
+            "ptp_g8275_1_likely": ptp_summary["g8275_1_likely"],
         },
         "protocol_breakdown": protocol_breakdown,
         "top_talkers": top_talkers,
         "top_conversations": top_conversations,
         "time_trend": time_trend,
+        "ptp_summary": ptp_summary,
+        "ptp_message_mix": ptp_message_mix,
+        "ptp_message_time_trend": ptp_message_time_trend,
+        "ptp_port_health": ptp_port_health[:12],
+        "ptp_timing": ptp_timing,
+        "ptp_source_comparison": ptp_source_comparison,
+        "ptp_time_sync_logic": ptp_time_sync_logic,
+        "ptp_state_flow": ptp_state_flow,
         "alerts": alerts,
     }
 

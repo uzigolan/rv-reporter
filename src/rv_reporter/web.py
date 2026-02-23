@@ -18,6 +18,7 @@ from markupsafe import Markup
 import markdown
 from werkzeug.utils import secure_filename
 import yaml
+import pandas as pd
 
 from rv_reporter.orchestrator import run_pipeline
 from rv_reporter.providers.anthropic_provider import AnthropicMessagesProvider
@@ -38,7 +39,7 @@ from rv_reporter.services.cost_estimator import (
     estimate_tokens,
 )
 from rv_reporter.orchestrator import prepare_pipeline_inputs
-from rv_reporter.services.ingest import describe_tabular_source, list_excel_sheets
+from rv_reporter.services.ingest import describe_tabular_source, list_excel_sheets, load_csv_with_limit
 
 PROTECTED_REPORT_TYPES = {
     "network_queue_congestion",
@@ -46,6 +47,14 @@ PROTECTED_REPORT_TYPES = {
     "pm_export_health",
     "jira_issue_portfolio",
     "ms_biomarker_registry_health",
+}
+REPORT_TYPE_LABEL_MAP: dict[str, str] = {
+    "twamp_session_health": "twamp",
+    "ms_biomarker_registry_health": "biomarkers",
+    "network_queue_congestion": "network",
+    "pm_export_health": "performance",
+    "jira_issue_portfolio": "jira",
+    "wireshark_capture_health": "wireshark",
 }
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DOC_PAGES = {
@@ -123,6 +132,7 @@ PROVIDER_CATALOG: dict[str, dict[str, Any]] = {
         ],
     },
 }
+UI_BUILD_MARKER = "generate-ui-2026-02-22-multi-source-v2"
 
 OPENROUTER_RECOMMENDED_MODELS: list[str] = [
     "deepseek/deepseek-chat-v3.1",
@@ -227,6 +237,7 @@ def create_app(config_overrides: dict[str, Any] | None = None) -> Flask:
             default_provider = "local"
         return render_template(
             "index.html",
+            ui_build_marker=UI_BUILD_MARKER,
             report_types=report_types,
             report_type_options=_report_type_options(report_types),
             recent_uploads=_recent_uploaded_sources(Path(app.config["UPLOAD_FOLDER"])),
@@ -566,8 +577,10 @@ def create_app(config_overrides: dict[str, Any] | None = None) -> Flask:
         confirm_cost = request.form.get("confirm_cost", "0") == "1" or request.form.get("confirm_openai", "0") == "1"
         expected_cost_token = request.form.get("expected_cost_token", "").strip()
         sheet_name = request.form.get("sheet_name", "").strip()
-        uploaded_file = request.files.get("csv_upload")
+        uploaded_files = [f for f in request.files.getlist("csv_upload") if f and f.filename]
         existing_csv_path = request.form.get("existing_csv_path", "").strip()
+        source_labels_text = request.form.get("source_labels", "").strip()
+        source_labels = _parse_source_labels_text(source_labels_text)
         output_token_budget = int(request.form.get("output_token_budget", "1200").strip() or "1200")
         row_limit_raw = request.form.get("row_limit", "").strip()
         row_limit = int(row_limit_raw) if row_limit_raw else None
@@ -618,11 +631,20 @@ def create_app(config_overrides: dict[str, Any] | None = None) -> Flask:
                         "message": "Report generation request submitted.",
                     },
                 )
-            csv_path = _resolve_csv_path(
-                uploaded_file,
+            csv_paths = _resolve_csv_paths(
+                uploaded_files,
                 Path(app.config["UPLOAD_FOLDER"]),
                 existing_csv_path=existing_csv_path,
             )
+            csv_path, source_files_display, was_combined_source = _prepare_pipeline_source(
+                csv_paths=csv_paths,
+                report_type_id=report_type_id,
+                row_limit=row_limit,
+                sheet_name=sheet_name or None,
+                upload_dir=Path(app.config["UPLOAD_FOLDER"]),
+                source_labels=source_labels,
+            )
+            pipeline_row_limit = None if was_combined_source else row_limit
             if Path(csv_path).suffix.lower() in {".xlsx", ".xls"} and not sheet_name:
                 sheets = list_excel_sheets(csv_path)
                 if len(sheets) > 1:
@@ -658,7 +680,7 @@ def create_app(config_overrides: dict[str, Any] | None = None) -> Flask:
                 csv_path=csv_path,
                 report_type_id=report_type_id,
                 user_prefs=prefs,
-                row_limit=row_limit,
+                row_limit=pipeline_row_limit,
                 sheet_name=sheet_name or None,
             )
 
@@ -699,7 +721,7 @@ def create_app(config_overrides: dict[str, Any] | None = None) -> Flask:
                         estimate=estimate,
                         report_type_id=report_type_id,
                         report_type_label=_friendly_report_type_label(report_type_id),
-                        csv_source_label=Path(csv_path).name + (f" (sheet: {sheet_name})" if sheet_name else ""),
+                        csv_source_label=_format_source_label(source_files_display, sheet_name=sheet_name),
                         rows_used=csv_profile.get("row_count", 0),
                         provider=provider_name,
                         model=model,
@@ -798,9 +820,14 @@ def create_app(config_overrides: dict[str, Any] | None = None) -> Flask:
             generation_context = {
                 "backend": provider_name,
                 "model": model if provider_name != "local" else "local-metrics",
-                "source_csv": Path(csv_path).name,
+                "source_csv": " | ".join(source_files_display),
+                "source_csv_list": source_files_display,
+                "source_labels": source_labels,
                 "source_sheet": sheet_name,
                 "source_rows_used": csv_profile.get("row_count"),
+                "tone": str(effective_prefs.get("tone", "")).strip(),
+                "audience": str(effective_prefs.get("audience", "")).strip(),
+                "focus": str(effective_prefs.get("focus", "")).strip(),
                 "generation_cost_usd_est": generation_cost_usd_est,
                 "generation_input_tokens_est": generation_input_tokens_est,
                 "generation_output_tokens_est": generation_output_tokens_est,
@@ -811,7 +838,7 @@ def create_app(config_overrides: dict[str, Any] | None = None) -> Flask:
                 user_prefs=effective_prefs,
                 output_dir=output_dir,
                 provider=provider,
-                row_limit=row_limit,
+                row_limit=pipeline_row_limit,
                 sheet_name=sheet_name or None,
                 generation_context=generation_context,
             )
@@ -872,8 +899,17 @@ def create_app(config_overrides: dict[str, Any] | None = None) -> Flask:
     def benchmark() -> str:
         root = Path(app.config["OUTPUT_FOLDER"])
         items = _collect_report_history(root)
-        report_type_ids = sorted({str(i.get("report_type_id", "")).strip() for i in items if str(i.get("report_type_id", "")).strip()})
-        report_type_filter = request.args.get("report_type_id", "").strip()
+        report_type_ids = {
+            str(i.get("report_type_id", "")).strip() for i in items if str(i.get("report_type_id", "")).strip()
+        }
+        report_type_options = [
+            {"value": rid, "label": _friendly_report_type_label(rid)}
+            for rid in sorted({_canonical_report_type_id(v) for v in report_type_ids})
+        ]
+        report_type_filter = _resolve_report_type_filter_value(
+            request.args.get("report_type_id", "").strip(),
+            report_type_ids,
+        )
         selected_paths = [p.strip() for p in request.args.getlist("json_path") if p.strip()]
         if len(selected_paths) > 4:
             flash("Benchmark view supports up to 4 reports at once. Showing first 4.", "warning")
@@ -881,7 +917,11 @@ def create_app(config_overrides: dict[str, Any] | None = None) -> Flask:
 
         filtered_items = items
         if report_type_filter:
-            filtered_items = [i for i in items if str(i.get("report_type_id", "")) == report_type_filter]
+            filtered_items = [
+                i
+                for i in items
+                if _canonical_report_type_id(str(i.get("report_type_id", "")).strip()) == report_type_filter
+            ]
 
         by_path = {str(i.get("json_path", "")): i for i in filtered_items}
         selected_reports: list[dict[str, Any]] = []
@@ -916,6 +956,7 @@ def create_app(config_overrides: dict[str, Any] | None = None) -> Flask:
         similarity_rows: list[dict[str, Any]] = []
         comparison_brief: dict[str, Any] = {}
         baseline_assessment: dict[str, Any] = {}
+        ptp_benchmark: dict[str, Any] = {}
         report_identity_by_name: dict[str, dict[str, str]] = {}
         if selected_reports:
             for report in selected_reports:
@@ -1119,11 +1160,17 @@ def create_app(config_overrides: dict[str, Any] | None = None) -> Flask:
                     str(r.get("report_type_label", "") or _friendly_report_type_label(str(r.get("report_type_id", "") or ""))).strip()
                     for r in selected_reports
                 ]
+                tones = [str((r.get("metadata", {}) or {}).get("tone", "")).strip().lower() for r in selected_reports]
+                audiences = [str((r.get("metadata", {}) or {}).get("audience", "")).strip().lower() for r in selected_reports]
+                focuses = [str((r.get("metadata", {}) or {}).get("focus", "")).strip().lower() for r in selected_reports]
                 row_limits = [_safe_float(r.get("source_rows_used_raw")) for r in selected_reports]
                 model_ratios = [_model_cost_ratio_vs_baseline(str(r.get("model", "") or "")) for r in selected_reports]
 
                 same_source_file = len({v for v in source_files if v}) == 1 and bool(source_files and source_files[0])
                 same_report_type = len({v for v in report_types if v}) == 1 and bool(report_types and report_types[0])
+                same_tone = len({v for v in tones if v}) == 1 and bool(tones and tones[0])
+                same_audience = len({v for v in audiences if v}) == 1 and bool(audiences and audiences[0])
+                same_focus = len({v for v in focuses if v}) == 1 and bool(focuses and focuses[0])
                 same_input_rows = len(set(int(v) for v in row_limits if v > 0)) == 1 and any(v > 0 for v in row_limits)
 
                 known_ratios = [r for r in model_ratios if isinstance(r, (int, float))]
@@ -1145,19 +1192,25 @@ def create_app(config_overrides: dict[str, Any] | None = None) -> Flask:
 
                 c1_status, c1_score = _baseline_check_status(same_source_file, False)
                 c2_status, c2_score = _baseline_check_status(same_report_type, False)
-                c3_status, c3_score = _baseline_check_status(same_model_strength, almost_model_strength, weak_model_strength)
-                c4_status, c4_score = _baseline_check_status(same_input_rows, almost_input_rows)
+                c3_status, c3_score = _baseline_check_status(same_tone, False)
+                c4_status, c4_score = _baseline_check_status(same_audience, False)
+                c5_status, c5_score = _baseline_check_status(same_focus, False)
+                c6_status, c6_score = _baseline_check_status(same_model_strength, almost_model_strength, weak_model_strength)
+                c7_status, c7_score = _baseline_check_status(same_input_rows, almost_input_rows)
 
                 checks = [
                     {"key": "same_source_file", "label": "Same source data file", "status": c1_status, "score": c1_score},
                     {"key": "same_report_type", "label": "Same report type", "status": c2_status, "score": c2_score},
-                    {"key": "same_model_strength", "label": "Same model strength (1.x ratio)", "status": c3_status, "score": c3_score},
-                    {"key": "same_input_rows", "label": "Same input rows used", "status": c4_status, "score": c4_score},
+                    {"key": "same_tone", "label": "Same tone", "status": c3_status, "score": c3_score},
+                    {"key": "same_audience", "label": "Same audience", "status": c4_status, "score": c4_score},
+                    {"key": "same_focus", "label": "Same focus", "status": c5_status, "score": c5_score},
+                    {"key": "same_model_strength", "label": "Same model strength (1.x ratio)", "status": c6_status, "score": c6_score},
+                    {"key": "same_input_rows", "label": "Same input rows used", "status": c7_status, "score": c7_score},
                 ]
-                total_score = c1_score + c2_score + c3_score + c4_score
-                if total_score >= 11:
+                total_score = c1_score + c2_score + c3_score + c4_score + c5_score + c6_score + c7_score
+                if total_score >= 18:
                     baseline_level = "strong"
-                elif total_score >= 7:
+                elif total_score >= 12:
                     baseline_level = "moderate"
                 else:
                     baseline_level = "weak"
@@ -1168,12 +1221,18 @@ def create_app(config_overrides: dict[str, Any] | None = None) -> Flask:
                     "checks": checks,
                     "baseline_level": baseline_level,
                     "score": total_score,
-                    "score_max": 12,
+                    "score_max": 21,
                     "model_ratios": [round(float(r), 2) if isinstance(r, (int, float)) else None for r in model_ratios],
                     "sources": source_files,
                     "sources_display": _compact_values_display(source_files),
                     "report_types": report_types,
                     "report_types_display": _compact_values_display(report_types),
+                    "tones": tones,
+                    "tones_display": _compact_values_display(tones),
+                    "audiences": audiences,
+                    "audiences_display": _compact_values_display(audiences),
+                    "focuses": focuses,
+                    "focuses_display": _compact_values_display(focuses),
                     "rows": [int(v) if v > 0 else None for v in row_limits],
                     "rows_display": _compact_values_display([int(v) if v > 0 else None for v in row_limits], none_text="-"),
                 }
@@ -1183,13 +1242,14 @@ def create_app(config_overrides: dict[str, Any] | None = None) -> Flask:
                     "selected_count": selected_count,
                     "message": "Baseline criteria is evaluated only when exactly 2 or 3 reports are selected.",
                 }
+            ptp_benchmark = _build_wireshark_ptp_benchmark(selected_reports)
 
         return render_template(
             "benchmark.html",
             output_folder=str(root),
             reports=filtered_items,
             selected_reports=selected_reports,
-            report_type_ids=report_type_ids,
+            report_type_options=report_type_options,
             report_type_filter=report_type_filter,
             selected_paths=selected_paths,
             analytics=analytics,
@@ -1197,6 +1257,7 @@ def create_app(config_overrides: dict[str, Any] | None = None) -> Flask:
             similarity_rows=similarity_rows,
             comparison_brief=comparison_brief,
             baseline_assessment=baseline_assessment,
+            ptp_benchmark=ptp_benchmark,
             report_identity_by_name=report_identity_by_name,
         )
 
@@ -1800,15 +1861,26 @@ def _friendly_report_name(raw_name: str, report_type_id: str) -> str:
 
 
 def _friendly_report_type_label(report_type_id: str) -> str:
-    label_map = {
-        "twamp_session_health": "twamp",
-        "ms_biomarker_registry_health": "biomarkers",
-        "network_queue_congestion": "network",
-        "pm_export_health": "performance",
-        "jira_issue_portfolio": "jira",
-        "wireshark_capture_health": "wireshark",
-    }
-    return label_map.get(report_type_id, report_type_id)
+    return REPORT_TYPE_LABEL_MAP.get(report_type_id, report_type_id)
+
+
+def _canonical_report_type_id(report_type_id: str) -> str:
+    value = str(report_type_id or "").strip()
+    if not value:
+        return ""
+    if value in REPORT_TYPE_LABEL_MAP:
+        return value
+    alias_to_canonical = {alias: canonical for canonical, alias in REPORT_TYPE_LABEL_MAP.items()}
+    return alias_to_canonical.get(value, value)
+
+
+def _resolve_report_type_filter_value(raw_value: str, available_ids: set[str]) -> str:
+    value = str(raw_value or "").strip()
+    if not value:
+        return ""
+    if value in available_ids:
+        return value
+    return _canonical_report_type_id(value)
 
 
 def _friendly_model_label(model: str, provider: str = "") -> str:
@@ -1893,9 +1965,7 @@ def _generation_status_snapshot(output_root: Path) -> dict[str, Any]:
         }
 
     active_statuses = {"requested", "cost_estimated", "started"}
-    terminal_statuses = {"finished", "failed", "timeout", "cancelled"}
-    active_max_age_seconds = 15 * 60
-    now_epoch = datetime.now(timezone.utc).timestamp()
+    terminal_statuses = {"finished", "failed", "timeout", "cancelled", "canceled"}
     latest_by_attempt: dict[str, dict[str, Any]] = {}
     completed_attempts: dict[str, dict[str, Any]] = {}
 
@@ -1944,7 +2014,6 @@ def _generation_status_snapshot(output_root: Path) -> dict[str, Any]:
             attempt_id
             for attempt_id, info in latest_by_attempt.items()
             if str(info.get("status", "")) in active_statuses
-            and float(info.get("ts_epoch", 0.0) or 0.0) > (now_epoch - active_max_age_seconds)
         ]
     )
     return {
@@ -1968,25 +2037,128 @@ def _event_rows_signature(rows: list[dict[str, Any]]) -> str:
     )
 
 
-def _resolve_csv_path(
-    uploaded_file: Any,
+def _resolve_csv_paths(
+    uploaded_files: list[Any],
     upload_dir: Path,
     existing_csv_path: str = "",
-) -> str:
+) -> list[str]:
+    # Always prefer explicit uploaded files over a potentially stale hidden recent-path value.
+    if uploaded_files:
+        paths: list[str] = []
+        for uploaded_file in uploaded_files:
+            filename = secure_filename(uploaded_file.filename)
+            if not filename.lower().endswith((".csv", ".xlsx", ".xls", ".pcap", ".pcapng")):
+                raise ValueError("Supported uploads: .csv, .xlsx, .xls, .pcap, .pcapng")
+            stem = Path(filename).stem
+            suffix = Path(filename).suffix
+            stored_name = f"{stem}_{uuid4().hex[:8]}{suffix}"
+            destination = upload_dir / stored_name
+            uploaded_file.save(destination)
+            paths.append(str(destination))
+        return paths
+
     if existing_csv_path:
         existing = _absolute_path(existing_csv_path)
         if not existing.exists():
             raise ValueError(f"Existing CSV path not found: {existing_csv_path}")
-        return str(existing)
+        return [str(existing)]
 
-    if uploaded_file is None or not uploaded_file.filename:
+    if not uploaded_files:
         raise ValueError("Upload a file or choose one from recent uploads.")
-    filename = secure_filename(uploaded_file.filename)
-    if not filename.lower().endswith((".csv", ".xlsx", ".xls", ".pcap", ".pcapng")):
-        raise ValueError("Supported uploads: .csv, .xlsx, .xls, .pcap, .pcapng")
-    destination = upload_dir / filename
-    uploaded_file.save(destination)
-    return str(destination)
+    return []
+
+
+def _prepare_pipeline_source(
+    csv_paths: list[str],
+    report_type_id: str,
+    row_limit: int | None,
+    sheet_name: str | None,
+    upload_dir: Path,
+    source_labels: dict[str, str] | None = None,
+) -> tuple[str, list[str], bool]:
+    if not csv_paths:
+        raise ValueError("No input sources resolved.")
+    source_names = [Path(p).name for p in csv_paths]
+    if len(csv_paths) == 1:
+        single_name = Path(csv_paths[0]).name
+        # Keep row-limit behavior stable between estimate->confirm for already combined sources.
+        is_precombined = bool(re.fullmatch(r"combined_[0-9a-f]{10}\.csv", single_name))
+        if report_type_id == "wireshark_capture_health" and source_labels and len(source_labels) > 1:
+            raise ValueError(
+                "Multiple source labels were provided, but only one source file was selected. "
+                "Select all intended files together before generating."
+            )
+        return csv_paths[0], source_names, is_precombined
+
+    suffixes = {Path(p).suffix.lower() for p in csv_paths}
+    if len(suffixes) > 1:
+        raise ValueError("Multiple files must share the same type (.csv/.pcap/.pcapng).")
+    if any(s in {".xlsx", ".xls"} for s in suffixes):
+        raise ValueError("Multiple Excel files are not supported yet. Use a single Excel source.")
+    if report_type_id != "wireshark_capture_health":
+        raise ValueError("Multiple files are currently supported for wireshark report type only.")
+
+    frames: list[pd.DataFrame] = []
+    label_map = source_labels or {}
+    for path in csv_paths:
+        # For multi-source compare flows, row_limit is applied per file so each source is represented.
+        frame = load_csv_with_limit(path, row_limit=row_limit, sheet_name=sheet_name)
+        if frame.empty:
+            continue
+        frame = frame.copy()
+        source_name = Path(path).name
+        frame["source_file"] = source_name
+        frame["source_label"] = _resolve_source_label(source_name, label_map)
+        frames.append(frame)
+    if not frames:
+        raise ValueError("Resolved sources are empty after parsing.")
+    combined = pd.concat(frames, ignore_index=True)
+    destination = upload_dir / f"combined_{uuid4().hex[:10]}.csv"
+    combined.to_csv(destination, index=False)
+    return str(destination), source_names, True
+
+
+def _format_source_label(source_files: list[str], sheet_name: str = "") -> str:
+    if not source_files:
+        return "-"
+    if len(source_files) == 1:
+        return source_files[0] + (f" (sheet: {sheet_name})" if sheet_name else "")
+    shown = ", ".join(source_files[:3])
+    suffix = f" (+{len(source_files)-3} more)" if len(source_files) > 3 else ""
+    return f"{len(source_files)} files: {shown}{suffix}"
+
+
+def _parse_source_labels_text(text: str) -> dict[str, str]:
+    if not text.strip():
+        return {}
+    labels: dict[str, str] = {}
+    for line in text.splitlines():
+        row = line.strip()
+        if not row or "=" not in row:
+            continue
+        key, value = row.split("=", 1)
+        k = key.strip()
+        v = value.strip()
+        if not k or not v:
+            continue
+        labels[k] = v
+    return labels
+
+
+def _resolve_source_label(source_name: str, labels: dict[str, str]) -> str:
+    stem = Path(source_name).stem
+    stem_no_upload_suffix = re.sub(r"_[0-9a-fA-F]{8}$", "", stem)
+    candidates = [
+        source_name,
+        stem,
+        f"{stem_no_upload_suffix}{Path(source_name).suffix}",
+        stem_no_upload_suffix,
+    ]
+    for key in candidates:
+        value = labels.get(key, "").strip()
+        if value:
+            return value
+    return source_name
 
 
 def _load_json(path: Path) -> dict[str, Any]:
@@ -2329,6 +2501,161 @@ def _benchmark_ops_signal_score(text: str) -> int:
 def _benchmark_stats_signal_score(text: str) -> int:
     terms = {"correlation", "spearman", "pearson", "distribution", "confidence", "paired", "evidence", "defensible"}
     return _benchmark_count_hits(text, terms)
+
+
+def _extract_metrics_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    tables = payload.get("tables", [])
+    if not isinstance(tables, list):
+        return {}
+    for table in tables:
+        if not isinstance(table, dict):
+            continue
+        if table.get("name") != "metrics_payload":
+            continue
+        rows = table.get("rows", [])
+        if isinstance(rows, list) and rows and isinstance(rows[0], dict):
+            return rows[0]
+    return {}
+
+
+def _build_wireshark_ptp_benchmark(selected_reports: list[dict[str, Any]]) -> dict[str, Any]:
+    wireshark_rows: list[dict[str, Any]] = []
+    for report in selected_reports:
+        if str(report.get("report_type_id", "")).strip() != "wireshark_capture_health":
+            continue
+        try:
+            payload = _load_json(Path(str(report.get("json_path", ""))))
+        except Exception:  # noqa: BLE001
+            continue
+        metrics_payload = _extract_metrics_payload(payload)
+        ptp_summary = metrics_payload.get("ptp_summary", {}) if isinstance(metrics_payload, dict) else {}
+        port_health = metrics_payload.get("ptp_port_health", []) if isinstance(metrics_payload, dict) else []
+        top_port = port_health[0] if isinstance(port_health, list) and port_health else {}
+
+        sync_packets = int(_safe_float(ptp_summary.get("sync_packets")))
+        announce_packets = int(_safe_float(ptp_summary.get("announce_packets")))
+        follow_up_packets = int(_safe_float(ptp_summary.get("follow_up_packets")))
+        two_step_pct = _safe_float(ptp_summary.get("two_step_pct")) if ptp_summary.get("two_step_pct") is not None else None
+        correction_median = _safe_float(ptp_summary.get("correction_ns_median")) if ptp_summary.get("correction_ns_median") is not None else None
+        correction_p95 = _safe_float(ptp_summary.get("correction_ns_p95")) if ptp_summary.get("correction_ns_p95") is not None else None
+        ts_delta = _safe_float(ptp_summary.get("timestamp_delta_ns_median")) if ptp_summary.get("timestamp_delta_ns_median") is not None else None
+        sync_interval_median = _safe_float(top_port.get("sync_interval_ms_median")) if top_port.get("sync_interval_ms_median") is not None else None
+        sync_interval_p95 = _safe_float(top_port.get("sync_interval_ms_p95")) if top_port.get("sync_interval_ms_p95") is not None else None
+
+        score = 0
+        reasons: list[str] = []
+        if sync_packets > 0 and announce_packets > 0:
+            score += 1
+            reasons.append("Sync/Announce traffic present.")
+        else:
+            reasons.append("Missing Sync or Announce traffic.")
+
+        if correction_median is not None and correction_p95 is not None and correction_median > 0:
+            corr_ratio = correction_p95 / correction_median
+            if corr_ratio <= 1.05:
+                score += 3
+                reasons.append(f"Correction-field spread is tight (p95/median={corr_ratio:.3f}).")
+            elif corr_ratio <= 1.20:
+                score += 2
+                reasons.append(f"Correction-field spread is moderate (p95/median={corr_ratio:.3f}).")
+            else:
+                reasons.append(f"Correction-field spread is wide (p95/median={corr_ratio:.3f}).")
+        else:
+            reasons.append("Correction-field metrics missing.")
+
+        if ts_delta is not None:
+            abs_ts = abs(ts_delta)
+            if abs_ts <= 5_000_000:
+                score += 3
+                reasons.append("Timestamp delta is very close to zero.")
+            elif abs_ts <= 500_000_000:
+                score += 2
+                reasons.append("Timestamp delta is moderate.")
+            elif abs_ts <= 5_000_000_000:
+                score += 1
+                reasons.append("Timestamp delta is elevated.")
+            else:
+                reasons.append("Timestamp delta is very large.")
+        else:
+            reasons.append("Timestamp delta not available.")
+
+        if sync_interval_median is not None and sync_interval_p95 is not None and sync_interval_median > 0:
+            interval_ratio = sync_interval_p95 / sync_interval_median
+            if interval_ratio <= 1.20:
+                score += 2
+                reasons.append(f"Sync interval is stable (p95/median={interval_ratio:.3f}).")
+            elif interval_ratio <= 1.50:
+                score += 1
+                reasons.append(f"Sync interval has some jitter (p95/median={interval_ratio:.3f}).")
+            else:
+                reasons.append(f"Sync interval jitter is high (p95/median={interval_ratio:.3f}).")
+        else:
+            reasons.append("Sync interval stats not available.")
+
+        if score >= 7:
+            likelihood = "high"
+        elif score >= 4:
+            likelihood = "medium"
+        else:
+            likelihood = "low"
+
+        wireshark_rows.append(
+            {
+                "name": str(report.get("name", "-")),
+                "provider": str(report.get("backend", "-")),
+                "model": str(report.get("model", "-")),
+                "sync_packets": sync_packets,
+                "follow_up_packets": follow_up_packets,
+                "announce_packets": announce_packets,
+                "two_step_pct": two_step_pct,
+                "correction_ns_median": correction_median,
+                "correction_ns_p95": correction_p95,
+                "timestamp_delta_ns_median": ts_delta,
+                "sync_interval_ms_median": sync_interval_median,
+                "sync_interval_ms_p95": sync_interval_p95,
+                "lock_score": score,
+                "lock_likelihood": likelihood,
+                "reasons": reasons,
+            }
+        )
+
+    if len(wireshark_rows) < 2:
+        return {"supported": False}
+
+    best_lock = max(wireshark_rows, key=lambda r: int(r.get("lock_score", 0)))
+    min_corr_p95 = min((r for r in wireshark_rows if r.get("correction_ns_p95") is not None), key=lambda r: float(r["correction_ns_p95"]), default=None)
+    min_abs_delta = min(
+        (r for r in wireshark_rows if r.get("timestamp_delta_ns_median") is not None),
+        key=lambda r: abs(float(r["timestamp_delta_ns_median"])),
+        default=None,
+    )
+    pair_delta: dict[str, Any] = {}
+    if len(wireshark_rows) == 2:
+        a, b = wireshark_rows[0], wireshark_rows[1]
+        pair_delta = {
+            "left": a["name"],
+            "right": b["name"],
+            "lock_score_delta": int(a["lock_score"]) - int(b["lock_score"]),
+            "correction_p95_delta": (
+                (float(a["correction_ns_p95"]) - float(b["correction_ns_p95"]))
+                if a.get("correction_ns_p95") is not None and b.get("correction_ns_p95") is not None
+                else None
+            ),
+            "timestamp_delta_abs_diff": (
+                (abs(float(a["timestamp_delta_ns_median"])) - abs(float(b["timestamp_delta_ns_median"])))
+                if a.get("timestamp_delta_ns_median") is not None and b.get("timestamp_delta_ns_median") is not None
+                else None
+            ),
+        }
+
+    return {
+        "supported": True,
+        "rows": wireshark_rows,
+        "best_lock": best_lock,
+        "best_correction": min_corr_p95,
+        "best_timestamp_alignment": min_abs_delta,
+        "pair_delta": pair_delta,
+    }
 
 
 def _baseline_check_status(full_match: bool, almost_match: bool = False, weak_match: bool = False) -> tuple[str, int]:

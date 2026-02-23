@@ -17,6 +17,7 @@
   <header class="topbar">
     <a href="{{ url_for('index') }}" class="brand">RV Reporter</a>
     <div id="gen_status_badge" class="gen-status-badge hidden" aria-live="polite"></div>
+    <button id="gen_status_reset_btn" type="button" class="gen-status-reset-btn" title="Reset stuck pending generations">Reset Pending</button>
     <nav class="nav">
       <a href="{{ url_for('index') }}">Generate</a>
       <a href="{{ url_for('new_report_type') }}">New Type</a>
@@ -43,6 +44,7 @@
     (function () {
       const KEY = "rv_report_generation_state.v1";
       const badge = document.getElementById("gen_status_badge");
+      const resetBtn = document.getElementById("gen_status_reset_btn");
       if (!badge) return;
 
       const readState = () => {
@@ -146,6 +148,28 @@
         activeCount: () => Object.keys(normalize(readState()).jobs || {}).length,
         clear: clearState,
       };
+
+      if (resetBtn) {
+        resetBtn.addEventListener("click", async () => {
+          const ok = window.confirm("Reset all in-progress generations?");
+          if (!ok) return;
+          resetBtn.disabled = true;
+          try {
+            await fetch("{{ url_for('reset_in_progress_events') }}", {
+              method: "POST",
+              headers: { "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8" },
+              body: "",
+              cache: "no-store",
+            });
+          } catch (e) {
+            // Ignore network errors and still clear local state.
+          } finally {
+            clearState();
+            reconcileWithServer();
+            resetBtn.disabled = false;
+          }
+        });
+      }
 
       const reconcileWithServer = async () => {
         try {

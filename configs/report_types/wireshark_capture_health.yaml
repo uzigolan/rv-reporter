@@ -27,6 +27,8 @@ prompt_instructions: |
   - packet/byte time trend and potential burst windows
   - TCP reset/SYN signal and possible stability implications
   - DNS/HTTP/TLS visibility observations and blind spots
+  - when PTPv2 (IEEE-1588) is present: Sync/Follow_Up/Announce mix, source-port behavior,
+    frame-time vs origin timestamp deltas, and correction-field stability (G.8275.1 readiness)
   Distinguish observed facts from inferred risk.
 output_schema:
   type: object

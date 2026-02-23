@@ -162,6 +162,12 @@ def _stamp_generation_metadata(report_json: dict[str, Any], generation_context: 
         metadata["source_sheet"] = str(generation_context["source_sheet"])
     if generation_context.get("source_rows_used") is not None:
         metadata["source_rows_used"] = int(generation_context["source_rows_used"])
+    if generation_context.get("tone"):
+        metadata["tone"] = str(generation_context["tone"])
+    if generation_context.get("audience"):
+        metadata["audience"] = str(generation_context["audience"])
+    if generation_context.get("focus"):
+        metadata["focus"] = str(generation_context["focus"])
     ignored_columns = generation_context.get("source_ignored_columns")
     if isinstance(ignored_columns, list):
         metadata["source_ignored_columns"] = [str(c) for c in ignored_columns]

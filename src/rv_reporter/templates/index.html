@@ -4,6 +4,7 @@
 <section class="panel hero">
   <h1>Tabular File to Structured Report</h1>
   <p>Generate schema-validated JSON and polished HTML from your dataset.</p>
+  <p class="small muted">Build: <code id="ui_build_marker">{{ ui_build_marker }}</code></p>
 </section>
 
 <section class="panel">
@@ -48,7 +49,7 @@
             <option value="recent" selected>Recent file</option>
           </select>
           <div id="new_upload_row" style="flex:1 1 auto; min-width: 0;">
-            <input type="file" name="csv_upload" id="csv_upload" accept=".csv,.xlsx,.xls,.pcap,.pcapng" style="width:100%; max-width:24rem;" />
+            <input type="file" name="csv_upload" id="csv_upload" accept=".csv,.xlsx,.xls,.pcap,.pcapng" multiple style="width:100%; max-width:24rem;" />
           </div>
           <div id="recent_upload_row" class="hidden" style="flex:1 1 auto; min-width: 0;">
             <select id="recent_upload_select" style="width:100%; max-width:24rem; min-width:0;">
@@ -59,7 +60,9 @@
           </select>
           </div>
         </div>
-        <span class="field-help">Upload CSV, Excel, or Wireshark capture (.pcap/.pcapng). For Excel files, sheet names are discovered automatically after selection.</span>
+        <span class="field-help">Upload CSV, Excel, or Wireshark capture (.pcap/.pcapng). You can select multiple files for wireshark report type; files are merged before analysis.</span>
+        <div id="selected_sources_preview" class="small muted" style="margin-top:.35rem; white-space: pre-line;"></div>
+        <div id="selected_sources_rows" class="small muted" style="margin-top:.2rem;"></div>
       </label>
 
       <label id="sheet_wrap">
@@ -136,6 +139,20 @@
       </label>
     </div>
 
+    <div class="form-row">
+      <label style="width:100%;">
+        <span>Source Labels (optional, Wireshark multi-file)</span>
+        <textarea
+          name="source_labels"
+          rows="3"
+          placeholder="Master_ETX-205A_port-3_nok.pcapng=Port 3 (NOK)&#10;Master_ETX-205A_port-4_not-sure-if-ok.pcapng=Port 4 (OK)"
+          style="width:100%; max-width:100%;"
+        ></textarea>
+        <span class="field-help">Optional mapping per source file. Format: <code>filename=label</code> (or <code>stem=label</code>) one per line. These labels appear in PTP source comparison.</span>
+        <div id="source_labels_preview" class="small muted" style="margin-top:.4rem; white-space: pre-line;"></div>
+      </label>
+    </div>
+
     <button type="submit" class="btn-primary generate-btn-row" id="generate_submit_btn">Generate Report</button>
     <p id="generate_processing_msg" class="processing-msg hidden">
       <span class="spinner" aria-hidden="true"></span>
@@ -164,16 +181,23 @@
   const recentUploadSelect = document.getElementById("recent_upload_select");
   const sheetWrap = document.getElementById("sheet_wrap");
   const sheetInput = document.getElementById("sheet_name");
+  const sourceLabelsInput = document.querySelector("textarea[name='source_labels']");
+  const sourceLabelsPreview = document.getElementById("source_labels_preview");
+  const selectedSourcesPreview = document.getElementById("selected_sources_preview");
+  const selectedSourcesRows = document.getElementById("selected_sources_rows");
   const existingCsvPathInput = document.getElementById("existing_csv_path");
   const attemptIdInput = document.getElementById("attempt_id");
   const STORAGE_KEY = "rv_reporter.generate_form_state.v1";
   const PROVIDER_MODEL_OPTIONS = {{ provider_model_options|tojson }};
   const PROVIDER_IDS = {{ provider_ids|tojson }};
   let currentSourceFileType = "unknown";
+  let currentSourceRowCount = null;
+  const sourceMetaCache = new Map();
 
   const saveState = () => {
     const state = {
       provider: provider.value,
+      source_labels: sourceLabelsInput ? sourceLabelsInput.value : "",
     };
     try { sessionStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch (e) {}
   };
@@ -185,6 +209,9 @@
       const state = JSON.parse(raw);
       if (PROVIDER_IDS.includes(state.provider)) {
         provider.value = state.provider;
+      }
+      if (sourceLabelsInput && typeof state.source_labels === "string") {
+        sourceLabelsInput.value = state.source_labels;
       }
     } catch (e) {}
   };
@@ -277,6 +304,89 @@
       sheetInput.value = "";
     }
   };
+  const parseSourceLabelMap = (text) => {
+    const map = {};
+    const raw = String(text || "");
+    for (const line of raw.split(/\r?\n/)) {
+      const row = line.trim();
+      if (!row || !row.includes("=")) continue;
+      const idx = row.indexOf("=");
+      const key = row.slice(0, idx).trim();
+      const val = row.slice(idx + 1).trim();
+      if (!key || !val) continue;
+      map[key] = val;
+    }
+    return map;
+  };
+  const stripUploadSuffix = (name) => {
+    const dot = name.lastIndexOf(".");
+    if (dot <= 0) return name.replace(/_[0-9a-fA-F]{8}$/, "");
+    const stem = name.slice(0, dot).replace(/_[0-9a-fA-F]{8}$/, "");
+    return `${stem}${name.slice(dot)}`;
+  };
+  const stemOf = (name) => {
+    const dot = name.lastIndexOf(".");
+    return dot > 0 ? name.slice(0, dot) : name;
+  };
+  const resolveSourceLabel = (sourceName, map) => {
+    const stem = stemOf(sourceName);
+    const unsuffixed = stripUploadSuffix(sourceName);
+    const unsuffixedStem = stemOf(unsuffixed);
+    const keys = [sourceName, stem, unsuffixed, unsuffixedStem];
+    for (const k of keys) {
+      if (map[k]) return map[k];
+    }
+    return "";
+  };
+  const activeSelectedSourceNames = () => {
+    if (uploadInput && uploadInput.files && uploadInput.files.length > 0) {
+      return Array.from(uploadInput.files).map((f) => String(f.name || "")).filter(Boolean);
+    }
+    if (existingCsvPathInput && existingCsvPathInput.value) {
+      const path = String(existingCsvPathInput.value);
+      const token = path.split(/[\\/]/).pop();
+      return token ? [token] : [];
+    }
+    return [];
+  };
+  const updateSelectedSourcesPreview = () => {
+    if (!selectedSourcesPreview) return;
+    const selected = activeSelectedSourceNames();
+    if (selected.length === 0) {
+      selectedSourcesPreview.textContent = "Selected sources: none";
+      if (selectedSourcesRows) selectedSourcesRows.textContent = "";
+      return;
+    }
+    selectedSourcesPreview.textContent = `Selected sources (${selected.length}):\n• ${selected.join("\n• ")}`;
+    if (selectedSourcesRows) {
+      if (selected.length > 1) {
+        selectedSourcesRows.textContent = "Rows in source: per-file counts are calculated after upload/merge.";
+      } else if (currentSourceRowCount !== null && currentSourceRowCount !== undefined) {
+        selectedSourcesRows.textContent = `Rows in source: ${currentSourceRowCount.toLocaleString()}`;
+      } else {
+        selectedSourcesRows.textContent = "Rows in source: -";
+      }
+    }
+  };
+  const updateSourceLabelsPreview = () => {
+    if (!sourceLabelsPreview || !sourceLabelsInput) return;
+    const map = parseSourceLabelMap(sourceLabelsInput.value);
+    const selected = activeSelectedSourceNames();
+    updateSelectedSourcesPreview();
+    if (selected.length === 0 && Object.keys(map).length === 0) {
+      sourceLabelsPreview.textContent = "";
+      return;
+    }
+    if (selected.length === 0) {
+      sourceLabelsPreview.textContent = `Loaded ${Object.keys(map).length} label mapping(s). Select source files to preview matches.`;
+      return;
+    }
+    const lines = selected.map((name) => {
+      const label = resolveSourceLabel(name, map);
+      return label ? `• ${name} -> ${label}` : `• ${name} -> (no label mapping)`;
+    });
+    sourceLabelsPreview.textContent = `Source label preview:\n${lines.join("\n")}`;
+  };
   const populateSheetOptions = (sheets) => {
     const current = sheetInput.value;
     const list = sheets || [];
@@ -301,16 +411,39 @@
   const fetchSourceMetadata = async (pathValue, sheetValue) => {
     if (!pathValue) {
       currentSourceFileType = "unknown";
+      currentSourceRowCount = null;
       populateSheetOptions([]);
       syncSheetUi();
+      updateSelectedSourcesPreview();
       return;
     }
     try {
+      const cacheKey = `${pathValue}::${sheetValue || ""}`;
+      if (sourceMetaCache.has(cacheKey)) {
+        const payload = sourceMetaCache.get(cacheKey);
+        currentSourceFileType = String(payload.file_type || "unknown");
+        currentSourceRowCount = (payload.row_count === null || payload.row_count === undefined) ? null : Number(payload.row_count);
+        if (payload.file_type === "excel") {
+          populateSheetOptions(payload.sheets || []);
+          if (payload.selected_sheet) {
+            sheetInput.value = payload.selected_sheet;
+          } else if ((payload.sheets || []).length <= 1) {
+            sheetInput.value = "";
+          }
+        } else {
+          populateSheetOptions([]);
+        }
+        syncSheetUi();
+        updateSelectedSourcesPreview();
+        return;
+      }
       const url = `{{ url_for('source_metadata') }}?path=${encodeURIComponent(pathValue)}&sheet_name=${encodeURIComponent(sheetValue || "")}`;
       const response = await fetch(url);
       if (!response.ok) return;
       const payload = await response.json();
+      sourceMetaCache.set(cacheKey, payload);
       currentSourceFileType = String(payload.file_type || "unknown");
+      currentSourceRowCount = (payload.row_count === null || payload.row_count === undefined) ? null : Number(payload.row_count);
       if (payload.file_type === "excel") {
         populateSheetOptions(payload.sheets || []);
         if (payload.selected_sheet) {
@@ -322,6 +455,7 @@
         populateSheetOptions([]);
       }
       syncSheetUi();
+      updateSelectedSourcesPreview();
     } catch (e) {}
   };
   reportTypeInput.addEventListener("change", () => {
@@ -347,6 +481,14 @@
     if (uploadInput.files && uploadInput.files.length > 0) {
       existingCsvPathInput.value = "";
       if (recentUploadSelect) recentUploadSelect.value = "";
+      if (uploadInput.files.length > 1) {
+        currentSourceFileType = "unknown";
+        currentSourceRowCount = null;
+        populateSheetOptions([]);
+        syncSheetUi();
+        updateSourceLabelsPreview();
+        return;
+      }
       const selectedFile = uploadInput.files[0];
       const data = new FormData();
       data.append("file", selectedFile);
@@ -359,18 +501,23 @@
           }
           if (payload.file_type === "excel") {
             currentSourceFileType = "excel";
+            currentSourceRowCount = (payload.row_count === null || payload.row_count === undefined) ? null : Number(payload.row_count);
             populateSheetOptions(payload.sheets || []);
             if (payload.selected_sheet) {
               sheetInput.value = payload.selected_sheet;
             }
           } else {
             currentSourceFileType = "csv";
+            currentSourceRowCount = (payload.row_count === null || payload.row_count === undefined) ? null : Number(payload.row_count);
             populateSheetOptions([]);
           }
           syncSheetUi();
+          updateSourceLabelsPreview();
         })
         .catch(() => {});
     }
+    updateSourceLabelsPreview();
+    updateSelectedSourcesPreview();
   });
   if (uploadMode) {
     uploadMode.addEventListener("change", () => {
@@ -392,7 +539,12 @@
       existingCsvPathInput.value = path;
       if (uploadInput) uploadInput.value = "";
       fetchSourceMetadata(path, sheetInput.value);
+      updateSourceLabelsPreview();
+      updateSelectedSourcesPreview();
     });
+  }
+  if (sourceLabelsInput) {
+    sourceLabelsInput.addEventListener("input", updateSourceLabelsPreview);
   }
   window.addEventListener("pageshow", () => {
     restoreState();
@@ -408,6 +560,8 @@
   if (existingCsvPathInput.value) {
     fetchSourceMetadata(existingCsvPathInput.value, sheetInput.value);
   }
+  updateSourceLabelsPreview();
+  updateSelectedSourcesPreview();
 
   const generateForm = document.getElementById("generate_form");
   const generateBtn = document.getElementById("generate_submit_btn");
@@ -486,7 +640,28 @@
     if (event.key === "Escape") hideHelpPopup();
   });
   resetGenerateUi();
-  generateForm.addEventListener("submit", () => {
+  generateForm.addEventListener("submit", (event) => {
+    if (reportTypeInput && reportTypeInput.value === "wireshark_capture_health" && sourceLabelsInput) {
+      const map = parseSourceLabelMap(sourceLabelsInput.value);
+      const selected = activeSelectedSourceNames();
+      if (Object.keys(map).length > 1 && selected.length < 2) {
+        window.alert("You entered multiple source labels, but only one source file is selected.");
+        event.preventDefault();
+        return;
+      }
+      if (selected.length > 1) {
+        const missing = selected.filter((name) => !resolveSourceLabel(name, map));
+        if (missing.length > 0) {
+          const ok = window.confirm(
+            `Some selected sources have no label mapping (${missing.length}/${selected.length}). Continue without labels for those files?`
+          );
+          if (!ok) {
+            event.preventDefault();
+            return;
+          }
+        }
+      }
+    }
     saveState();
     const attemptId = `evt_${Math.random().toString(36).slice(2, 12)}`;
     attemptIdInput.value = attemptId;

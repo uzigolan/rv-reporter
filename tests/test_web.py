@@ -1,8 +1,9 @@
 from pathlib import Path
 import io
 import json
+from urllib.parse import urlencode
 
-from rv_reporter.web import create_app
+from rv_reporter.web import create_app, _parse_source_labels_text, _prepare_pipeline_source, _resolve_source_label
 
 
 def test_index_renders() -> None:
@@ -116,6 +117,249 @@ def test_openai_generate_shows_cost_confirmation(tmp_path: Path) -> None:
     )
     assert response.status_code == 200
     assert b"OpenAI Cost Estimate" in response.data
+
+
+def test_benchmark_report_type_filter_accepts_legacy_alias(tmp_path: Path) -> None:
+    output_root = tmp_path / "outputs"
+    network_dir = output_root / "network_queue_congestion"
+    twamp_dir = output_root / "twamp_session_health"
+    network_dir.mkdir(parents=True, exist_ok=True)
+    twamp_dir.mkdir(parents=True, exist_ok=True)
+
+    network_path = network_dir / "network_queue_congestion.20260222_1200_000001.report.json"
+    twamp_path = twamp_dir / "twamp_session_health.20260222_1200_000002.report.json"
+    base_payload = {
+        "summary": "",
+        "sections": [],
+        "alerts": [],
+        "recommendations": [],
+        "metadata": {},
+    }
+    network_path.write_text(
+        json.dumps({**base_payload, "report_type_id": "network_queue_congestion"}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    twamp_path.write_text(
+        json.dumps({**base_payload, "report_type_id": "twamp_session_health"}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    app = create_app(
+        {
+            "TESTING": True,
+            "UPLOAD_FOLDER": str(tmp_path / "uploads"),
+            "OUTPUT_FOLDER": str(output_root),
+        }
+    )
+    client = app.test_client()
+    response = client.get("/benchmark?report_type_id=network")
+    assert response.status_code == 200
+    assert b"network.20260222_1200_000001" in response.data
+    assert b"twamp.20260222_1200_000002" not in response.data
+
+
+def test_prepare_pipeline_source_combines_multiple_wireshark_csvs(tmp_path: Path) -> None:
+    p1 = tmp_path / "a.csv"
+    p2 = tmp_path / "b.csv"
+    p1.write_text(
+        "frame_time_epoch,frame_len,src_ip,dst_ip,transport,src_port,dst_port,frame_protocols\n"
+        "1.0,64,10.0.0.1,224.0.1.129,PTP,319,319,eth:ip:udp:ptp\n",
+        encoding="utf-8",
+    )
+    p2.write_text(
+        "frame_time_epoch,frame_len,src_ip,dst_ip,transport,src_port,dst_port,frame_protocols\n"
+        "2.0,64,10.0.0.2,224.0.1.129,PTP,319,319,eth:ip:udp:ptp\n",
+        encoding="utf-8",
+    )
+    combined_path, source_names, was_combined = _prepare_pipeline_source(
+        csv_paths=[str(p1), str(p2)],
+        report_type_id="wireshark_capture_health",
+        row_limit=None,
+        sheet_name=None,
+        upload_dir=tmp_path,
+        source_labels={"a.csv": "Port 4", "b.csv": "Port 3"},
+    )
+    assert source_names == ["a.csv", "b.csv"]
+    assert was_combined is True
+    combined = Path(combined_path)
+    assert combined.exists()
+    content = combined.read_text(encoding="utf-8")
+    assert "source_file" in content
+    assert "source_label" in content
+    assert "a.csv" in content
+    assert "b.csv" in content
+    assert "Port 4" in content
+    assert "Port 3" in content
+
+
+def test_prepare_pipeline_source_marks_precombined_file() -> None:
+    combined = Path("outputs/web/combined_aac1dedda6.csv")
+    path, names, was_combined = _prepare_pipeline_source(
+        csv_paths=[str(combined)],
+        report_type_id="wireshark_capture_health",
+        row_limit=1000,
+        sheet_name=None,
+        upload_dir=Path("."),
+        source_labels={},
+    )
+    assert path.endswith("combined_aac1dedda6.csv")
+    assert names == ["combined_aac1dedda6.csv"]
+    assert was_combined is True
+
+
+def test_benchmark_includes_wireshark_ptp_panel_for_two_reports(tmp_path: Path) -> None:
+    output_root = tmp_path / "outputs"
+    ws_dir = output_root / "wireshark_capture_health"
+    ws_dir.mkdir(parents=True, exist_ok=True)
+
+    payload_base = {
+        "report_type_id": "wireshark_capture_health",
+        "summary": "",
+        "sections": [],
+        "alerts": [],
+        "recommendations": [],
+        "charts": [],
+        "metadata": {"generation_backend": "local", "generation_model": "local-metrics"},
+    }
+    p1 = ws_dir / "wireshark_capture_health.260222_1200_000001.report.json"
+    p2 = ws_dir / "wireshark_capture_health.260222_1201_000002.report.json"
+    p1.write_text(
+        json.dumps(
+            {
+                **payload_base,
+                "tables": [
+                    {
+                        "name": "metrics_payload",
+                        "rows": [
+                            {
+                                "ptp_summary": {
+                                    "sync_packets": 600,
+                                    "follow_up_packets": 0,
+                                    "announce_packets": 300,
+                                    "correction_ns_median": 10000.0,
+                                    "correction_ns_p95": 10400.0,
+                                    "timestamp_delta_ns_median": -20_000_000.0,
+                                },
+                                "ptp_port_health": [
+                                    {"sync_interval_ms_median": 62.5, "sync_interval_ms_p95": 70.0}
+                                ],
+                            }
+                        ],
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    p2.write_text(
+        json.dumps(
+            {
+                **payload_base,
+                "tables": [
+                    {
+                        "name": "metrics_payload",
+                        "rows": [
+                            {
+                                "ptp_summary": {
+                                    "sync_packets": 500,
+                                    "follow_up_packets": 0,
+                                    "announce_packets": 250,
+                                    "correction_ns_median": 10000.0,
+                                    "correction_ns_p95": 11500.0,
+                                    "timestamp_delta_ns_median": -2_000_000_000.0,
+                                },
+                                "ptp_port_health": [
+                                    {"sync_interval_ms_median": 62.5, "sync_interval_ms_p95": 90.0}
+                                ],
+                            }
+                        ],
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    app = create_app(
+        {
+            "TESTING": True,
+            "UPLOAD_FOLDER": str(tmp_path / "uploads"),
+            "OUTPUT_FOLDER": str(output_root),
+        }
+    )
+    client = app.test_client()
+    query = urlencode({"json_path": [str(p1), str(p2)]}, doseq=True)
+    response = client.get(f"/benchmark?{query}")
+    assert response.status_code == 200
+    assert b"PTP Benchmark (Wireshark)" in response.data
+    assert b"Lock Likelihood" in response.data
+
+
+def test_benchmark_baseline_includes_tone_audience_focus_checks(tmp_path: Path) -> None:
+    output_root = tmp_path / "outputs"
+    report_dir = output_root / "network_queue_congestion"
+    report_dir.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "report_type_id": "network_queue_congestion",
+        "summary": "",
+        "sections": [],
+        "alerts": [],
+        "recommendations": [],
+        "tables": [],
+        "charts": [],
+        "metadata": {
+            "generation_backend": "local",
+            "generation_model": "local-metrics",
+            "tone": "technical",
+            "audience": "engineering",
+            "focus": "anomalies",
+            "source_rows_used": 100,
+            "source_csv": "sample.csv",
+        },
+    }
+    p1 = report_dir / "network_queue_congestion.260222_1300_000001.report.json"
+    p2 = report_dir / "network_queue_congestion.260222_1301_000002.report.json"
+    p1.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    p2.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+
+    app = create_app(
+        {
+            "TESTING": True,
+            "UPLOAD_FOLDER": str(tmp_path / "uploads"),
+            "OUTPUT_FOLDER": str(output_root),
+        }
+    )
+    client = app.test_client()
+    query = urlencode({"json_path": [str(p1), str(p2)]}, doseq=True)
+    response = client.get(f"/benchmark?{query}")
+    assert response.status_code == 200
+    assert b"Same tone" in response.data
+    assert b"Same audience" in response.data
+    assert b"Same focus" in response.data
+
+
+def test_parse_source_labels_text() -> None:
+    parsed = _parse_source_labels_text(
+        "Master_ETX-205A_port-3_nok.pcapng=Port 3 (NOK)\n"
+        "Master_ETX-205A_port-4_not-sure-if-ok=Port 4\n"
+        "badline\n"
+    )
+    assert parsed["Master_ETX-205A_port-3_nok.pcapng"] == "Port 3 (NOK)"
+    assert parsed["Master_ETX-205A_port-4_not-sure-if-ok"] == "Port 4"
+
+
+def test_resolve_source_label_matches_original_name_after_upload_suffix() -> None:
+    labels = {
+        "Master_ETX-205A_port-4_not-sure-if-ok.pcapng": "Port 4 (OK)",
+        "Master_ETX-205A_port-3_nok": "Port 3 (NOK)",
+    }
+    assert (
+        _resolve_source_label("Master_ETX-205A_port-4_not-sure-if-ok_81c3ca59.pcapng", labels)
+        == "Port 4 (OK)"
+    )
+    assert _resolve_source_label("Master_ETX-205A_port-3_nok_9fd4a112.pcapng", labels) == "Port 3 (NOK)"
 
 
 def test_create_report_type_from_ui(tmp_path: Path) -> None:

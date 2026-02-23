@@ -1313,8 +1313,384 @@ _HTML_TEMPLATE = """
             <div class="stat-label">TCP SYN / RST / DNS</div>
             <div class="stat-value">{{ wireshark.summary.get('tcp_syn_packets', 0) }} / {{ wireshark.summary.get('tcp_rst_packets', 0) }} / {{ wireshark.summary.get('dns_query_packets', 0) }}</div>
           </div>
+          <div class="stat-card">
+            <div class="stat-label">PTPv2 Packets</div>
+            <div class="stat-value">{{ wireshark.summary.get('ptp_packets', 0) }} ({{ "%.2f"|format(wireshark.summary.get('ptp_share_pct', 0)) }}%)</div>
+          </div>
         </div>
       </section>
+
+      {% if wireshark.ptp_summary and wireshark.ptp_summary.get('packets', 0) > 0 %}
+      <section>
+        <h2>PTPv2 (1588) Focus</h2>
+        <p class="muted">
+          G.8275.1 likelihood:
+          <strong>{{ "yes" if wireshark.ptp_summary.get('g8275_1_likely') else "not confirmed" }}</strong>.
+          Sync / Follow_Up / Announce:
+          <strong>{{ wireshark.ptp_summary.get('sync_packets', 0) }} / {{ wireshark.ptp_summary.get('follow_up_packets', 0) }} / {{ wireshark.ptp_summary.get('announce_packets', 0) }}</strong>.
+        </p>
+        <div class="table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>Metric</th>
+                <th>Value</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Event / General Port Packets</td>
+                <td>{{ wireshark.ptp_summary.get('event_port_packets', 0) }} / {{ wireshark.ptp_summary.get('general_port_packets', 0) }}</td>
+              </tr>
+              <tr>
+                <td>Correction Field Median / P95 (ns)</td>
+                <td>
+                  {% if wireshark.ptp_summary.get('correction_ns_median') is not none %}
+                    {{ "%.2f"|format(wireshark.ptp_summary.get('correction_ns_median', 0)) }} / {{ "%.2f"|format(wireshark.ptp_summary.get('correction_ns_p95', 0)) }}
+                  {% else %}
+                    -
+                  {% endif %}
+                </td>
+              </tr>
+              <tr>
+                <td>Two-Step Sync Flag Share</td>
+                <td>
+                  {% if wireshark.ptp_summary.get('two_step_pct') is not none %}
+                    {{ "%.2f"|format(wireshark.ptp_summary.get('two_step_pct', 0)) }}%
+                  {% else %}
+                    -
+                  {% endif %}
+                </td>
+              </tr>
+              <tr>
+                <td>Frame-Time minus Origin-Timestamp Median (ns)</td>
+                <td>
+                  {% if wireshark.ptp_summary.get('timestamp_delta_ns_median') is not none %}
+                    {{ "%.2f"|format(wireshark.ptp_summary.get('timestamp_delta_ns_median', 0)) }}
+                  {% else %}
+                    -
+                  {% endif %}
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section>
+        <h2>PTP Message Mix</h2>
+        {% if wireshark.ptp_message_mix %}
+        <div class="table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>Message Type</th>
+                <th>Packets</th>
+                <th>Share %</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in wireshark.ptp_message_mix %}
+              <tr>
+                <td>{{ row.message_type }}</td>
+                <td>{{ "{:,.0f}".format(row.packets) }}</td>
+                <td>{{ "%.2f"|format(row.pct) }}</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% endif %}
+      </section>
+
+      <section>
+        <h2>PTP Time-Sync Messages Over Time</h2>
+        {% if wireshark.ptp_message_time_trend %}
+        <div class="table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>Time (UTC)</th>
+                <th>PTP Packets</th>
+                <th>Sync</th>
+                <th>Follow_Up</th>
+                <th>Announce</th>
+                <th>Correction Median/P95 (ns)</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in wireshark.ptp_message_time_trend %}
+              <tr>
+                <td>{{ row.time_utc }}</td>
+                <td>{{ "{:,.0f}".format(row.ptp_packets) }}</td>
+                <td>{{ "{:,.0f}".format(row.sync_packets) }}</td>
+                <td>{{ "{:,.0f}".format(row.follow_up_packets) }}</td>
+                <td>{{ "{:,.0f}".format(row.announce_packets) }}</td>
+                <td>
+                  {% if row.correction_ns_median is not none %}
+                    {{ "%.2f"|format(row.correction_ns_median) }} / {{ "%.2f"|format(row.correction_ns_p95) }}
+                  {% else %}
+                    -
+                  {% endif %}
+                </td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% else %}
+        <p class="muted">No timestamped PTP trend rows available.</p>
+        {% endif %}
+      </section>
+
+      {% if wireshark.ptp_time_sync_logic %}
+      <section>
+        <h2>PTP Time-Sync Logic</h2>
+        <p class="muted">
+          Focus scope:
+          <strong>{{ wireshark.ptp_time_sync_logic.get('focus_scope', 'all_ptpv2') }}</strong>.
+          Inferred mode:
+          <strong>{{ wireshark.ptp_time_sync_logic.get('ptp_mode_inferred', 'unknown') }}</strong>.
+          Lock likelihood:
+          <strong>{{ wireshark.ptp_time_sync_logic.get('lock_likelihood', 'unknown')|upper }}</strong>
+          (score {{ wireshark.ptp_time_sync_logic.get('lock_score', 0) }}/100).
+        </p>
+        <div class="table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>Metric</th>
+                <th>Value</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Focus Packets (1588 set)</td>
+                <td>{{ "{:,.0f}".format(wireshark.ptp_time_sync_logic.get('focus_packets', 0)) }}</td>
+              </tr>
+              <tr>
+                <td>Sync / Follow_Up / Announce</td>
+                <td>
+                  {{ wireshark.ptp_time_sync_logic.get('sync_packets', 0) }}
+                  /
+                  {{ wireshark.ptp_time_sync_logic.get('follow_up_packets', 0) }}
+                  /
+                  {{ wireshark.ptp_time_sync_logic.get('announce_packets', 0) }}
+                </td>
+              </tr>
+              <tr>
+                <td>Follow_Up to Sync Ratio</td>
+                <td>
+                  {% if wireshark.ptp_time_sync_logic.get('follow_up_to_sync_ratio') is not none %}
+                    {{ "%.3f"|format(wireshark.ptp_time_sync_logic.get('follow_up_to_sync_ratio')) }}
+                  {% else %}
+                    -
+                  {% endif %}
+                </td>
+              </tr>
+              <tr>
+                <td>Sync Interval Median/P95 (ms)</td>
+                <td>
+                  {% if wireshark.ptp_time_sync_logic.get('sync_interval_ms_median') is not none %}
+                    {{ "%.3f"|format(wireshark.ptp_time_sync_logic.get('sync_interval_ms_median')) }} / {{ "%.3f"|format(wireshark.ptp_time_sync_logic.get('sync_interval_ms_p95')) }}
+                  {% else %}
+                    -
+                  {% endif %}
+                </td>
+              </tr>
+              <tr>
+                <td>Sync Sequence Gap Rate % / Out-of-order</td>
+                <td>
+                  {% if wireshark.ptp_time_sync_logic.get('sync_sequence_gap_rate_pct') is not none %}
+                    {{ "%.2f"|format(wireshark.ptp_time_sync_logic.get('sync_sequence_gap_rate_pct')) }}% / {{ wireshark.ptp_time_sync_logic.get('sync_sequence_out_of_order', 0) }}
+                  {% else %}
+                    - / {{ wireshark.ptp_time_sync_logic.get('sync_sequence_out_of_order', 0) }}
+                  {% endif %}
+                </td>
+              </tr>
+              <tr>
+                <td>Correction Median/P95/Jitter (ns)</td>
+                <td>
+                  {% if wireshark.ptp_time_sync_logic.get('correction_ns_median') is not none %}
+                    {{ "%.2f"|format(wireshark.ptp_time_sync_logic.get('correction_ns_median')) }}
+                    /
+                    {{ "%.2f"|format(wireshark.ptp_time_sync_logic.get('correction_ns_p95')) }}
+                    /
+                    {{ "%.2f"|format(wireshark.ptp_time_sync_logic.get('correction_jitter_ns_p95_minus_median')) }}
+                  {% else %}
+                    -
+                  {% endif %}
+                </td>
+              </tr>
+              <tr>
+                <td>Timestamp Delta Median / Drift (ns, ns/s)</td>
+                <td>
+                  {% if wireshark.ptp_time_sync_logic.get('timestamp_delta_ns_median') is not none %}
+                    {{ "%.2f"|format(wireshark.ptp_time_sync_logic.get('timestamp_delta_ns_median')) }}
+                    /
+                    {% if wireshark.ptp_time_sync_logic.get('timestamp_delta_drift_ns_per_s') is not none %}
+                      {{ "%.2f"|format(wireshark.ptp_time_sync_logic.get('timestamp_delta_drift_ns_per_s')) }}
+                    {% else %}
+                      -
+                    {% endif %}
+                  {% else %}
+                    -
+                  {% endif %}
+                </td>
+              </tr>
+              <tr>
+                <td>Worst State / Time</td>
+                <td>
+                  {{ wireshark.ptp_time_sync_logic.get('worst_state', '-') or '-' }}
+                  /
+                  {{ wireshark.ptp_time_sync_logic.get('worst_state_time_utc', '-') or '-' }}
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        {% if wireshark.ptp_time_sync_logic.get('lock_reasons') %}
+        <p class="small muted" style="margin-top:0.6rem;">
+          {{ wireshark.ptp_time_sync_logic.get('lock_reasons')|join(' ') }}
+        </p>
+        {% endif %}
+      </section>
+      {% endif %}
+
+      {% if wireshark.ptp_state_flow %}
+      <section>
+        <h2>PTP State Flow Over Time</h2>
+        <div class="table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>Time (UTC)</th>
+                <th>State</th>
+                <th>Score</th>
+                <th>PTP</th>
+                <th>Sync / Follow_Up / Announce</th>
+                <th>Correction Median/P95 (ns)</th>
+                <th>Timestamp Delta Median (ns)</th>
+                <th>Reason</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in wireshark.ptp_state_flow %}
+              <tr>
+                <td>{{ row.time_utc }}</td>
+                <td>{{ row.state }}</td>
+                <td>{{ row.state_score }}</td>
+                <td>{{ "{:,.0f}".format(row.ptp_packets) }}</td>
+                <td>{{ row.sync_packets }} / {{ row.follow_up_packets }} / {{ row.announce_packets }}</td>
+                <td>
+                  {% if row.correction_ns_median is not none %}
+                    {{ "%.2f"|format(row.correction_ns_median) }} / {{ "%.2f"|format(row.correction_ns_p95) }}
+                  {% else %}
+                    -
+                  {% endif %}
+                </td>
+                <td>{% if row.timestamp_delta_ns_median is not none %}{{ "%.2f"|format(row.timestamp_delta_ns_median) }}{% else %}-{% endif %}</td>
+                <td>{{ row.reason }}</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </section>
+      {% endif %}
+
+      <section>
+        <h2>PTP Sender / Port Health</h2>
+        {% if wireshark.ptp_port_health %}
+        <div class="table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>Sender</th>
+                <th>Port #</th>
+                <th>Packets</th>
+                <th>Sync</th>
+                <th>Follow_Up</th>
+                <th>Announce</th>
+                <th>Sync Interval Median/P95 (ms)</th>
+                <th>Correction Median/P95 (ns)</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in wireshark.ptp_port_health %}
+              <tr>
+                <td>{{ row.sender }}</td>
+                <td>{{ row.port_number if row.port_number is not none else "-" }}</td>
+                <td>{{ "{:,.0f}".format(row.packets) }}</td>
+                <td>{{ "{:,.0f}".format(row.sync_packets) }}</td>
+                <td>{{ "{:,.0f}".format(row.follow_up_packets) }}</td>
+                <td>{{ "{:,.0f}".format(row.announce_packets) }}</td>
+                <td>
+                  {% if row.sync_interval_ms_median is not none %}
+                    {{ "%.3f"|format(row.sync_interval_ms_median) }} / {{ "%.3f"|format(row.sync_interval_ms_p95) }}
+                  {% else %}
+                    -
+                  {% endif %}
+                </td>
+                <td>
+                  {% if row.correction_ns_median is not none %}
+                    {{ "%.2f"|format(row.correction_ns_median) }} / {{ "%.2f"|format(row.correction_ns_p95) }}
+                  {% else %}
+                    -
+                  {% endif %}
+                </td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% endif %}
+      </section>
+
+      {% if wireshark.ptp_source_comparison %}
+      <section>
+        <h2>PTP Source Comparison</h2>
+        <div class="table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>Label</th>
+                <th>Source File</th>
+                <th>Packets</th>
+                <th>Sync</th>
+                <th>Follow_Up</th>
+                <th>Announce</th>
+                <th>Two-Step %</th>
+                <th>Correction Median/P95 (ns)</th>
+                <th>Timestamp Delta Median (ns)</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in wireshark.ptp_source_comparison %}
+              <tr>
+                <td>{{ row.source_label or "-" }}</td>
+                <td>{{ row.source_file }}</td>
+                <td>{{ "{:,.0f}".format(row.packets) }}</td>
+                <td>{{ "{:,.0f}".format(row.sync_packets) }}</td>
+                <td>{{ "{:,.0f}".format(row.follow_up_packets) }}</td>
+                <td>{{ "{:,.0f}".format(row.announce_packets) }}</td>
+                <td>{% if row.two_step_pct is not none %}{{ "%.2f"|format(row.two_step_pct) }}%{% else %}-{% endif %}</td>
+                <td>
+                  {% if row.correction_ns_median is not none %}
+                    {{ "%.2f"|format(row.correction_ns_median) }} / {{ "%.2f"|format(row.correction_ns_p95) }}
+                  {% else %}
+                    -
+                  {% endif %}
+                </td>
+                <td>{% if row.timestamp_delta_ns_median is not none %}{{ "%.2f"|format(row.timestamp_delta_ns_median) }}{% else %}-{% endif %}</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </section>
+      {% endif %}
+      {% endif %}
 
       <section>
         <h2>Protocol Breakdown</h2>
@@ -1436,6 +1812,20 @@ _HTML_TEMPLATE = """
               <button type="button" class="chart-export-btn" data-canvas-id="wsBytesTrendChart" data-file-prefix="{{ report.metadata.get('report_id', report.report_type_id) }}">Export PNG</button>
             </div>
             <canvas id="wsBytesTrendChart"></canvas>
+          </div>
+          <div class="chart-wrap">
+            <div class="chart-head">
+              <div class="chart-title">PTP Message Types Over Time</div>
+              <button type="button" class="chart-export-btn" data-canvas-id="wsPtpMessageTrendChart" data-file-prefix="{{ report.metadata.get('report_id', report.report_type_id) }}">Export PNG</button>
+            </div>
+            <canvas id="wsPtpMessageTrendChart"></canvas>
+          </div>
+          <div class="chart-wrap">
+            <div class="chart-head">
+              <div class="chart-title">PTP State Score Over Time</div>
+              <button type="button" class="chart-export-btn" data-canvas-id="wsPtpStateFlowChart" data-file-prefix="{{ report.metadata.get('report_id', report.report_type_id) }}">Export PNG</button>
+            </div>
+            <canvas id="wsPtpStateFlowChart"></canvas>
           </div>
         </div>
       </section>
@@ -2494,6 +2884,8 @@ _HTML_TEMPLATE = """
         const protocol = {{ wireshark.protocol_breakdown_json | safe }};
         const talkers = {{ wireshark.top_talkers_json | safe }};
         const trend = {{ wireshark.time_trend_json | safe }};
+        const ptpTrend = {{ wireshark.ptp_message_time_trend_json | safe }};
+        const ptpStateFlow = {{ wireshark.ptp_state_flow_json | safe }};
 
         const createChart = (id, cfg) => {
           const el = document.getElementById(id);
@@ -2613,6 +3005,110 @@ _HTML_TEMPLATE = """
               x: {
                 title: { display: true, text: "Time (UTC)" },
                 ticks: { maxTicksLimit: maxTicks, callback: (value, index) => staggerTick(formatTimeLabel(labels[index]), index) },
+                grid: { display: false }
+              }
+            },
+            plugins: { legend: { display: true } }
+          }
+        });
+
+        const ptpLabels = Array.isArray(ptpTrend) ? ptpTrend.map((r) => String(r.time_utc || "")) : [];
+        createChart("wsPtpMessageTrendChart", {
+          type: "line",
+          data: {
+            labels: ptpLabels,
+            datasets: [
+              {
+                label: "Sync",
+                data: Array.isArray(ptpTrend) ? ptpTrend.map((r) => Number(r.sync_packets || 0)) : [],
+                borderColor: "#1d4ed8",
+                backgroundColor: "rgba(29, 78, 216, 0.12)",
+                borderWidth: 2.1,
+                pointRadius: 0,
+                pointHoverRadius: 3,
+                tension: 0.22,
+                fill: false,
+              },
+              {
+                label: "Follow_Up",
+                data: Array.isArray(ptpTrend) ? ptpTrend.map((r) => Number(r.follow_up_packets || 0)) : [],
+                borderColor: "#7c3aed",
+                backgroundColor: "rgba(124, 58, 237, 0.12)",
+                borderWidth: 2.1,
+                pointRadius: 0,
+                pointHoverRadius: 3,
+                tension: 0.22,
+                fill: false,
+              },
+              {
+                label: "Announce",
+                data: Array.isArray(ptpTrend) ? ptpTrend.map((r) => Number(r.announce_packets || 0)) : [],
+                borderColor: "#0f766e",
+                backgroundColor: "rgba(15, 118, 110, 0.12)",
+                borderWidth: 2.1,
+                pointRadius: 0,
+                pointHoverRadius: 3,
+                tension: 0.22,
+                fill: false,
+              },
+            ]
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            scales: {
+              y: { beginAtZero: true, title: { display: true, text: "Packets" } },
+              x: {
+                title: { display: true, text: "Time (UTC)" },
+                ticks: { maxTicksLimit: maxTicks, callback: (value, index) => staggerTick(formatTimeLabel(ptpLabels[index]), index) },
+                grid: { display: false }
+              }
+            },
+            plugins: { legend: { display: true } }
+          }
+        });
+
+        const ptpStateLabels = Array.isArray(ptpStateFlow) ? ptpStateFlow.map((r) => String(r.time_utc || "")) : [];
+        const ptpStateScores = Array.isArray(ptpStateFlow) ? ptpStateFlow.map((r) => Number(r.state_score || 0)) : [];
+        const ptpStateColors = Array.isArray(ptpStateFlow)
+          ? ptpStateFlow.map((r) => {
+              const state = String(r.state || "").toLowerCase();
+              if (state === "unstable") return "#b91c1c";
+              if (state === "warning") return "#b45309";
+              return "#15803d";
+            })
+          : [];
+        createChart("wsPtpStateFlowChart", {
+          type: "line",
+          data: {
+            labels: ptpStateLabels,
+            datasets: [
+              {
+                label: "PTP State Score",
+                data: ptpStateScores,
+                borderColor: "#1e293b",
+                backgroundColor: "rgba(30, 41, 59, 0.12)",
+                borderWidth: 2.0,
+                pointRadius: 3,
+                pointHoverRadius: 4,
+                pointBackgroundColor: ptpStateColors,
+                tension: 0.2,
+                fill: true,
+              }
+            ]
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            scales: {
+              y: {
+                min: 0,
+                max: 100,
+                title: { display: true, text: "State Score" }
+              },
+              x: {
+                title: { display: true, text: "Time (UTC)" },
+                ticks: { maxTicksLimit: maxTicks, callback: (value, index) => staggerTick(formatTimeLabel(ptpStateLabels[index]), index) },
                 grid: { display: false }
               }
             },
@@ -3235,8 +3731,16 @@ def _extract_wireshark_metrics(report: dict) -> dict | None:
                 payload.get("top_talkers", []),
                 payload.get("top_conversations", []),
                 payload.get("time_trend", []),
+                payload.get("ptp_summary", {}),
+                payload.get("ptp_message_mix", []),
+                payload.get("ptp_message_time_trend", []),
+                payload.get("ptp_port_health", []),
+                payload.get("ptp_timing", []),
+                payload.get("ptp_source_comparison", []),
+                payload.get("ptp_time_sync_logic", {}),
+                payload.get("ptp_state_flow", []),
             )
-    return _normalize_wireshark_metrics({}, [], [], [], [])
+    return _normalize_wireshark_metrics({}, [], [], [], [], {}, [], [], [], [], [], {}, [])
 
 
 def _normalize_wireshark_metrics(
@@ -3245,6 +3749,14 @@ def _normalize_wireshark_metrics(
     top_talkers: list,
     top_conversations: list,
     time_trend: list,
+    ptp_summary: dict,
+    ptp_message_mix: list,
+    ptp_message_time_trend: list,
+    ptp_port_health: list,
+    ptp_timing: list,
+    ptp_source_comparison: list,
+    ptp_time_sync_logic: dict,
+    ptp_state_flow: list,
 ) -> dict:
     normalized_summary = {
         "packets": int(summary.get("packets", 0) or 0),
@@ -3255,6 +3767,67 @@ def _normalize_wireshark_metrics(
         "tcp_syn_packets": int(summary.get("tcp_syn_packets", 0) or 0),
         "tcp_rst_packets": int(summary.get("tcp_rst_packets", 0) or 0),
         "dns_query_packets": int(summary.get("dns_query_packets", 0) or 0),
+        "ptp_packets": int(summary.get("ptp_packets", 0) or 0),
+        "ptp_share_pct": float(summary.get("ptp_share_pct", 0.0) or 0.0),
+        "ptp_g8275_1_likely": bool(summary.get("ptp_g8275_1_likely", False)),
+    }
+    normalized_ptp_summary = {
+        "packets": int(ptp_summary.get("packets", 0) or 0),
+        "share_pct": float(ptp_summary.get("share_pct", 0.0) or 0.0),
+        "event_port_packets": int(ptp_summary.get("event_port_packets", 0) or 0),
+        "general_port_packets": int(ptp_summary.get("general_port_packets", 0) or 0),
+        "g8275_1_likely": bool(ptp_summary.get("g8275_1_likely", False)),
+        "sync_packets": int(ptp_summary.get("sync_packets", 0) or 0),
+        "follow_up_packets": int(ptp_summary.get("follow_up_packets", 0) or 0),
+        "announce_packets": int(ptp_summary.get("announce_packets", 0) or 0),
+        "two_step_pct": float(ptp_summary["two_step_pct"]) if ptp_summary.get("two_step_pct") is not None else None,
+        "correction_ns_p95": float(ptp_summary["correction_ns_p95"]) if ptp_summary.get("correction_ns_p95") is not None else None,
+        "correction_ns_median": float(ptp_summary["correction_ns_median"]) if ptp_summary.get("correction_ns_median") is not None else None,
+        "timestamp_delta_ns_median": float(ptp_summary["timestamp_delta_ns_median"])
+        if ptp_summary.get("timestamp_delta_ns_median") is not None
+        else None,
+    }
+    normalized_time_sync_logic = {
+        "focus_scope": str(ptp_time_sync_logic.get("focus_scope", "all_ptpv2") or "all_ptpv2"),
+        "focus_packets": int(ptp_time_sync_logic.get("focus_packets", 0) or 0),
+        "sync_packets": int(ptp_time_sync_logic.get("sync_packets", 0) or 0),
+        "follow_up_packets": int(ptp_time_sync_logic.get("follow_up_packets", 0) or 0),
+        "announce_packets": int(ptp_time_sync_logic.get("announce_packets", 0) or 0),
+        "ptp_mode_inferred": str(ptp_time_sync_logic.get("ptp_mode_inferred", "unknown") or "unknown"),
+        "follow_up_to_sync_ratio": float(ptp_time_sync_logic["follow_up_to_sync_ratio"])
+        if ptp_time_sync_logic.get("follow_up_to_sync_ratio") is not None
+        else None,
+        "sync_interval_ms_median": float(ptp_time_sync_logic["sync_interval_ms_median"])
+        if ptp_time_sync_logic.get("sync_interval_ms_median") is not None
+        else None,
+        "sync_interval_ms_p95": float(ptp_time_sync_logic["sync_interval_ms_p95"])
+        if ptp_time_sync_logic.get("sync_interval_ms_p95") is not None
+        else None,
+        "sync_sequence_gap_rate_pct": float(ptp_time_sync_logic["sync_sequence_gap_rate_pct"])
+        if ptp_time_sync_logic.get("sync_sequence_gap_rate_pct") is not None
+        else None,
+        "sync_sequence_out_of_order": int(ptp_time_sync_logic.get("sync_sequence_out_of_order", 0) or 0),
+        "correction_ns_median": float(ptp_time_sync_logic["correction_ns_median"])
+        if ptp_time_sync_logic.get("correction_ns_median") is not None
+        else None,
+        "correction_ns_p95": float(ptp_time_sync_logic["correction_ns_p95"])
+        if ptp_time_sync_logic.get("correction_ns_p95") is not None
+        else None,
+        "correction_jitter_ns_p95_minus_median": float(ptp_time_sync_logic["correction_jitter_ns_p95_minus_median"])
+        if ptp_time_sync_logic.get("correction_jitter_ns_p95_minus_median") is not None
+        else None,
+        "timestamp_delta_ns_median": float(ptp_time_sync_logic["timestamp_delta_ns_median"])
+        if ptp_time_sync_logic.get("timestamp_delta_ns_median") is not None
+        else None,
+        "timestamp_delta_drift_ns_per_s": float(ptp_time_sync_logic["timestamp_delta_drift_ns_per_s"])
+        if ptp_time_sync_logic.get("timestamp_delta_drift_ns_per_s") is not None
+        else None,
+        "lock_score": int(ptp_time_sync_logic.get("lock_score", 0) or 0),
+        "lock_likelihood": str(ptp_time_sync_logic.get("lock_likelihood", "unknown") or "unknown"),
+        "lock_reasons": [str(v) for v in (ptp_time_sync_logic.get("lock_reasons", []) or [])],
+        "state_counts": ptp_time_sync_logic.get("state_counts", {}) or {},
+        "worst_state": ptp_time_sync_logic.get("worst_state"),
+        "worst_state_time_utc": ptp_time_sync_logic.get("worst_state_time_utc"),
     }
     return {
         "summary": normalized_summary,
@@ -3267,5 +3840,21 @@ def _normalize_wireshark_metrics(
         "top_conversations_json": json.dumps(top_conversations or []),
         "time_trend": time_trend or [],
         "time_trend_json": json.dumps(time_trend or []),
+        "ptp_summary": normalized_ptp_summary,
+        "ptp_summary_json": json.dumps(normalized_ptp_summary),
+        "ptp_message_mix": ptp_message_mix or [],
+        "ptp_message_mix_json": json.dumps(ptp_message_mix or []),
+        "ptp_message_time_trend": ptp_message_time_trend or [],
+        "ptp_message_time_trend_json": json.dumps(ptp_message_time_trend or []),
+        "ptp_port_health": ptp_port_health or [],
+        "ptp_port_health_json": json.dumps(ptp_port_health or []),
+        "ptp_timing": ptp_timing or [],
+        "ptp_timing_json": json.dumps(ptp_timing or []),
+        "ptp_source_comparison": ptp_source_comparison or [],
+        "ptp_source_comparison_json": json.dumps(ptp_source_comparison or []),
+        "ptp_time_sync_logic": normalized_time_sync_logic,
+        "ptp_time_sync_logic_json": json.dumps(normalized_time_sync_logic),
+        "ptp_state_flow": ptp_state_flow or [],
+        "ptp_state_flow_json": json.dumps(ptp_state_flow or []),
     }
 

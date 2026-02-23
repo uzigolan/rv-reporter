@@ -20,23 +20,81 @@
     <span class="status-legend-item"><span class="status-dot status-cancelled" aria-hidden="true"></span> cancelled</span>
   </p>
   {% if events %}
+  <div class="events-filters" id="events_filters">
+    <div class="events-filters-grid events-filters-grid-compact">
+      <label>Attempt
+        <input id="filter_attempt" type="text" placeholder="evt_... or run id">
+      </label>
+      <label>Type
+        <select id="filter_report_type">
+          <option value="">All</option>
+        </select>
+      </label>
+      <label>Provider
+        <select id="filter_provider">
+          <option value="">All</option>
+        </select>
+      </label>
+      <label>Model
+        <input id="filter_model" type="text" placeholder="model contains...">
+      </label>
+      <label>Status
+        <select id="filter_status">
+          <option value="">All</option>
+        </select>
+      </label>
+    </div>
+    <details class="events-filters-more">
+      <summary>More filters</summary>
+      <div class="events-filters-grid events-filters-grid-more">
+        <label>Source/Report
+          <input id="filter_source" type="text" placeholder="report/source contains...">
+        </label>
+        <label>Time From
+          <input id="filter_time_from" type="datetime-local">
+        </label>
+        <label>Time To
+          <input id="filter_time_to" type="datetime-local">
+        </label>
+        <label>Message
+          <input id="filter_message" type="text" placeholder="message contains...">
+        </label>
+      </div>
+    </details>
+    <div class="actions events-filters-actions">
+      <button type="button" class="btn-link" id="events_clear_filters">Clear Filters</button>
+      <span class="muted events-filter-meta" id="events_filter_meta"></span>
+    </div>
+  </div>
+  {% endif %}
+  {% if events %}
   <table class="table events-table staggered-head" id="events_table">
     <thead>
       <tr>
-        <th class="datetime-col">Time</th>
-        <th class="attempt-col">Attempt</th>
-        <th class="report-type-col">Report Type</th>
-        <th class="engine-col">Provider</th>
-        <th class="model-col">Model</th>
-        <th class="status-col">Status</th>
-        <th class="report-name-col">Report Name</th>
-        <th class="message-col">Message</th>
+        <th class="datetime-col" data-sort-key="created_epoch" data-sort-type="number">Time</th>
+        <th class="attempt-col" data-sort-key="attempt_id" data-sort-type="string">Attempt</th>
+        <th class="report-type-col" data-sort-key="report_type_label" data-sort-type="string">Report Type</th>
+        <th class="engine-col" data-sort-key="provider" data-sort-type="string">Provider</th>
+        <th class="model-col" data-sort-key="model" data-sort-type="string">Model</th>
+        <th class="status-col" data-sort-key="status" data-sort-type="string">Status</th>
+        <th class="report-name-col" data-sort-key="report_name" data-sort-type="string">Report Name</th>
+        <th class="message-col" data-sort-key="message" data-sort-type="string">Message</th>
         <th class="action-col">Action</th>
       </tr>
     </thead>
     <tbody>
       {% for e in events %}
-      <tr>
+      <tr
+        data-created-epoch="{{ e.created_epoch }}"
+        data-attempt-id="{{ (e.attempt_id or '')|lower }}"
+        data-report-type-id="{{ (e.report_type_id or '')|lower }}"
+        data-report-type-label="{{ (e.report_type_label or '')|lower }}"
+        data-provider="{{ (e.provider or '')|lower }}"
+        data-model="{{ (e.model or '')|lower }}"
+        data-status="{{ (e.status or '')|lower }}"
+        data-report-name="{{ (e.report_name or '')|lower }}"
+        data-message="{{ (e.message or '')|lower }}"
+      >
         <td class="datetime-col"><span class="datetime-value">{{ e.created_at }}</span></td>
         <td class="attempt-col">
           {% if e.attempt_id and e.attempt_id.startswith('evt_') %}
@@ -133,14 +191,172 @@
       const label = (th.textContent || "").trim();
       if (!label) return;
       const isOdd = idx % 2 === 0;
+      const sortKey = (th.dataset.sortKey || "").trim();
+      const sortableClass = sortKey ? "sortable" : "";
+      const sortIndicator = sortKey ? '<span class="sort-indicator" aria-hidden="true">↕</span>' : "";
+      if (sortableClass) th.classList.add(sortableClass);
       th.innerHTML = `
         <span class="hdr-stack">
           <span class="hdr-line">${isOdd ? label : ""}</span>
           <span class="hdr-line">${isOdd ? "" : label}</span>
+          ${sortIndicator}
         </span>
       `;
       th.dataset.staggerBuilt = "1";
     });
+
+    const tbody = table.querySelector("tbody");
+    if (!tbody) return;
+    const rows = Array.from(tbody.querySelectorAll("tr"));
+    const lower = (value) => String(value || "").toLowerCase().trim();
+    const toEpoch = (value) => {
+      if (!value) return null;
+      const d = new Date(value);
+      const time = d.getTime();
+      if (Number.isNaN(time)) return null;
+      return time / 1000;
+    };
+
+    const filterAttempt = document.getElementById("filter_attempt");
+    const filterReportType = document.getElementById("filter_report_type");
+    const filterProvider = document.getElementById("filter_provider");
+    const filterModel = document.getElementById("filter_model");
+    const filterStatus = document.getElementById("filter_status");
+    const filterSource = document.getElementById("filter_source");
+    const filterTimeFrom = document.getElementById("filter_time_from");
+    const filterTimeTo = document.getElementById("filter_time_to");
+    const filterMessage = document.getElementById("filter_message");
+    const filterMeta = document.getElementById("events_filter_meta");
+    const clearBtn = document.getElementById("events_clear_filters");
+
+    const populateSelect = (el, values) => {
+      if (!el) return;
+      const existing = new Set(Array.from(el.options).map((o) => o.value));
+      values.sort((a, b) => a.localeCompare(b)).forEach((val) => {
+        if (!val || existing.has(val)) return;
+        const opt = document.createElement("option");
+        opt.value = val;
+        opt.textContent = val;
+        el.appendChild(opt);
+      });
+    };
+    populateSelect(filterReportType, Array.from(new Set(rows.map((r) => lower(r.dataset.reportTypeLabel)))));
+    populateSelect(filterProvider, Array.from(new Set(rows.map((r) => lower(r.dataset.provider)))));
+    populateSelect(filterStatus, Array.from(new Set(rows.map((r) => lower(r.dataset.status)))));
+
+    const applyFilters = () => {
+      const attemptNeedle = lower(filterAttempt && filterAttempt.value);
+      const reportTypeValue = lower(filterReportType && filterReportType.value);
+      const providerValue = lower(filterProvider && filterProvider.value);
+      const modelNeedle = lower(filterModel && filterModel.value);
+      const statusValue = lower(filterStatus && filterStatus.value);
+      const sourceNeedle = lower(filterSource && filterSource.value);
+      const messageNeedle = lower(filterMessage && filterMessage.value);
+      const fromEpoch = toEpoch(filterTimeFrom && filterTimeFrom.value);
+      const toEpochValue = toEpoch(filterTimeTo && filterTimeTo.value);
+
+      let shown = 0;
+      rows.forEach((row) => {
+        const createdEpoch = Number(row.dataset.createdEpoch || "0");
+        const matchAttempt = !attemptNeedle || lower(row.dataset.attemptId).includes(attemptNeedle);
+        const matchReportType = !reportTypeValue || lower(row.dataset.reportTypeLabel) === reportTypeValue || lower(row.dataset.reportTypeId) === reportTypeValue;
+        const matchProvider = !providerValue || lower(row.dataset.provider) === providerValue;
+        const matchModel = !modelNeedle || lower(row.dataset.model).includes(modelNeedle);
+        const matchStatus = !statusValue || lower(row.dataset.status) === statusValue;
+        const matchSource = !sourceNeedle || lower(row.dataset.reportName).includes(sourceNeedle);
+        const matchMessage = !messageNeedle || lower(row.dataset.message).includes(messageNeedle);
+        const matchFrom = fromEpoch === null || createdEpoch >= fromEpoch;
+        const matchTo = toEpochValue === null || createdEpoch <= toEpochValue;
+        const visible = matchAttempt && matchReportType && matchProvider && matchModel && matchStatus && matchSource && matchMessage && matchFrom && matchTo;
+        row.classList.toggle("is-hidden", !visible);
+        if (visible) shown += 1;
+      });
+      if (filterMeta) {
+        filterMeta.textContent = `Showing ${shown} of ${rows.length} events`;
+      }
+    };
+
+    const inputs = [
+      filterAttempt,
+      filterReportType,
+      filterProvider,
+      filterModel,
+      filterStatus,
+      filterSource,
+      filterTimeFrom,
+      filterTimeTo,
+      filterMessage,
+    ].filter(Boolean);
+    inputs.forEach((input) => {
+      input.addEventListener("input", applyFilters);
+      input.addEventListener("change", applyFilters);
+    });
+    if (clearBtn) {
+      clearBtn.addEventListener("click", () => {
+        inputs.forEach((input) => {
+          if (input.tagName === "SELECT") input.value = "";
+          else input.value = "";
+        });
+        applyFilters();
+      });
+    }
+
+    let sortKey = "created_epoch";
+    let sortDirection = "desc";
+    const updateSortIndicators = () => {
+      headers.forEach((th) => {
+        th.classList.remove("sort-asc", "sort-desc");
+        const indicator = th.querySelector(".sort-indicator");
+        if (!indicator) return;
+        if (th.dataset.sortKey === sortKey) {
+          if (sortDirection === "asc") {
+            th.classList.add("sort-asc");
+            indicator.textContent = "↑";
+          } else {
+            th.classList.add("sort-desc");
+            indicator.textContent = "↓";
+          }
+        } else {
+          indicator.textContent = "↕";
+        }
+      });
+    };
+    const sortRows = () => {
+      const header = headers.find((th) => th.dataset.sortKey === sortKey);
+      const sortType = (header && header.dataset.sortType) || "string";
+      const sorted = rows
+        .map((row, idx) => ({ row, idx }))
+        .sort((a, b) => {
+          const av = sortType === "number"
+            ? Number(a.row.dataset[sortKey.replace(/_([a-z])/g, (_, c) => c.toUpperCase())] || "0")
+            : lower(a.row.dataset[sortKey.replace(/_([a-z])/g, (_, c) => c.toUpperCase())] || "");
+          const bv = sortType === "number"
+            ? Number(b.row.dataset[sortKey.replace(/_([a-z])/g, (_, c) => c.toUpperCase())] || "0")
+            : lower(b.row.dataset[sortKey.replace(/_([a-z])/g, (_, c) => c.toUpperCase())] || "");
+          if (av < bv) return sortDirection === "asc" ? -1 : 1;
+          if (av > bv) return sortDirection === "asc" ? 1 : -1;
+          return a.idx - b.idx;
+        });
+      sorted.forEach((entry) => tbody.appendChild(entry.row));
+      updateSortIndicators();
+      applyFilters();
+    };
+
+    headers.forEach((th) => {
+      const key = th.dataset.sortKey;
+      if (!key) return;
+      th.addEventListener("click", () => {
+        if (sortKey === key) sortDirection = sortDirection === "asc" ? "desc" : "asc";
+        else {
+          sortKey = key;
+          sortDirection = "asc";
+        }
+        sortRows();
+      });
+    });
+
+    sortRows();
+    applyFilters();
   })();
 </script>
 {% endblock %}
