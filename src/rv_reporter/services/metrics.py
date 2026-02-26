@@ -8,7 +8,7 @@ from typing import Any
 import pandas as pd
 
 
-def compute_metrics(profile: str, df: pd.DataFrame, prefs: dict[str, Any]) -> dict[str, Any]:
+def compute_legacy_metrics(profile: str, df: pd.DataFrame, prefs: dict[str, Any]) -> dict[str, Any]:
     if profile == "ops_kpi":
         return _compute_ops_kpi(df, prefs)
     if profile == "finance_variance":
@@ -26,6 +26,10 @@ def compute_metrics(profile: str, df: pd.DataFrame, prefs: dict[str, Any]) -> di
     if profile == "wireshark_capture_health":
         return _compute_wireshark_capture_health(df, prefs)
     raise ValueError(f"Unsupported metrics profile '{profile}'.")
+
+
+def compute_metrics(profile: str, df: pd.DataFrame, prefs: dict[str, Any]) -> dict[str, Any]:
+    return compute_legacy_metrics(profile, df, prefs)
 
 
 def _compute_ops_kpi(df: pd.DataFrame, prefs: dict[str, Any]) -> dict[str, Any]:

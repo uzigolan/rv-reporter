@@ -1,0 +1,14 @@
+plugin_id: wireshark_capture_health
+metrics_profile: wireshark_capture_health
+api_version: 1
+version: "1.0.0"
+title: Wireshark Capture Health
+description: Wireshark report metrics plugin.
+family: hybrid
+domain: networking
+mode: burst_detection
+entrypoint: plugin.py
+owner: platform
+generator: manual
+inherits_from: wireshark_capture_health
+status: active

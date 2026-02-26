@@ -1,0 +1,81 @@
+$schema: https://json-schema.org/draft/2020-12/schema
+title: RV Reporter Plugin Manifest
+type: object
+additionalProperties: false
+required:
+  - plugin_id
+  - metrics_profile
+  - api_version
+  - version
+  - title
+  - family
+  - domain
+  - mode
+  - entrypoint
+  - status
+properties:
+  plugin_id:
+    type: string
+    pattern: "^[a-z0-9_]+$"
+  metrics_profile:
+    type: string
+    pattern: "^[a-z0-9_]+$"
+  api_version:
+    type: integer
+    const: 1
+  version:
+    type: string
+    pattern: "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+  title:
+    type: string
+    minLength: 1
+  description:
+    type: string
+  family:
+    type: string
+    enum:
+      - time_series
+      - tabular_statistical
+      - event
+      - log_text
+      - hybrid
+  domain:
+    type: string
+    enum:
+      - networking
+      - project_management
+      - healthcare
+      - operations
+      - security
+      - finance
+  mode:
+    type: string
+    enum:
+      - health_score
+      - anomaly_detection
+      - trend_analysis
+      - threshold_sla
+      - burst_detection
+      - correlation_analysis
+      - distribution_analysis
+      - top_n_hotspots
+      - flow_bottleneck
+  entrypoint:
+    type: string
+    const: plugin.py
+  owner:
+    type: string
+  generator:
+    type: string
+  inherits_from:
+    type: string
+    pattern: "^[a-z0-9_]+$"
+  extensions:
+    type: object
+    additionalProperties: true
+  status:
+    type: string
+    enum:
+      - draft
+      - active
+      - deprecated

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Report Type Governor"
+  short_description: "Scaffold and validate report type plugins safely."
+  default_prompt: "Create or update a report type plugin, validate manifest and schema, and run plugin/scaffold regression tests."

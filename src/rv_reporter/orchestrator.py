@@ -10,9 +10,9 @@ from rv_reporter.providers.base import ReportProvider
 from rv_reporter.providers.mock_provider import MockProvider
 from rv_reporter.rendering.html_renderer import render_html
 from rv_reporter.rendering.pdf_renderer import render_pdf
+from rv_reporter.report_types.plugins import compute_report_metrics
 from rv_reporter.report_types.registry import ReportTypeRegistry
 from rv_reporter.services.ingest import load_csv_with_limit, validate_required_columns
-from rv_reporter.services.metrics import compute_metrics
 from rv_reporter.services.profiler import profile_dataframe
 from rv_reporter.services.validator import validate_report_schema
 
@@ -39,7 +39,12 @@ def prepare_pipeline_inputs(
             df = df.drop(columns=cols)
     validate_required_columns(df, definition.required_columns)
     csv_profile = profile_dataframe(df)
-    metrics = compute_metrics(definition.metrics_profile, df, prefs)
+    metrics = compute_report_metrics(
+        metrics_profile=definition.metrics_profile,
+        df=df,
+        prefs=prefs,
+        report_type_id=definition.report_type_id,
+    )
     return definition, prefs, csv_profile, metrics
 
 

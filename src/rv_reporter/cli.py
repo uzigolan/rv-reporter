@@ -14,6 +14,7 @@ from rv_reporter.providers.mock_provider import MockProvider
 from rv_reporter.providers.openai_chat_provider import OpenAIChatCompletionsProvider
 from rv_reporter.providers.openai_provider import OpenAIResponsesProvider
 from rv_reporter.report_types.registry import ReportTypeRegistry
+from rv_reporter.report_types.scaffold import DOMAINS, FAMILIES, MODES, scaffold_report_type
 from rv_reporter.web import create_app
 
 app = typer.Typer(help="CSV -> report pipeline")
@@ -117,6 +118,58 @@ def run_web(
 ) -> None:
     web_app = create_app()
     web_app.run(host=host, port=port, debug=debug)
+
+
+@app.command("scaffold-report-type")
+def scaffold_report_type_command(
+    report_type_id: str = typer.Option(..., "--report-type-id", help="New report type id (and metrics profile)."),
+    title: str = typer.Option(..., help="Report title."),
+    family: str = typer.Option(..., help=f"Family. One of: {sorted(FAMILIES)}"),
+    domain: str = typer.Option(..., help=f"Domain. One of: {sorted(DOMAINS)}"),
+    mode: str = typer.Option(..., help=f"Mode. One of: {sorted(MODES)}"),
+    required_column: list[str] = typer.Option(
+        ...,
+        "--required-column",
+        help="Required column name. Repeat for multiple columns.",
+    ),
+    version: str = typer.Option("1.0.0", help="Semantic version."),
+    description: str = typer.Option("", help="Plugin description."),
+    owner: str = typer.Option("platform", help="Owner/team name."),
+    generator: str = typer.Option("manual", help="Generator id (e.g. openai_sdk, n8n)."),
+    inherits_from: str = typer.Option("", help="Optional plugin to inherit from."),
+    status: str = typer.Option("draft", help="draft|active|deprecated"),
+    create_report_yaml: bool = typer.Option(True, help="Create configs/report_types/<id>.yaml"),
+    config_dir: str = typer.Option("configs/report_types", help="Report type config directory."),
+    plugin_root: str = typer.Option("report_type_plugins", help="Plugin root directory."),
+    force: bool = typer.Option(False, help="Overwrite existing scaffold files."),
+) -> None:
+    try:
+        result = scaffold_report_type(
+            report_type_id=report_type_id,
+            title=title,
+            family=family,
+            domain=domain,
+            mode=mode,
+            required_columns=required_column,
+            version=version,
+            description=description,
+            owner=owner,
+            generator=generator,
+            inherits_from=inherits_from,
+            status=status,
+            create_report_type_yaml=create_report_yaml,
+            config_dir=config_dir,
+            plugin_root=plugin_root,
+            force=force,
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+
+    if result.report_type_yaml is not None:
+        print(f"[green]Created:[/green] {result.report_type_yaml}")
+    print(f"[green]Created:[/green] {result.plugin_manifest}")
+    print(f"[green]Created:[/green] {result.plugin_code}")
+    print(f"[green]Created:[/green] {result.plugin_smoke_test}")
 
 
 if __name__ == "__main__":

@@ -142,6 +142,20 @@ rv-reporter build-report \
   --row-limit 2000
 ```
 
+```bash
+rv-reporter scaffold-report-type \
+  --report-type-id net_usage \
+  --title "Network Usage" \
+  --family time_series \
+  --domain networking \
+  --mode trend_analysis \
+  --required-column timestamp \
+  --required-column interface \
+  --required-column bytes_in \
+  --required-column bytes_out \
+  --generator openai_sdk
+```
+
 ## Output artifacts
 
 Per run, the app writes:

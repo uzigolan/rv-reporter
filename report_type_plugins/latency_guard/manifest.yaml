@@ -1,0 +1,13 @@
+plugin_id: latency_guard
+metrics_profile: latency_guard
+api_version: 1
+version: "1.0.0"
+title: Latency Guard
+description: Sample plugin profile for isolated report-type metrics logic.
+family: time_series
+domain: networking
+mode: threshold_sla
+entrypoint: plugin.py
+owner: platform
+generator: manual
+status: active

@@ -30,6 +30,7 @@ from rv_reporter.providers.openai_provider import (
 )
 from rv_reporter.rendering.html_renderer import render_html
 from rv_reporter.rendering.pdf_renderer import render_pdf
+from rv_reporter.report_types.plugins import list_supported_metrics_profiles
 from rv_reporter.report_types.registry import ReportTypeRegistry
 from rv_reporter.services.cost_estimator import (
     MODEL_PRICING_USD,
@@ -2246,16 +2247,7 @@ def _starter_report_type_yaml() -> str:
 
 
 def _supported_metrics_profiles() -> set[str]:
-    return {
-        "ops_kpi",
-        "finance_variance",
-        "network_queue_congestion",
-        "twamp_session_health",
-        "pm_export_health",
-        "jira_issue_portfolio",
-        "ms_biomarker_registry_health",
-        "wireshark_capture_health",
-    }
+    return list_supported_metrics_profiles()
 
 
 def _validate_report_type_yaml(payload: dict[str, Any] | None) -> None:
