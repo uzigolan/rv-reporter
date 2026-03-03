@@ -1,0 +1,14 @@
+plugin_id: ptp1588
+metrics_profile: ptp1588
+api_version: 1
+version: 1.0.0
+title: IEEE 1588 PTP G.8275.1 Analysis
+description: IEEE 1588 PTP G.8275.1 Analysis plugin.
+family: hybrid
+domain: networking
+mode: anomaly_detection
+entrypoint: plugin.py
+owner: platform
+generator: manual
+status: active
+inherits_from: wireshark_capture_health

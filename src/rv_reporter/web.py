@@ -584,7 +584,9 @@ def create_app(config_overrides: dict[str, Any] | None = None) -> Flask:
         source_labels = _parse_source_labels_text(source_labels_text)
         output_token_budget = int(request.form.get("output_token_budget", "1200").strip() or "1200")
         row_limit_raw = request.form.get("row_limit", "").strip()
-        row_limit = int(row_limit_raw) if row_limit_raw else None
+        if not row_limit_raw:
+            row_limit_raw = "1000"
+        row_limit = int(row_limit_raw)
         generation_cost_usd_est: float | None = 0.0
         generation_input_tokens_est: int | None = None
         generation_output_tokens_est: int | None = None

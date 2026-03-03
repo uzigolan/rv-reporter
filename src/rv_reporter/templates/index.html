@@ -128,7 +128,7 @@
 
       <label>
         <span>Row Limit (cost control)</span>
-        <input name="row_limit" type="number" min="1" step="1" value="{{ defaults.row_limit }}" />
+        <input name="row_limit" type="number" min="1" step="1" value="{{ defaults.row_limit if defaults.row_limit is not none else 1000 }}" />
         <span class="field-help">Maximum number of rows loaded from input. Lower values reduce cost and time; higher values improve coverage.</span>
       </label>
 
@@ -185,6 +185,7 @@
   const sourceLabelsPreview = document.getElementById("source_labels_preview");
   const selectedSourcesPreview = document.getElementById("selected_sources_preview");
   const selectedSourcesRows = document.getElementById("selected_sources_rows");
+  const rowLimitInput = document.querySelector("input[name='row_limit']");
   const existingCsvPathInput = document.getElementById("existing_csv_path");
   const attemptIdInput = document.getElementById("attempt_id");
   const STORAGE_KEY = "rv_reporter.generate_form_state.v1";
@@ -358,13 +359,15 @@
       return;
     }
     selectedSourcesPreview.textContent = `Selected sources (${selected.length}):\n• ${selected.join("\n• ")}`;
+    const countLabel = currentSourceFileType === "pcap" ? "Packets in source" : "Rows in source";
     if (selectedSourcesRows) {
       if (selected.length > 1) {
-        selectedSourcesRows.textContent = "Rows in source: per-file counts are calculated after upload/merge.";
+        const multiUnit = currentSourceFileType === "pcap" ? "packets" : "rows";
+        selectedSourcesRows.textContent = `${countLabel}: per-file ${multiUnit} are calculated after upload/merge.`;
       } else if (currentSourceRowCount !== null && currentSourceRowCount !== undefined) {
-        selectedSourcesRows.textContent = `Rows in source: ${currentSourceRowCount.toLocaleString()}`;
+        selectedSourcesRows.textContent = `${countLabel}: ${currentSourceRowCount.toLocaleString()}`;
       } else {
-        selectedSourcesRows.textContent = "Rows in source: -";
+        selectedSourcesRows.textContent = `${countLabel}: -`;
       }
     }
   };
@@ -507,7 +510,7 @@
               sheetInput.value = payload.selected_sheet;
             }
           } else {
-            currentSourceFileType = "csv";
+            currentSourceFileType = String(payload.file_type || "unknown");
             currentSourceRowCount = (payload.row_count === null || payload.row_count === undefined) ? null : Number(payload.row_count);
             populateSheetOptions([]);
           }
@@ -553,6 +556,9 @@
     resetGenerateUi();
   });
   restoreState();
+  if (rowLimitInput && !String(rowLimitInput.value || "").trim()) {
+    rowLimitInput.value = "1000";
+  }
   syncProviderUi();
   syncUploadModeUi();
   refreshProviderModels();

@@ -6,6 +6,8 @@ import re
 
 from jinja2 import Template
 
+_WIRESHARK_STYLE_REPORT_TYPES = {"wireshark_capture_health", "ptp1588"}
+
 
 _HTML_TEMPLATE = """
 <!doctype html>
@@ -1404,43 +1406,12 @@ _HTML_TEMPLATE = """
       </section>
 
       <section>
-        <h2>PTP Time-Sync Messages Over Time</h2>
-        {% if wireshark.ptp_message_time_trend %}
-        <div class="table-scroll">
-          <table>
-            <thead>
-              <tr>
-                <th>Time (UTC)</th>
-                <th>PTP Packets</th>
-                <th>Sync</th>
-                <th>Follow_Up</th>
-                <th>Announce</th>
-                <th>Correction Median/P95 (ns)</th>
-              </tr>
-            </thead>
-            <tbody>
-              {% for row in wireshark.ptp_message_time_trend %}
-              <tr>
-                <td>{{ row.time_utc }}</td>
-                <td>{{ "{:,.0f}".format(row.ptp_packets) }}</td>
-                <td>{{ "{:,.0f}".format(row.sync_packets) }}</td>
-                <td>{{ "{:,.0f}".format(row.follow_up_packets) }}</td>
-                <td>{{ "{:,.0f}".format(row.announce_packets) }}</td>
-                <td>
-                  {% if row.correction_ns_median is not none %}
-                    {{ "%.2f"|format(row.correction_ns_median) }} / {{ "%.2f"|format(row.correction_ns_p95) }}
-                  {% else %}
-                    -
-                  {% endif %}
-                </td>
-              </tr>
-              {% endfor %}
-            </tbody>
-          </table>
-        </div>
-        {% else %}
-        <p class="muted">No timestamped PTP trend rows available.</p>
-        {% endif %}
+        <h2>PTP Time Series</h2>
+        <p class="muted">
+          High-volume per-minute rows are hidden for readability. Use the charts
+          <strong>PTP Message Types Over Time</strong> and
+          <strong>PTP State Score Over Time</strong> below.
+        </p>
       </section>
 
       {% if wireshark.ptp_time_sync_logic %}
@@ -1557,48 +1528,6 @@ _HTML_TEMPLATE = """
       </section>
       {% endif %}
 
-      {% if wireshark.ptp_state_flow %}
-      <section>
-        <h2>PTP State Flow Over Time</h2>
-        <div class="table-scroll">
-          <table>
-            <thead>
-              <tr>
-                <th>Time (UTC)</th>
-                <th>State</th>
-                <th>Score</th>
-                <th>PTP</th>
-                <th>Sync / Follow_Up / Announce</th>
-                <th>Correction Median/P95 (ns)</th>
-                <th>Timestamp Delta Median (ns)</th>
-                <th>Reason</th>
-              </tr>
-            </thead>
-            <tbody>
-              {% for row in wireshark.ptp_state_flow %}
-              <tr>
-                <td>{{ row.time_utc }}</td>
-                <td>{{ row.state }}</td>
-                <td>{{ row.state_score }}</td>
-                <td>{{ "{:,.0f}".format(row.ptp_packets) }}</td>
-                <td>{{ row.sync_packets }} / {{ row.follow_up_packets }} / {{ row.announce_packets }}</td>
-                <td>
-                  {% if row.correction_ns_median is not none %}
-                    {{ "%.2f"|format(row.correction_ns_median) }} / {{ "%.2f"|format(row.correction_ns_p95) }}
-                  {% else %}
-                    -
-                  {% endif %}
-                </td>
-                <td>{% if row.timestamp_delta_ns_median is not none %}{{ "%.2f"|format(row.timestamp_delta_ns_median) }}{% else %}-{% endif %}</td>
-                <td>{{ row.reason }}</td>
-              </tr>
-              {% endfor %}
-            </tbody>
-          </table>
-        </div>
-      </section>
-      {% endif %}
-
       <section>
         <h2>PTP Sender / Port Health</h2>
         {% if wireshark.ptp_port_health %}
@@ -1690,6 +1619,17 @@ _HTML_TEMPLATE = """
         </div>
       </section>
       {% endif %}
+      {% endif %}
+
+      {% if wireshark.protocol_insights %}
+      <section>
+        <h2>Protocol Insights</h2>
+        <ul>
+          {% for insight in wireshark.protocol_insights %}
+          <li>{{ insight }}</li>
+          {% endfor %}
+        </ul>
+      </section>
       {% endif %}
 
       <section>
@@ -3149,6 +3089,7 @@ def render_html(report: dict) -> str:
     jira = _extract_jira_metrics(report)
     ms = _extract_ms_biomarker_metrics(report)
     wireshark = _extract_wireshark_metrics(report)
+    is_wireshark_style = report.get("report_type_id") in _WIRESHARK_STYLE_REPORT_TYPES
     return template.render(
         report=report_view,
         is_network_queue=report.get("report_type_id") == "network_queue_congestion" and network is not None,
@@ -3156,7 +3097,7 @@ def render_html(report: dict) -> str:
         is_pm=report.get("report_type_id") == "pm_export_health" and pm is not None,
         is_jira=report.get("report_type_id") == "jira_issue_portfolio" and jira is not None,
         is_ms_biomarker=report.get("report_type_id") == "ms_biomarker_registry_health" and ms is not None,
-        is_wireshark=report.get("report_type_id") == "wireshark_capture_health" and wireshark is not None,
+        is_wireshark=is_wireshark_style and wireshark is not None,
         network=network or {},
         twamp=twamp or {},
         pm=pm or {},
@@ -3719,7 +3660,7 @@ def _distribution_icon_html_for_name(name: str) -> str:
 
 
 def _extract_wireshark_metrics(report: dict) -> dict | None:
-    if report.get("report_type_id") != "wireshark_capture_health":
+    if report.get("report_type_id") not in _WIRESHARK_STYLE_REPORT_TYPES:
         return None
     tables = report.get("tables", [])
     for table in tables:
@@ -3739,8 +3680,133 @@ def _extract_wireshark_metrics(report: dict) -> dict | None:
                 payload.get("ptp_source_comparison", []),
                 payload.get("ptp_time_sync_logic", {}),
                 payload.get("ptp_state_flow", []),
+                payload.get("ptp1588_local_summary", {}),
+                payload.get("ptp1588_sequence_continuity", []),
+                payload.get("ptp1588_t4_t3_analysis", {}),
+                payload.get("ptp1588_correction_anomalies", {}),
+                payload.get("ptp1588_alerts", []),
             )
-    return _normalize_wireshark_metrics({}, [], [], [], [], {}, [], [], [], [], [], {}, [])
+    return _normalize_wireshark_metrics({}, [], [], [], [], {}, [], [], [], [], [], {}, [], {}, [], {}, {}, [])
+
+
+def _build_ptp_protocol_insights(
+    normalized_ptp_summary: dict,
+    normalized_time_sync_logic: dict,
+    ptp_state_flow: list,
+    ptp1588_local_summary: dict,
+    ptp1588_sequence_continuity: list,
+    ptp1588_t4_t3_analysis: dict,
+    ptp1588_correction_anomalies: dict,
+    ptp1588_alerts: list,
+) -> list[str]:
+    if int(normalized_ptp_summary.get("packets", 0) or 0) <= 0:
+        return []
+
+    insights: list[str] = []
+    mode = str(normalized_time_sync_logic.get("ptp_mode_inferred", "unknown") or "unknown").replace("_", " ")
+    lock = str(normalized_time_sync_logic.get("lock_likelihood", "unknown") or "unknown")
+    lock_score = int(normalized_time_sync_logic.get("lock_score", 0) or 0)
+    insights.append(f"Inferred sync mode: {mode}; lock likelihood {lock.upper()} ({lock_score}/100).")
+
+    interval_median = normalized_time_sync_logic.get("sync_interval_ms_median")
+    interval_p95 = normalized_time_sync_logic.get("sync_interval_ms_p95")
+    if interval_median is not None and interval_p95 is not None:
+        insights.append(
+            f"Sync cadence is stable around {float(interval_median):.3f} ms (P95 {float(interval_p95):.3f} ms)."
+        )
+
+    timestamp_delta = normalized_ptp_summary.get("timestamp_delta_ns_median")
+    if timestamp_delta is not None:
+        delta_value = float(timestamp_delta)
+        if abs(delta_value) >= 1_000_000_000:
+            insights.append(
+                f"Frame-vs-origin timestamp median offset is large ({delta_value:,.0f} ns), indicating clock origin mismatch."
+            )
+        else:
+            insights.append(f"Frame-vs-origin timestamp median offset is {delta_value:,.0f} ns.")
+
+    continuity_rows = ptp1588_sequence_continuity or []
+    total_gaps = sum(int(row.get("gaps", 0) or 0) for row in continuity_rows if isinstance(row, dict))
+    total_ooo = sum(int(row.get("out_of_order", 0) or 0) for row in continuity_rows if isinstance(row, dict))
+    estimated_missing = sum(
+        int(row.get("estimated_missing_sequences", 0) or 0) for row in continuity_rows if isinstance(row, dict)
+    )
+    if continuity_rows:
+        if total_gaps == 0 and total_ooo == 0 and estimated_missing == 0:
+            insights.append("Sequence continuity is clean: no gaps, missing IDs, or out-of-order events detected.")
+        else:
+            insights.append(
+                f"Sequence continuity issues detected: gaps={total_gaps}, missing_est={estimated_missing}, out_of_order={total_ooo}."
+            )
+
+    t4_t3_stats = (ptp1588_t4_t3_analysis or {}).get("t4_t3_stats", {}) if isinstance(ptp1588_t4_t3_analysis, dict) else {}
+    t4_windows = (ptp1588_t4_t3_analysis or {}).get("t4_t3_spike_windows", []) if isinstance(ptp1588_t4_t3_analysis, dict) else []
+    pairs = int(t4_t3_stats.get("pairs", 0) or 0)
+    if pairs > 0:
+        p99_ns = t4_t3_stats.get("p99_ns")
+        max_ns = t4_t3_stats.get("max_ns")
+        insights.append(
+            f"T4-T3 path delay pairs={pairs:,}; p99={float(p99_ns):,.0f} ns, max={float(max_ns):,.0f} ns, spike_windows={len(t4_windows)}."
+            if p99_ns is not None and max_ns is not None
+            else f"T4-T3 path delay pairs={pairs:,}, spike_windows={len(t4_windows)}."
+        )
+
+    anomaly_count = int((ptp1588_correction_anomalies or {}).get("count", 0) or 0) if isinstance(ptp1588_correction_anomalies, dict) else 0
+    if anomaly_count > 0:
+        threshold = (ptp1588_correction_anomalies or {}).get("threshold_ns", 0.0)
+        insights.append(f"Correction-field anomalies: {anomaly_count} samples above {float(threshold):,.0f} ns threshold.")
+    else:
+        insights.append("No correction-field anomalies detected above configured threshold.")
+
+    local_ptp_packets = int((ptp1588_local_summary or {}).get("ptp_packets", 0) or 0) if isinstance(ptp1588_local_summary, dict) else 0
+    if local_ptp_packets > 0:
+        insights.append(f"PTP1588 local analysis coverage: {local_ptp_packets:,} packets.")
+
+    if ptp1588_alerts:
+        alert_messages = [
+            str(item.get("message", "")).strip()
+            for item in ptp1588_alerts
+            if isinstance(item, dict) and str(item.get("message", "")).strip()
+        ]
+        if alert_messages:
+            insights.append("Top protocol alerts: " + " | ".join(alert_messages[:2]))
+
+    # Explain likely root causes for quality drops/degradation windows.
+    drop_causes: list[str] = []
+    if len(t4_windows) > 0:
+        drop_causes.append(f"path-delay spikes in {len(t4_windows)} window(s)")
+    if anomaly_count > 0:
+        drop_causes.append(f"{anomaly_count} correction-field anomaly event(s)")
+    gap_rate = normalized_time_sync_logic.get("sync_sequence_gap_rate_pct")
+    if gap_rate is not None and float(gap_rate) > 0:
+        drop_causes.append(f"sync sequence gaps ({float(gap_rate):.2f}% rate)")
+    out_of_order = int(normalized_time_sync_logic.get("sync_sequence_out_of_order", 0) or 0)
+    if out_of_order > 0:
+        drop_causes.append(f"{out_of_order} out-of-order sync packet(s)")
+    unstable_states = [
+        row
+        for row in (ptp_state_flow or [])
+        if isinstance(row, dict) and str(row.get("state", "")).lower() not in {"", "stable"}
+    ]
+    if unstable_states:
+        drop_causes.append(f"{len(unstable_states)} non-stable state interval(s)")
+
+    lock_reasons = normalized_time_sync_logic.get("lock_reasons", []) or []
+    if isinstance(lock_reasons, list):
+        for reason in lock_reasons:
+            reason_text = str(reason).strip().lower()
+            if not reason_text:
+                continue
+            if "offset" in reason_text and "timestamp" in reason_text:
+                drop_causes.append("large frame/origin timestamp offset")
+                break
+
+    if drop_causes:
+        insights.append("Likely drop/degradation drivers: " + "; ".join(drop_causes) + ".")
+    else:
+        insights.append("No protocol-level drop drivers detected in sequence, timing, or correction diagnostics.")
+
+    return insights
 
 
 def _normalize_wireshark_metrics(
@@ -3757,6 +3823,11 @@ def _normalize_wireshark_metrics(
     ptp_source_comparison: list,
     ptp_time_sync_logic: dict,
     ptp_state_flow: list,
+    ptp1588_local_summary: dict,
+    ptp1588_sequence_continuity: list,
+    ptp1588_t4_t3_analysis: dict,
+    ptp1588_correction_anomalies: dict,
+    ptp1588_alerts: list,
 ) -> dict:
     normalized_summary = {
         "packets": int(summary.get("packets", 0) or 0),
@@ -3829,6 +3900,16 @@ def _normalize_wireshark_metrics(
         "worst_state": ptp_time_sync_logic.get("worst_state"),
         "worst_state_time_utc": ptp_time_sync_logic.get("worst_state_time_utc"),
     }
+    protocol_insights = _build_ptp_protocol_insights(
+        normalized_ptp_summary,
+        normalized_time_sync_logic,
+        ptp_state_flow or [],
+        ptp1588_local_summary or {},
+        ptp1588_sequence_continuity or [],
+        ptp1588_t4_t3_analysis or {},
+        ptp1588_correction_anomalies or {},
+        ptp1588_alerts or [],
+    )
     return {
         "summary": normalized_summary,
         "summary_json": json.dumps(normalized_summary),
@@ -3856,5 +3937,11 @@ def _normalize_wireshark_metrics(
         "ptp_time_sync_logic_json": json.dumps(normalized_time_sync_logic),
         "ptp_state_flow": ptp_state_flow or [],
         "ptp_state_flow_json": json.dumps(ptp_state_flow or []),
+        "ptp1588_local_summary": ptp1588_local_summary or {},
+        "ptp1588_sequence_continuity": ptp1588_sequence_continuity or [],
+        "ptp1588_t4_t3_analysis": ptp1588_t4_t3_analysis or {},
+        "ptp1588_correction_anomalies": ptp1588_correction_anomalies or {},
+        "ptp1588_alerts": ptp1588_alerts or [],
+        "protocol_insights": protocol_insights,
     }
 

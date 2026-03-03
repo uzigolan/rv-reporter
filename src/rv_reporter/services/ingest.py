@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import os
+import re
 import subprocess
 from functools import lru_cache
 from pathlib import Path
@@ -9,8 +10,11 @@ from pathlib import Path
 import pandas as pd
 
 _PCAP_COLUMN_MAP: list[tuple[str, str]] = [
+    ("frame_number", "frame.number"),
     ("frame_time_epoch", "frame.time_epoch"),
     ("frame_len", "frame.len"),
+    ("eth_src", "eth.src"),
+    ("eth_dst", "eth.dst"),
     ("src_ip", "ip.src"),
     ("ipv6_src", "ipv6.src"),
     ("dst_ip", "ip.dst"),
@@ -42,12 +46,19 @@ _PCAP_OPTIONAL_COLUMN_MAP: list[tuple[str, tuple[str, ...]]] = [
     ("ptp_correction_ns", ("ptp.v2.correction.ns",)),
     ("ptp_origin_ts_seconds", ("ptp.v2.sdr.origintimestamp.seconds", "ptp.sdr.origintimestamp_seconds")),
     ("ptp_origin_ts_nanoseconds", ("ptp.v2.sdr.origintimestamp.nanoseconds", "ptp.sdr.origintimestamp_nanoseconds")),
+    ("ptp_dr_receive_ts_seconds", ("ptp.v2.dr.receivetimestamp.seconds",)),
+    ("ptp_dr_receive_ts_nanoseconds", ("ptp.v2.dr.receivetimestamp.nanoseconds",)),
+    ("ptp_dr_requesting_source_port_identity", ("ptp.v2.dr.requestingsourceportidentity",)),
+    ("ptp_dr_requesting_source_port_id", ("ptp.v2.dr.requestingsourceportid",)),
     ("ptp_two_step", ("ptp.v2.flags.twostep",)),
 ]
 
 _PCAP_COLUMNS = [
+    "frame_number",
     "frame_time_epoch",
     "frame_len",
+    "eth_src",
+    "eth_dst",
     "src_ip",
     "dst_ip",
     "ip_proto",
@@ -72,6 +83,10 @@ _PCAP_COLUMNS = [
     "ptp_correction_ns",
     "ptp_origin_ts_seconds",
     "ptp_origin_ts_nanoseconds",
+    "ptp_dr_receive_ts_seconds",
+    "ptp_dr_receive_ts_nanoseconds",
+    "ptp_dr_requesting_source_port_identity",
+    "ptp_dr_requesting_source_port_id",
     "ptp_two_step",
 ]
 
@@ -125,11 +140,47 @@ def describe_tabular_source(path: str | Path, sheet_name: str | None = None) -> 
 
 
 def _source_row_count(path: Path, sheet_name: str | None = None) -> int | None:
+    suffix = path.suffix.lower()
+    if suffix in {".pcap", ".pcapng"}:
+        fast_count = _pcap_packet_count(path)
+        if fast_count is not None:
+            return fast_count
     try:
         frame = load_csv_with_limit(path, row_limit=None, sheet_name=sheet_name)
         return int(len(frame))
     except Exception:  # noqa: BLE001
         return None
+
+
+def _pcap_packet_count(path: Path) -> int | None:
+    tshark_exe = _resolve_tshark_executable()
+    tshark_path = Path(tshark_exe.strip('"'))
+    candidates: list[str] = ["capinfos"]
+    if tshark_path.name:
+        sibling = tshark_path.with_name("capinfos.exe" if os.name == "nt" else "capinfos")
+        candidates.insert(0, str(sibling))
+
+    for exe in candidates:
+        try:
+            completed = subprocess.run(
+                [exe, "-c", str(path)],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        except Exception:  # noqa: BLE001
+            continue
+        if completed.returncode != 0:
+            continue
+        text = (completed.stdout or "") + "\n" + (completed.stderr or "")
+        match = re.search(r"Number of packets:\s*([0-9,]+)", text, flags=re.IGNORECASE)
+        if not match:
+            continue
+        try:
+            return int(match.group(1).replace(",", ""))
+        except Exception:  # noqa: BLE001
+            continue
+    return None
 
 
 def list_excel_sheets(path: str | Path) -> list[str]:
