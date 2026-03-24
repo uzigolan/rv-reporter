@@ -42,8 +42,10 @@ class OpenAIChatCompletionsProvider(ReportProvider):
         csv_profile: dict[str, Any],
         metrics: dict[str, Any],
         user_prefs: dict[str, Any],
+        agent_plan: dict[str, Any] | None = None,
+        prompt: str | None = None,
     ) -> dict[str, Any]:
-        payload = build_model_input_payload(definition, csv_profile, metrics, user_prefs)
+        payload = build_model_input_payload(definition, csv_profile, metrics, user_prefs, agent_plan=agent_plan)
         prompt = (
             "Return only valid JSON (no markdown fences) that matches this schema. "
             "Do not add extra keys. "

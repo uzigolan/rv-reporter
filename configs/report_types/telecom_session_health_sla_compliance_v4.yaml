@@ -1,0 +1,112 @@
+report_type_id: telecom_session_health_sla_compliance_v4
+version: 1.0.0
+title: Telecom Session Health SLA Compliance Report v4
+required_columns:
+- twampControllerId
+- twampPeerAddrType
+- twampPeerAddr
+- twampContSessionId
+- twampReportCurrentStartDateAndTime
+- twampReportCurrentElapsedTime
+- twampReportCurrentTxPackets
+- twampReportCurrentRxValidPackets
+- twampReportCurrentLossPackets
+- twampReportCurrentAvailableSeconds
+- twampReportCurrentDelayMin
+- twampReportCurrentDelayMax
+- twampReportCurrentDelayAverage
+- twampReportCurrentPdvMax
+- twampReportCurrentIpdvMax
+- twampReportCurrentReordered
+- twampReportCurrentDuplicate
+metrics_profile: telecom_session_health_sla_compliance_v4
+default_prefs:
+  sla_latency_good: 10
+  sla_latency_critical: 50
+  sla_jitter_good: 5
+  sla_jitter_critical: 20
+  sla_loss_good: 0.1
+  sla_loss_critical: 1.0
+  analysis_scope: aggregate
+  time_window: per_hour
+  tone: technical
+  audience: engineering
+  focus: anomalies
+prompt_instructions: 'This report evaluates telecom session health based on SLA thresholds
+  for latency, jitter, and packet loss. It determines if session states are ''good'',
+  ''degraded'', or ''critical''. The analysis is aggregate, focusing on hourly trends,
+  and key metrics are delay, jitter, and loss. Ensure SLA settings align with the
+  following: latency < 10ms is good, > 50ms is critical; jitter < 5ms is good, > 20ms
+  is critical; packet loss < 0.1% is good, > 1% is critical.'
+output_schema:
+  type: object
+  additionalProperties: false
+  required:
+  - report_type_id
+  - report_title
+  - summary
+  - sections
+  - alerts
+  - recommendations
+  - tables
+  - charts
+  - metadata
+  properties:
+    report_type_id:
+      type: string
+    report_title:
+      type: string
+    summary:
+      type: string
+    sections:
+      type: array
+      items:
+        type: object
+        additionalProperties: false
+        required:
+        - title
+        - body
+        properties:
+          title:
+            type: string
+          body:
+            type: string
+    alerts:
+      type: array
+      items:
+        type: object
+        additionalProperties: false
+        required:
+        - severity
+        - message
+        properties:
+          severity:
+            type: string
+          message:
+            type: string
+    recommendations:
+      type: array
+      items:
+        type: object
+        additionalProperties: false
+        required:
+        - priority
+        - action
+        properties:
+          priority:
+            type: string
+          action:
+            type: string
+    tables:
+      type: array
+      items:
+        type: object
+        additionalProperties: true
+    charts:
+      type: array
+      items:
+        type: object
+        additionalProperties: true
+    metadata:
+      type: object
+      additionalProperties: true

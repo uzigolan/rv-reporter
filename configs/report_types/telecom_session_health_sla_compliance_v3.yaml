@@ -1,0 +1,154 @@
+report_type_id: telecom_session_health_sla_compliance_v3
+version: 1.0.0
+title: Telecom Session Health SLA Compliance Report v3
+required_columns:
+- twampControllerId
+- twampPeerAddrType
+- twampPeerAddr
+- twampContSessionId
+- twampReportCurrentStartDateAndTime
+- twampReportCurrentElapsedTime
+- twampReportCurrentTxPackets
+- twampReportCurrentRxValidPackets
+- twampReportCurrentLossPackets
+- twampReportCurrentAvailableSeconds
+- twampReportCurrentDelayMin
+- twampReportCurrentDelayMax
+- twampReportCurrentDelaySum
+- twampReportCurrentDelayAverage
+- twampReportCurrentDelayedPackets
+- twampReportCurrentPdvMax
+- twampReportCurrentIpdvMax
+- twampReportCurrentIpdvSum
+- twampReportCurrentIpdvValidResults
+- twampReportCurrentIpdvFwdMax
+- twampReportCurrentIpdvFwdSum
+- twampReportCurrentIpdvFwdValidResults
+- twampReportCurrentIpdvBckMax
+- twampReportCurrentIpdvBckSum
+- twampReportCurrentIpdvBckValidResults
+- twampReportCurrentReorderedFwd
+- twampReportCurrentReorderedBck
+- twampReportCurrentDuplicateFwd
+- twampReportCurrentDuplicateBck
+- twampReportCurrentFragmentedFwd
+- twampReportCurrentFragmentedBck
+- twampReportCurrentDelayFwdMin
+- twampReportCurrentDelayFwdMax
+- twampReportCurrentDelayFwdSum
+- twampReportCurrentDelayBckMin
+- twampReportCurrentDelayBckMax
+- twampReportCurrentDelayBckSum
+- twampReportCurrentDelayedPacketsFwd
+- twampReportCurrentDelayedPacketsBck
+- twampReportCurrentPdvMaxFwd
+- twampReportCurrentPdvMaxBck
+- twampReportCurrentTxPacketsFwd
+- twampReportCurrentTxPacketsBck
+- twampReportCurrentRxValidPacketsFwd
+- twampReportCurrentRxValidPacketsBck
+- twampReportCurrentLossPacketsFwd
+- twampReportCurrentLossPacketsBck
+- twampReportCurrentAvailableSecondsFwd
+- twampReportCurrentAvailableSecondsBck
+- twampReportCurrentRxSyncValidPacketsFwd
+- twampReportCurrentRxSyncValidPacketsBck
+- twampReportCurrentSyncSeconds
+- twampReportCurrentReordered
+- twampReportCurrentDuplicate
+metrics_profile: telecom_session_health_sla_compliance_v3
+default_prefs:
+  sla_thresholds:
+    delay_critical: 50
+    delay_degraded: 10
+    jitter_critical: 30
+    jitter_degraded: 10
+    packet_loss_critical: 5
+    packet_loss_degraded: 1
+  analysis_scope: per_session
+  priority_metrics:
+  - delay
+  - jitter
+  - packet_loss
+  time_windows:
+  - per_hour
+  - per_day
+  tone: technical
+  audience: engineering
+  focus: anomalies
+prompt_instructions: Please provide your SLA thresholds for delay, jitter, and packet
+  loss. Decide if the analysis should be per-session or aggregated across all sessions.
+  Define 'degraded' and 'critical' states based on these metrics. Indicate the priority
+  metrics and relevant time windows.
+output_schema:
+  type: object
+  additionalProperties: false
+  required:
+  - report_type_id
+  - report_title
+  - summary
+  - sections
+  - alerts
+  - recommendations
+  - tables
+  - charts
+  - metadata
+  properties:
+    report_type_id:
+      type: string
+    report_title:
+      type: string
+    summary:
+      type: string
+    sections:
+      type: array
+      items:
+        type: object
+        additionalProperties: false
+        required:
+        - title
+        - body
+        properties:
+          title:
+            type: string
+          body:
+            type: string
+    alerts:
+      type: array
+      items:
+        type: object
+        additionalProperties: false
+        required:
+        - severity
+        - message
+        properties:
+          severity:
+            type: string
+          message:
+            type: string
+    recommendations:
+      type: array
+      items:
+        type: object
+        additionalProperties: false
+        required:
+        - priority
+        - action
+        properties:
+          priority:
+            type: string
+          action:
+            type: string
+    tables:
+      type: array
+      items:
+        type: object
+        additionalProperties: true
+    charts:
+      type: array
+      items:
+        type: object
+        additionalProperties: true
+    metadata:
+      type: object
+      additionalProperties: true

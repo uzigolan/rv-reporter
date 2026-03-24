@@ -1,0 +1,14 @@
+plugin_id: telecom_session_health_thresold_sla
+metrics_profile: telecom_session_health_thresold_sla
+api_version: 1
+version: 1.0.0
+title: Telecom Session Health Threshold SLA Report
+description: Evaluates telecom session health compliance against defined SLA thresholds
+  for key metrics in time series data.
+family: time_series
+domain: telecom
+mode: threshold_sla
+entrypoint: plugin.py
+owner: ai-agent
+generator: openai_sdk
+status: draft

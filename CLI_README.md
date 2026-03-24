@@ -66,9 +66,9 @@ Generate plugin package and optional report-type YAML for agent workflows.
 Options:
 - `--report-type-id` (required) `[a-z0-9_]+`
 - `--title` (required)
-- `--family` (required): `time_series|tabular_statistical|event|log_text|hybrid`
-- `--domain` (required): `networking|project_management|healthcare|operations|security|finance`
-- `--mode` (required): `health_score|anomaly_detection|trend_analysis|threshold_sla|burst_detection|correlation_analysis|distribution_analysis|top_n_hotspots|flow_bottleneck`
+- `--family` (required): `time_series|tabular_statistical|event|log_text|entity_snapshot|relational|hybrid`
+- `--domain` (required): `generic|networking|observability|project_management|healthcare|operations|security|finance|product|sales|customer_support|supply_chain|manufacturing|energy|telecom|research|education|government`
+- `--mode` (required): `overview_summary|health_score|issue_detection|anomaly_detection|trend_analysis|statistical_summary|threshold_sla|burst_detection|correlation_analysis|distribution_analysis|variance_analysis|change_detection|segmentation_analysis|ranking_prioritization|forecast_outlook|top_n_hotspots|flow_bottleneck|root_cause_triage`
 - `--required-column` (required, repeatable)
 - `--version` (default: `1.0.0`)
 - `--description` (optional)
@@ -89,6 +89,10 @@ rv-reporter scaffold-report-type --report-type-id net_usage --title "Network Usa
 
 ```bash
 rv-reporter scaffold-report-type --report-type-id jira_flow_health --title "Jira Flow Health" --family event --domain project_management --mode flow_bottleneck --required-column issue_key --required-column status --required-column created --required-column updated --generator n8n
+```
+
+```bash
+rv-reporter scaffold-report-type --report-type-id dataset_overview --title "Dataset Overview" --family entity_snapshot --domain generic --mode statistical_summary --required-column entity_id --required-column status --generator openai_sdk
 ```
 
 ## Guardrail Tests (recommended per change)

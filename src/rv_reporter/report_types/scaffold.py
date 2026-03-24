@@ -5,18 +5,54 @@ from pathlib import Path
 
 import yaml
 
-FAMILIES = {"time_series", "tabular_statistical", "event", "log_text", "hybrid"}
-DOMAINS = {"networking", "project_management", "healthcare", "operations", "security", "finance"}
+FAMILIES = {
+    "time_series",
+    "tabular_statistical",
+    "event",
+    "log_text",
+    "entity_snapshot",
+    "relational",
+    "hybrid",
+}
+DOMAINS = {
+    "generic",
+    "networking",
+    "observability",
+    "project_management",
+    "healthcare",
+    "operations",
+    "security",
+    "finance",
+    "product",
+    "sales",
+    "customer_support",
+    "supply_chain",
+    "manufacturing",
+    "energy",
+    "telecom",
+    "research",
+    "education",
+    "government",
+}
 MODES = {
+    "overview_summary",
     "health_score",
+    "issue_detection",
     "anomaly_detection",
     "trend_analysis",
+    "statistical_summary",
     "threshold_sla",
     "burst_detection",
     "correlation_analysis",
     "distribution_analysis",
+    "variance_analysis",
+    "change_detection",
+    "segmentation_analysis",
+    "ranking_prioritization",
+    "forecast_outlook",
     "top_n_hotspots",
     "flow_bottleneck",
+    "root_cause_triage",
 }
 
 

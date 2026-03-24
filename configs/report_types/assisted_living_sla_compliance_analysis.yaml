@@ -1,0 +1,99 @@
+report_type_id: assisted_living_sla_compliance_analysis
+version: 1.0.0
+title: Assisted Living SLA Compliance and Optimization Report
+required_columns:
+- timestamp
+- device_name
+- property
+metrics_profile: assisted_living_sla_compliance_analysis
+default_prefs:
+  sla_threshold_response_time: 10
+  sla_threshold_resolution_time: 20
+  high_frequency_calls: 5
+  response_time_weight: 25
+  resolution_time_weight: 20
+  incomplete_incidents_penalty: 25
+  high_workload_penalty: 20
+  hourly_caregiver_cost_estimate:
+  - 20
+  - 30
+  tone: technical
+  audience: leadership
+  focus: anomalies
+prompt_instructions: 'The AI Optimized Assisted Living SLA and Compliance Report focuses
+  on call events from residents and caregivers. Ensure timely response and resolution
+  analysis. Measure risk scores and recommend staffing optimization. Validate each
+  incident by sequence: Resident Call, Caregiver Response, Resident Resolution, Caregiver
+  Confirmation. Derive metrics directly from CSV data without assumptions.'
+output_schema:
+  type: object
+  additionalProperties: false
+  required:
+  - report_type_id
+  - report_title
+  - summary
+  - sections
+  - alerts
+  - recommendations
+  - tables
+  - charts
+  - metadata
+  properties:
+    report_type_id:
+      type: string
+    report_title:
+      type: string
+    summary:
+      type: string
+    sections:
+      type: array
+      items:
+        type: object
+        additionalProperties: false
+        required:
+        - title
+        - body
+        properties:
+          title:
+            type: string
+          body:
+            type: string
+    alerts:
+      type: array
+      items:
+        type: object
+        additionalProperties: false
+        required:
+        - severity
+        - message
+        properties:
+          severity:
+            type: string
+          message:
+            type: string
+    recommendations:
+      type: array
+      items:
+        type: object
+        additionalProperties: false
+        required:
+        - priority
+        - action
+        properties:
+          priority:
+            type: string
+          action:
+            type: string
+    tables:
+      type: array
+      items:
+        type: object
+        additionalProperties: true
+    charts:
+      type: array
+      items:
+        type: object
+        additionalProperties: true
+    metadata:
+      type: object
+      additionalProperties: true

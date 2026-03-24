@@ -2,15 +2,43 @@
 
 ## Goal
 
-Support two agent paths for creating/updating report types:
+Support multiple agent paths for creating/updating report types:
+- **Built-in Web UI** (primary, recommended): prompt → AI spec → scaffold, all in-browser
 - OpenAI Agent Builder + exported Python integration
 - n8n automation flow
 
-Both paths must call the same repo contract:
+All paths call the same repo contract:
 - `rv-reporter scaffold-report-type ...`
 - `py scripts/run_report_type_guardrails.py`
 
-## Recommended Architecture (Hybrid)
+## Recommended Architecture
+
+### Primary path: Built-in Web UI
+
+The Web UI at `/report-types/new` provides a fully integrated AI agent flow:
+
+1. Open `http://localhost:5000/report-types/new`.
+2. (Optional) Pick an existing report type to clone taxonomy/column hints from.
+3. (Optional) Upload a source CSV/Excel file — the AI inspects real column names, types, and sample rows.
+4. Describe your report type in plain language in the prompt field.
+5. Click **Generate Draft With AI**.
+6. The server calls OpenAI (`REPORT_TYPE_AGENT_MODEL`, default `gpt-4o-mini`) with a structured output schema.
+7. The AI returns: `report_type_id`, `title`, `family`, `domain`, `mode`, `required_columns`, `prompt_instructions`, and starter `plugin_code`.
+8. The scaffold system writes four files automatically:
+   - `configs/report_types/<id>.yaml`
+   - `report_type_plugins/<id>/manifest.yaml`
+   - `report_type_plugins/<id>/plugin.py` (AI-generated code inserted)
+   - `report_type_plugins/<id>/tests/test_smoke.py`
+9. Browser redirects to the YAML config view for inspection.
+
+Env vars:
+
+| Var | Default | Purpose |
+|---|---|---|
+| `REPORT_TYPE_AGENT_MODEL` | `gpt-4o-mini` | Model for report-type design |
+| `OPENAI_API_KEY` | — | Required |
+
+### Hybrid path: Agent Builder + repo
 
 1. Design and test the agent behavior in OpenAI Agent Builder UI.
 2. Export/integrate Python code from the Agent Builder Code tab (Advanced integration).

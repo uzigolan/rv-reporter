@@ -1,17 +1,663 @@
 {% extends "layout.html" %}
-{% block title %}Report Type YAML | RV Reporter{% endblock %}
+{% from "macros.html" import workflow_pipeline %}
+{% block title %}Review Report Type | RV Reporter{% endblock %}
+{% block head %}
+<style>
+  .actions-group { display: flex; gap: 0.8rem; flex-wrap: wrap; margin-top: 1rem; }
+  .actions-group .btn-primary, 
+  .actions-group .btn-secondary, 
+  .actions-group a.btn-secondary { 
+    cursor: pointer; 
+    transition: all 0.2s ease;
+  }
+  .actions-group .btn-secondary {
+    background: #ebf4ff;
+    color: #184392;
+    border: 1px solid #bfdbfe;
+    border-radius: 10px;
+    padding: 0.66rem 0.9rem;
+    font-weight: 700;
+    text-decoration: none;
+    display: inline-block;
+    margin-right: 0;
+  }
+  .actions-group .btn-secondary:hover {
+    background: #deeeff;
+    border-color: #93c5fd;
+  }
+  .actions-group .btn-secondary:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+  }
+  .actions-group a.btn-secondary {
+    padding: 0.66rem 0.9rem;
+  }
+  
+  /* ── Loading state animation ──────────────────────────────────────── */
+  @keyframes spinner-rotate {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+  }
+  @keyframes panel-rise {
+    from { opacity: 0; transform: translateY(8px) scale(0.985); }
+    to { opacity: 1; transform: translateY(0) scale(1); }
+  }
+  @keyframes panel-sheen {
+    0% { transform: translateX(-130%); }
+    100% { transform: translateX(180%); }
+  }
+  @keyframes dot-bounce {
+    0%, 80%, 100% { transform: translateY(0); opacity: 0.35; }
+    40% { transform: translateY(-4px); opacity: 1; }
+  }
+  @keyframes halo-pulse {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(24,67,146,0.14); }
+    50% { box-shadow: 0 0 0 8px rgba(24,67,146,0); }
+  }
+  .btn-loading {
+    opacity: 0.75 !important;
+    pointer-events: none !important;
+  }
+  .btn-loading::before {
+    content: "⟳ ";
+    margin-right: 0.3rem;
+    display: inline-block;
+    animation: spinner-rotate 1s linear infinite;
+  }
+  .action-progress {
+    display: none;
+    align-items: center;
+    gap: 0.9rem;
+    margin-top: 0.9rem;
+    padding: 0.9rem 1rem;
+    border: 1px solid #bfdbfe;
+    border-radius: 14px;
+    background: linear-gradient(120deg, #eff6ff 0%, #f8fbff 42%, #ffffff 100%);
+    color: #184392;
+    font-weight: 700;
+    position: relative;
+    overflow: hidden;
+    box-shadow: 0 10px 24px rgba(37, 99, 235, 0.08);
+  }
+  .action-progress.is-visible {
+    display: flex;
+    animation: panel-rise 0.32s ease-out;
+  }
+  .action-progress::after {
+    content: "";
+    position: absolute;
+    inset: 0 auto 0 -35%;
+    width: 35%;
+    background: linear-gradient(90deg, rgba(255,255,255,0), rgba(255,255,255,0.75), rgba(255,255,255,0));
+    animation: panel-sheen 2.2s ease-in-out infinite;
+    pointer-events: none;
+  }
+  .action-progress-spinner {
+    width: 1.1rem;
+    height: 1.1rem;
+    border-radius: 999px;
+    border: 2px solid rgba(24,67,146,0.18);
+    border-top-color: #184392;
+    animation: spinner-rotate 0.85s linear infinite;
+    flex-shrink: 0;
+    position: relative;
+    z-index: 1;
+  }
+  .action-progress-spinner::after {
+    content: "";
+    position: absolute;
+    inset: -4px;
+    border-radius: 999px;
+    animation: halo-pulse 1.7s ease-in-out infinite;
+  }
+  .action-progress-text {
+    line-height: 1.35;
+    position: relative;
+    z-index: 1;
+  }
+  .action-progress-title {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.18rem;
+  }
+  .action-progress-sub {
+    display: block;
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: #5f6d82;
+    margin-top: 0.12rem;
+  }
+  .action-progress-dots {
+    display: inline-flex;
+    gap: 0.18rem;
+    margin-left: 0.1rem;
+    vertical-align: middle;
+  }
+  .action-progress-dot {
+    width: 0.28rem;
+    height: 0.28rem;
+    border-radius: 999px;
+    background: currentColor;
+    animation: dot-bounce 1.15s ease-in-out infinite;
+  }
+  .action-progress-dot:nth-child(2) {
+    animation-delay: 0.14s;
+  }
+  .action-progress-dot:nth-child(3) {
+    animation-delay: 0.28s;
+  }
+  .action-progress-timer {
+    display: inline-block;
+    margin-left: 0.45rem;
+    padding: 0.12rem 0.42rem;
+    border-radius: 999px;
+    background: rgba(24,67,146,0.08);
+    color: #2852a0;
+    font-size: 0.72rem;
+    font-weight: 800;
+    letter-spacing: 0.02em;
+  }
+</style>
+{% endblock %}
+{% set has_preview = preview_html_path or preview_json_path %}
 {% block content %}
+{{ workflow_pipeline(8 if manifest_status|lower == 'active' else (7 if has_preview else (5 if manifest_status|lower != 'planned' else 6))) }}
+
+{% if has_preview %}
+{# ── PREVIEW SAMPLE MODE ───────────────────────────────────────────── #}
 <section class="panel hero">
-  <h1>Report Type YAML</h1>
-  <p>Read-only configuration view.</p>
+  <h1>Preview Sample Report</h1>
+  <p>Examine the generated report below. If it looks good, publish the report type to make it available for generation.</p>
 </section>
 
 <section class="panel">
   <p><strong>Report Type:</strong> {{ report_type_label }} <span class="muted">({{ report_type_id }})</span></p>
-  <p><strong>File:</strong> <code>{{ yaml_path }}</code></p>
-  <pre style="white-space: pre-wrap; word-break: break-word; margin-top: 0.8rem;">{{ yaml_text }}</pre>
-  <p style="margin-top: 0.9rem;">
-    <a class="btn-link" href="{{ url_for('list_report_types_page') }}">Back to Manage Report Types</a>
-  </p>
+  <p><strong>Status:</strong> <span class="muted">{{ manifest_status }}</span></p>
+  {% if sample_source_path %}
+    <p><strong>Sample Source:</strong> <span class="muted">{{ sample_source_path }}</span>{% if sample_sheet_name %} <span class="muted">sheet={{ sample_sheet_name }}</span>{% endif %}</p>
+  {% endif %}
+
+  <div class="actions-group" style="margin-bottom:1rem;">
+    {% if preview_html_path %}
+      <a href="{{ url_for('view_html', path=preview_html_path) }}" target="_blank" class="btn-primary" style="text-decoration:none;">Open Full Report ↗</a>
+    {% endif %}
+    {% if preview_json_path %}
+      <a href="{{ url_for('view_json', path=preview_json_path) }}" target="_blank" class="btn-secondary" style="text-decoration:none;">View JSON</a>
+    {% endif %}
+    {% if manifest_status|lower == 'planned' %}
+      <form method="post" action="{{ url_for('publish_report_type') }}" style="margin:0;" id="publish-form">
+        <input type="hidden" name="report_type_id" value="{{ report_type_id }}" />
+        <button type="submit" class="btn-primary" id="publish-btn" style="background:#15803d;">✓ Publish Report Type</button>
+      </form>
+    {% endif %}
+    {% if has_sample_source %}
+      <form method="post" action="{{ url_for('generate') }}" style="margin:0;" id="preview-planned-form">
+        <input type="hidden" name="report_type_id" value="{{ report_type_id }}" />
+        <input type="hidden" name="provider" value="local" />
+        <input type="hidden" name="model" value="local-metrics" />
+        <input type="hidden" name="existing_csv_path" value="{{ sample_source_path }}" />
+        <input type="hidden" name="sheet_name" value="{{ sample_sheet_name }}" />
+        <input type="hidden" name="return_to_report_type_view" value="1" />
+        <button type="submit" class="btn-secondary preview-btn">↻ Re-generate Preview</button>
+      </form>
+    {% endif %}
+  </div>
+
+  {% if preview_html_path %}
+  <div style="border:1.5px solid var(--border); border-radius:12px; overflow:hidden; background:#fff;">
+    <iframe src="{{ url_for('view_html', path=preview_html_path) }}" style="width:100%; height:70vh; border:none;" title="Preview Report"></iframe>
+  </div>
+  {% endif %}
+
+  <div class="action-progress" id="action-progress" aria-live="polite">
+    <span class="action-progress-spinner" aria-hidden="true"></span>
+    <span class="action-progress-text" id="action-progress-text">
+      <span class="action-progress-title">
+        Working on your request
+        <span class="action-progress-dots" aria-hidden="true">
+          <span class="action-progress-dot"></span>
+          <span class="action-progress-dot"></span>
+          <span class="action-progress-dot"></span>
+        </span>
+        <span class="action-progress-timer" id="action-progress-timer">0s</span>
+      </span>
+      <span class="action-progress-sub" id="action-progress-sub">This page will update when the next step is ready.</span>
+    </span>
+  </div>
 </section>
+
+{% else %}
+{# ── REVIEW & EDIT MODE (no preview yet) ──────────────────────────── #}
+<section class="panel hero">
+  <h1>Review Report Type</h1>
+  <p>Inspect the generated config, publish it when ready, and run a sample report from the source data you used to draft it.</p>
+</section>
+
+<section class="panel">
+  <p><strong>Report Type:</strong> {{ report_type_label }} <span class="muted">({{ report_type_id }})</span></p>
+  <p><strong>Status:</strong> <span class="muted">{{ manifest_status }}</span></p>
+  {% if sample_source_path %}
+    <p><strong>Sample Source:</strong> <span class="muted">{{ sample_source_path }}</span>{% if sample_sheet_name %} <span class="muted">sheet={{ sample_sheet_name }}</span>{% endif %}</p>
+  {% endif %}
+  {% if has_sample_source and missing_source_columns %}
+    <div class="flash flash-danger" style="margin-top: 0.8rem; margin-bottom: 0;">
+      Sample generation is blocked because the stored source file does not match this draft.
+      Missing required columns: {{ missing_source_columns|join(', ') }}.
+    </div>
+  {% endif %}
+  {% if has_sample_source and source_preflight_issues %}
+    <div class="flash flash-danger" style="margin-top: 0.8rem; margin-bottom: 0;">
+      Sample generation is blocked because the stored source file could not be safely parsed.
+      {{ source_preflight_issues|join(' ') }}
+    </div>
+  {% endif %}
+  {% if has_sample_source and source_preflight_warnings %}
+    <div class="flash flash-warning" style="margin-top: 0.8rem; margin-bottom: 0;">
+      Source parsing warnings: {{ source_preflight_warnings|join(' ') }}
+    </div>
+  {% endif %}
+  <div class="actions-group">
+    {% if manifest_status|lower == 'draft' %}
+      {% if has_sample_source %}
+        <form method="post" action="{{ url_for('preview_and_mark_planned') }}" style="margin: 0;" id="preview-draft-form">
+          <input type="hidden" name="report_type_id" value="{{ report_type_id }}" />
+          <input type="hidden" name="existing_csv_path" value="{{ sample_source_path }}" />
+          <input type="hidden" name="sheet_name" value="{{ sample_sheet_name }}" />
+          <input type="hidden" name="provider" value="local" />
+          <input type="hidden" name="model" value="local-metrics" />
+          <input type="hidden" name="return_to_report_type_view" value="1" />
+          <button type="submit" class="btn-primary preview-btn">Preview Sample Report →</button>
+        </form>
+      {% else %}
+        <form method="post" action="{{ url_for('preview_and_mark_planned') }}" style="margin: 0;" id="preview-draft-upload-form" enctype="multipart/form-data">
+          <input type="hidden" name="report_type_id" value="{{ report_type_id }}" />
+          <input type="hidden" name="provider" value="local" />
+          <input type="hidden" name="model" value="local-metrics" />
+          <input type="hidden" name="return_to_report_type_view" value="1" />
+          <label style="display:flex;align-items:center;gap:0.6rem;flex-wrap:wrap;">
+            <input type="file" name="csv_upload" accept=".csv,.xlsx,.xls" required style="font-size:.88rem;" />
+            <button type="submit" class="btn-primary preview-btn">Preview Sample Report →</button>
+          </label>
+        </form>
+      {% endif %}
+    {% endif %}
+    {% if manifest_status|lower == 'planned' %}
+      {% if has_sample_source %}
+        <form method="post" action="{{ url_for('generate') }}" style="margin: 0;" id="preview-planned-form">
+          <input type="hidden" name="report_type_id" value="{{ report_type_id }}" />
+          <input type="hidden" name="provider" value="local" />
+          <input type="hidden" name="model" value="local-metrics" />
+          <input type="hidden" name="existing_csv_path" value="{{ sample_source_path }}" />
+          <input type="hidden" name="sheet_name" value="{{ sample_sheet_name }}" />
+          <input type="hidden" name="return_to_report_type_view" value="1" />
+          <button type="submit" class="btn-secondary preview-btn">Preview Sample Report</button>
+        </form>
+      {% else %}
+        <form method="post" action="{{ url_for('generate') }}" style="margin: 0;" id="preview-planned-upload-form" enctype="multipart/form-data">
+          <input type="hidden" name="report_type_id" value="{{ report_type_id }}" />
+          <input type="hidden" name="provider" value="local" />
+          <input type="hidden" name="model" value="local-metrics" />
+          <input type="hidden" name="return_to_report_type_view" value="1" />
+          <label style="display:flex;align-items:center;gap:0.6rem;flex-wrap:wrap;">
+            <input type="file" name="csv_upload" accept=".csv,.xlsx,.xls" required style="font-size:.88rem;" />
+            <button type="submit" class="btn-secondary preview-btn">Preview Sample Report</button>
+          </label>
+        </form>
+      {% endif %}
+      <form method="post" action="{{ url_for('publish_report_type') }}" style="margin: 0;" id="publish-form">
+        <input type="hidden" name="report_type_id" value="{{ report_type_id }}" />
+        <button type="submit" class="btn-primary" id="publish-btn">Publish Report Type</button>
+      </form>
+    {% endif %}
+    {% if manifest_status|lower == 'active' %}
+      {% if has_sample_source %}
+        <form method="post" action="{{ url_for('generate') }}" style="margin: 0;" id="generate-active-form">
+          <input type="hidden" name="report_type_id" value="{{ report_type_id }}" />
+          <input type="hidden" name="provider" value="local" />
+          <input type="hidden" name="model" value="local-metrics" />
+          <input type="hidden" name="existing_csv_path" value="{{ sample_source_path }}" />
+          <input type="hidden" name="sheet_name" value="{{ sample_sheet_name }}" />
+          <input type="hidden" name="return_to_report_type_view" value="1" />
+          <button type="submit" class="btn-secondary preview-btn">Generate Sample Report</button>
+        </form>
+      {% else %}
+        <form method="post" action="{{ url_for('generate') }}" style="margin: 0;" id="generate-active-upload-form" enctype="multipart/form-data">
+          <input type="hidden" name="report_type_id" value="{{ report_type_id }}" />
+          <input type="hidden" name="provider" value="local" />
+          <input type="hidden" name="model" value="local-metrics" />
+          <input type="hidden" name="return_to_report_type_view" value="1" />
+          <label style="display:flex;align-items:center;gap:0.6rem;flex-wrap:wrap;">
+            <input type="file" name="csv_upload" accept=".csv,.xlsx,.xls" required style="font-size:.88rem;" />
+            <button type="submit" class="btn-secondary preview-btn">Generate Sample Report</button>
+          </label>
+        </form>
+      {% endif %}
+    {% endif %}
+    <a class="btn-secondary" href="{{ url_for('list_report_types_page') }}">Back to Manage Report Types</a>
+  </div>
+  <div class="action-progress" id="action-progress" aria-live="polite">
+    <span class="action-progress-spinner" aria-hidden="true"></span>
+    <span class="action-progress-text" id="action-progress-text">
+      <span class="action-progress-title">
+        Working on your request
+        <span class="action-progress-dots" aria-hidden="true">
+          <span class="action-progress-dot"></span>
+          <span class="action-progress-dot"></span>
+          <span class="action-progress-dot"></span>
+        </span>
+        <span class="action-progress-timer" id="action-progress-timer">0s</span>
+      </span>
+      <span class="action-progress-sub" id="action-progress-sub">This page will update when the next step is ready.</span>
+    </span>
+  </div>
+  {% if has_sample_source and not can_generate_sample %}
+    <p class="muted" style="margin-top: .8rem;">This source currently fails preview validation. Click <strong>Preview Sample Report</strong> to run it anyway and see the exact blocking error on this page.</p>
+  {% elif manifest_status|lower == 'draft' and has_sample_source %}
+    <p class="muted" style="margin-top: .8rem;">Click <strong>Preview Sample Report</strong> to test with your source data. It will automatically be marked as planned.</p>
+  {% elif manifest_status|lower == 'draft' %}
+    <p class="muted" style="margin-top: .8rem;">Pick a source CSV to preview this report type. It will automatically be marked as planned.</p>
+  {% elif manifest_status|lower == 'planned' and not has_sample_source %}
+    <p class="muted" style="margin-top: .8rem;">Pick a source CSV to run a sample preview, then click <strong>Publish Report Type</strong> when ready.</p>
+  {% elif not has_sample_source %}
+    <p class="muted" style="margin-top: 0.8rem;">Pick a source CSV to run a sample report.</p>
+  {% endif %}
+</section>
+{% endif %}{# end has_preview / else #}
+
+{% if draft_workflow %}
+<section class="panel">
+  <h2>Draft Workflow</h2>
+  <p class="muted">This AI workflow is only for creating this report type. After publishing, the same report type can be reused with different source data.</p>
+  <div style="display:flex; flex-direction:column; gap:.8rem; margin-top:1rem;">
+    {% for step in draft_workflow %}
+      <div style="border-left:4px solid #184392; background:#f8fbff; border-radius:10px; padding:.8rem 1rem;">
+        <div style="display:flex; align-items:center; gap:.5rem; margin-bottom:.3rem;">
+          <strong>{{ step.agent }}</strong>
+          <span class="muted" style="font-size:.78rem; text-transform:uppercase; letter-spacing:.04em;">{{ step.status }}</span>
+        </div>
+        <div style="font-size:.92rem; margin-bottom:.4rem;">{{ step.summary }}</div>
+        {% if step.details %}
+          <details>
+            <summary style="cursor:pointer; color:#184392; font-size:.82rem;">Details</summary>
+            <pre style="margin-top:.5rem; white-space:pre-wrap; word-break:break-word; background:#eef4ff; padding:.75rem; border-radius:8px; font-size:.78rem; color:#2d3748; line-height:1.5;">{{ step.details|tojson(indent=2) }}</pre>
+          </details>
+        {% endif %}
+      </div>
+    {% endfor %}
+  </div>
+</section>
+{% endif %}
+
+<section class="panel">
+  <h2>Rename Draft</h2>
+  <p>Change the report type ID before publishing. This will rename all config, plugin, and test files.</p>
+  <form method="post" action="{{ url_for('rename_report_type') }}" style="display: flex; gap: 0.6rem; align-items: flex-end;">
+    <div style="flex: 1;">
+      <label for="new_id" style="display: block; margin-bottom: 0.3rem; font-weight: 500;">New Report Type ID:</label>
+      <input type="text" id="new_id" name="new_report_type_id" placeholder="e.g., snmp_performance" required value="{{ report_type_id }}" autocapitalize="off" autocorrect="off" spellcheck="false" style="width: 100%; padding: 0.5rem; border: 1px solid #bfdbfe; border-radius: 6px;" />
+      <small style="color: #5f6d82; display: block; margin-top: 0.3rem;">Spaces and hyphens are allowed. They will be normalized to lowercase_with_underscores.</small>
+    </div>
+    <input type="hidden" name="current_report_type_id" value="{{ report_type_id }}" />
+    <button type="submit" class="btn-secondary">Rename</button>
+  </form>
+</section>
+
+<section class="panel">
+  <h2>Report YAML</h2>
+  <p><strong>File:</strong> <code>{{ yaml_path }}</code></p>
+  <textarea id="editor-yaml" class="file-editor" spellcheck="false" rows="24">{{ yaml_text }}</textarea>
+  <div class="editor-actions">
+    <button type="button" class="btn-secondary save-btn" data-key="yaml">Save YAML</button>
+    <span class="save-status" id="status-yaml"></span>
+  </div>
+</section>
+
+<section class="panel">
+  <h2>Plugin Manifest</h2>
+  <p><strong>File:</strong> <code>{{ manifest_path }}</code></p>
+  <textarea id="editor-manifest" class="file-editor" spellcheck="false" rows="18">{{ manifest_text }}</textarea>
+  <div class="editor-actions">
+    <button type="button" class="btn-secondary save-btn" data-key="manifest">Save Manifest</button>
+    <span class="save-status" id="status-manifest"></span>
+  </div>
+</section>
+
+<section class="panel">
+  <h2>Plugin Code</h2>
+  <p><strong>File:</strong> <code>{{ plugin_path }}</code></p>
+  <textarea id="editor-plugin" class="file-editor code-font" spellcheck="false" rows="32">{{ plugin_text }}</textarea>
+  <div class="editor-actions">
+    <button type="button" class="btn-secondary save-btn" data-key="plugin">Save Plugin</button>
+    <span class="save-status" id="status-plugin"></span>
+  </div>
+</section>
+
+<section class="panel">
+  <h2>Smoke Test</h2>
+  <p><strong>File:</strong> <code>{{ smoke_test_path }}</code></p>
+  <textarea id="editor-smoke_test" class="file-editor code-font" spellcheck="false" rows="20">{{ smoke_test_text }}</textarea>
+  <div class="editor-actions">
+    <button type="button" class="btn-secondary save-btn" data-key="smoke_test">Save Smoke Test</button>
+    <span class="save-status" id="status-smoke_test"></span>
+  </div>
+</section>
+
+<style>
+.file-editor {
+  width: 100%;
+  font-family: Consolas, "Courier New", monospace;
+  font-size: .84rem;
+  line-height: 1.55;
+  padding: .65rem .75rem;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: #f8fafc;
+  color: var(--text);
+  resize: vertical;
+  margin-top: .6rem;
+  box-sizing: border-box;
+  white-space: pre;
+  overflow-x: auto;
+}
+.file-editor:focus {
+  outline: none;
+  border-color: var(--brand);
+  background: #fff;
+}
+.file-editor.code-font { tab-size: 4; }
+.editor-actions {
+  display: flex;
+  align-items: center;
+  gap: .75rem;
+  margin-top: .5rem;
+}
+.save-status {
+  font-size: .8rem;
+  font-weight: 600;
+}
+.save-status.ok   { color: #15803d; }
+.save-status.err  { color: #b91c1c; }
+</style>
+
+<script>
+(function () {
+  const RT_ID = {{ report_type_id|tojson }};
+  const SAVE_URL = "{{ url_for('save_report_type_file') }}";
+
+  document.addEventListener('DOMContentLoaded', function () {
+  const actionProgress = document.getElementById("action-progress");
+  const actionProgressText = document.getElementById("action-progress-text");
+  const actionProgressSub = document.getElementById("action-progress-sub");
+  const actionProgressTimer = document.getElementById("action-progress-timer");
+  let actionTimerId = null;
+  let actionStageId = null;
+
+  function resetActionProgressTimers() {
+    if (actionTimerId) {
+      clearInterval(actionTimerId);
+      actionTimerId = null;
+    }
+    if (actionStageId) {
+      clearInterval(actionStageId);
+      actionStageId = null;
+    }
+  }
+
+  function startActionProgressCycles(subtitle, stages) {
+    const startedAt = Date.now();
+    if (actionProgressTimer) {
+      actionProgressTimer.textContent = "0s";
+    }
+    actionTimerId = window.setInterval(() => {
+      if (!actionProgressTimer) return;
+      const elapsedSeconds = Math.max(0, Math.round((Date.now() - startedAt) / 1000));
+      actionProgressTimer.textContent = `${elapsedSeconds}s`;
+    }, 1000);
+
+    if (!actionProgressSub) {
+      return;
+    }
+
+    const stageTexts = Array.isArray(stages) && stages.length ? stages : [subtitle];
+    let stageIndex = 0;
+    actionProgressSub.textContent = stageTexts[0] || subtitle;
+    if (stageTexts.length > 1) {
+      actionStageId = window.setInterval(() => {
+        stageIndex = (stageIndex + 1) % stageTexts.length;
+        actionProgressSub.textContent = stageTexts[stageIndex];
+      }, 2200);
+    }
+  }
+
+  function showActionProgress(title, subtitle, stages) {
+    if (actionProgressText) {
+      const titleNode = actionProgressText.querySelector(".action-progress-title");
+      if (titleNode && titleNode.firstChild) {
+        titleNode.firstChild.nodeValue = title;
+      }
+    }
+    if (actionProgressSub) {
+      actionProgressSub.textContent = subtitle;
+    }
+    if (actionProgress) {
+      actionProgress.classList.add("is-visible");
+      actionProgress.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    }
+    resetActionProgressTimers();
+    startActionProgressCycles(subtitle, stages);
+  }
+
+  function disableActionButtons(exceptBtn) {
+    document.querySelectorAll(".actions-group button").forEach(btn => {
+      if (btn !== exceptBtn) {
+        btn.disabled = true;
+      }
+    });
+  }
+
+  document.querySelectorAll(".save-btn").forEach(btn => {
+    btn.addEventListener("click", async () => {
+      const key = btn.dataset.key;
+      const ta  = document.getElementById("editor-" + key);
+      const st  = document.getElementById("status-" + key);
+      if (!ta || !st) return;
+
+      btn.disabled = true;
+      btn.textContent = "Saving…";
+      st.textContent = "";
+      st.className = "save-status";
+
+      const body = new FormData();
+      body.append("report_type_id", RT_ID);
+      body.append("file_key", key);
+      body.append("content", ta.value);
+
+      try {
+        const r = await fetch(SAVE_URL, { method: "POST", body });
+        const data = await r.json();
+        if (data.ok) {
+          st.textContent = "✓ Saved";
+          st.className = "save-status ok";
+        } else {
+          st.textContent = "✗ " + (data.error || "Error");
+          st.className = "save-status err";
+        }
+      } catch(e) {
+        st.textContent = "✗ Network error";
+        st.className = "save-status err";
+      } finally {
+        btn.disabled = false;
+        btn.textContent = "Save " + { yaml:"YAML", manifest:"Manifest", plugin:"Plugin", smoke_test:"Smoke Test" }[key];
+        setTimeout(() => { if (st.classList.contains("ok")) { st.textContent = ""; st.className = "save-status"; } }, 4000);
+      }
+    });
+  });
+
+  // Tab key inserts spaces in code editors
+  document.querySelectorAll(".code-font").forEach(ta => {
+    ta.addEventListener("keydown", e => {
+      if (e.key === "Tab") {
+        e.preventDefault();
+        const s = ta.selectionStart, end = ta.selectionEnd;
+        ta.value = ta.value.substring(0, s) + "    " + ta.value.substring(end);
+        ta.selectionStart = ta.selectionEnd = s + 4;
+      }
+    });
+  });
+
+  // Handle preview/generate form submission loading state.
+  // Disabling a submit button during its click event can cancel the submit in some browsers,
+  // so this logic runs on the form submit event instead.
+  document.querySelectorAll("form[id^='preview-'], form#generate-active-form").forEach(form => {
+    form.addEventListener("submit", (e) => {
+      const submitBtn = e.submitter || form.querySelector(".preview-btn");
+      if (!submitBtn || submitBtn.disabled || form.dataset.submitting === "1") {
+        e.preventDefault();
+        return;
+      }
+      form.dataset.submitting = "1";
+      submitBtn.disabled = true;
+      submitBtn.classList.add("btn-loading");
+      submitBtn.textContent = "Generating…";
+      disableActionButtons(submitBtn);
+      showActionProgress(
+        "Generating preview report",
+        "The sample report is running now. You can stay on this page until it redirects.",
+        [
+          "Reading the saved sample source and validating the draft.",
+          "Computing plugin metrics from the sample data.",
+          "Rendering report artifacts and preparing the preview page.",
+        ]
+      );
+    });
+  });
+
+  // Handle publish form submission loading state.
+  const publishForm = document.getElementById("publish-form");
+  if (publishForm) {
+    publishForm.addEventListener("submit", (e) => {
+      const publishBtn = e.submitter || document.getElementById("publish-btn");
+      if (!publishBtn || publishBtn.disabled || publishForm.dataset.submitting === "1") {
+        e.preventDefault();
+        return;
+      }
+      publishForm.dataset.submitting = "1";
+      publishBtn.disabled = true;
+      publishBtn.classList.add("btn-loading");
+      publishBtn.textContent = "Publishing…";
+      disableActionButtons(publishBtn);
+      showActionProgress(
+        "Publishing report type",
+        "Smoke checks and activation are running now.",
+        [
+          "Running final draft checks before activation.",
+          "Updating manifest status and refreshing plugin discovery.",
+          "Preparing the report type for future report generation.",
+        ]
+      );
+    });
+  }
+  }); // DOMContentLoaded
+})();
+</script>
 {% endblock %}

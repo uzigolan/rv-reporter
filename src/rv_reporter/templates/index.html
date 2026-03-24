@@ -1,5 +1,132 @@
 {% extends "layout.html" %}
 {% block title %}Generate Report | RV Reporter{% endblock %}
+{% block head %}
+<style>
+  @keyframes spinner-rotate {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+  }
+  @keyframes panel-rise {
+    from { opacity: 0; transform: translateY(8px) scale(0.985); }
+    to { opacity: 1; transform: translateY(0) scale(1); }
+  }
+  @keyframes panel-sheen {
+    0% { transform: translateX(-130%); }
+    100% { transform: translateX(180%); }
+  }
+  @keyframes dot-bounce {
+    0%, 80%, 100% { transform: translateY(0); opacity: 0.35; }
+    40% { transform: translateY(-4px); opacity: 1; }
+  }
+  @keyframes halo-pulse {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(24,67,146,0.14); }
+    50% { box-shadow: 0 0 0 8px rgba(24,67,146,0); }
+  }
+  .btn-loading {
+    opacity: 0.75 !important;
+    pointer-events: none !important;
+  }
+  .btn-loading::before {
+    content: "⟳ ";
+    margin-right: 0.3rem;
+    display: inline-block;
+    animation: spinner-rotate 1s linear infinite;
+  }
+  .action-progress {
+    display: none;
+    align-items: center;
+    gap: 0.9rem;
+    margin-top: 0.9rem;
+    padding: 0.9rem 1rem;
+    border: 1px solid #bfdbfe;
+    border-radius: 14px;
+    background: linear-gradient(120deg, #eff6ff 0%, #f8fbff 42%, #ffffff 100%);
+    color: #184392;
+    font-weight: 700;
+    position: relative;
+    overflow: hidden;
+    box-shadow: 0 10px 24px rgba(37, 99, 235, 0.08);
+  }
+  .action-progress.is-visible {
+    display: flex;
+    animation: panel-rise 0.32s ease-out;
+  }
+  .action-progress::after {
+    content: "";
+    position: absolute;
+    inset: 0 auto 0 -35%;
+    width: 35%;
+    background: linear-gradient(90deg, rgba(255,255,255,0), rgba(255,255,255,0.75), rgba(255,255,255,0));
+    animation: panel-sheen 2.2s ease-in-out infinite;
+    pointer-events: none;
+  }
+  .action-progress-spinner {
+    width: 1.1rem;
+    height: 1.1rem;
+    border-radius: 999px;
+    border: 2px solid rgba(24,67,146,0.18);
+    border-top-color: #184392;
+    animation: spinner-rotate 0.85s linear infinite;
+    flex-shrink: 0;
+    position: relative;
+    z-index: 1;
+  }
+  .action-progress-spinner::after {
+    content: "";
+    position: absolute;
+    inset: -4px;
+    border-radius: 999px;
+    animation: halo-pulse 1.7s ease-in-out infinite;
+  }
+  .action-progress-text {
+    line-height: 1.35;
+    position: relative;
+    z-index: 1;
+  }
+  .action-progress-title {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.18rem;
+  }
+  .action-progress-sub {
+    display: block;
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: #5f6d82;
+    margin-top: 0.12rem;
+  }
+  .action-progress-dots {
+    display: inline-flex;
+    gap: 0.18rem;
+    margin-left: 0.1rem;
+    vertical-align: middle;
+  }
+  .action-progress-dot {
+    width: 0.28rem;
+    height: 0.28rem;
+    border-radius: 999px;
+    background: currentColor;
+    animation: dot-bounce 1.15s ease-in-out infinite;
+  }
+  .action-progress-dot:nth-child(2) {
+    animation-delay: 0.14s;
+  }
+  .action-progress-dot:nth-child(3) {
+    animation-delay: 0.28s;
+  }
+  .action-progress-timer {
+    display: inline-block;
+    margin-left: 0.45rem;
+    padding: 0.12rem 0.42rem;
+    border-radius: 999px;
+    background: rgba(24,67,146,0.08);
+    color: #2852a0;
+    font-size: 0.72rem;
+    font-weight: 800;
+    letter-spacing: 0.02em;
+  }
+</style>
+{% endblock %}
 {% block content %}
 <section class="panel hero">
   <h1>Tabular File to Structured Report</h1>
@@ -81,61 +208,23 @@
 
     <input type="hidden" name="api_base_url" id="api_base_url" value="{{ defaults.api_base_url or '' }}" />
 
-    <div class="form-row form-row-3">
-      <label>
-        <span>Tone</span>
-        <select name="tone">
-          <option value="concise">concise</option>
-          <option value="executive">executive</option>
-          <option value="technical">technical</option>
-        </select>
-        <span class="field-help">Defines writing style and depth.<br><strong>concise:</strong> short and direct summary.<br><strong>executive:</strong> business impact and decisions.<br><strong>technical:</strong> deeper analysis and details.</span>
-      </label>
-
-      <label>
-        <span>Audience</span>
-        <select name="audience">
-          <option value="leadership">leadership</option>
-          <option value="engineering">engineering</option>
-          <option value="customer">customer</option>
-        </select>
-        <span class="field-help">Defines who the report is written for.<br><strong>leadership:</strong> risk, impact, and priorities.<br><strong>engineering:</strong> root cause and actions.<br><strong>customer:</strong> service quality and outcomes.</span>
-      </label>
-
-      <label>
-        <span>Focus</span>
-        <select name="focus">
-          <option value="trends">trends</option>
-          <option value="anomalies">anomalies</option>
-          <option value="cost">cost</option>
-        </select>
-        <span class="field-help">Defines what the report emphasizes most.<br><strong>trends:</strong> long-term behavior over time.<br><strong>anomalies:</strong> spikes and unusual intervals.<br><strong>cost:</strong> waste, efficiency, and savings.</span>
-      </label>
+    <div class="form-row">
+      <p class="field-help" style="margin:0;">
+        Narrative style is defined by the selected report type. Tone, audience, and focus are resolved from the report type defaults and classification rather than selected for each run.
+      </p>
     </div>
 
     <div class="form-row form-row-4">
       <label>
-        <span>Threshold Key (optional)</span>
-        <input name="threshold_name" placeholder="alert_error_rate or variance_alert_pct" />
-        <span class="field-help">Optional preference key to override default alert logic. Use only known keys supported by this report type.</span>
-      </label>
-
-      <label>
-        <span>Threshold Value (optional)</span>
-        <input name="threshold_value" placeholder="0.05" />
-        <span class="field-help">Numeric override for the selected threshold key. Example: `0.2` for 20% when the metric is ratio-based.</span>
-      </label>
-
-      <label>
         <span>Row Limit (cost control)</span>
-        <input name="row_limit" type="number" min="1" step="1" value="{{ defaults.row_limit if defaults.row_limit is not none else 1000 }}" />
-        <span class="field-help">Maximum number of rows loaded from input. Lower values reduce cost and time; higher values improve coverage.</span>
+        <input name="row_limit" type="number" min="1" step="1" value="{{ defaults.row_limit if defaults.row_limit is not none else '' }}" />
+        <span class="field-help">Maximum number of rows loaded from input. Leave blank for unlimited rows.</span>
       </label>
 
       <label>
         <span>Output Tokens Budget</span>
-        <input name="output_token_budget" type="number" min="1" step="1" value="1200" />
-        <span class="field-help">Estimated response size used for cost preview. Increase if you expect longer reports with more narrative.</span>
+        <input name="output_token_budget" type="number" min="1" step="1" value="" />
+        <span class="field-help">Optional response-size hint used for cost preview. Leave blank for unlimited output.</span>
       </label>
     </div>
 
@@ -154,10 +243,21 @@
     </div>
 
     <button type="submit" class="btn-primary generate-btn-row" id="generate_submit_btn">Generate Report</button>
-    <p id="generate_processing_msg" class="processing-msg hidden">
-      <span class="spinner" aria-hidden="true"></span>
-      Processing request. This may take several seconds...
-    </p>
+    <div class="action-progress" id="action-progress" aria-live="polite">
+      <span class="action-progress-spinner" aria-hidden="true"></span>
+      <span class="action-progress-text" id="action-progress-text">
+        <span class="action-progress-title">
+          Generating report
+          <span class="action-progress-dots" aria-hidden="true">
+            <span class="action-progress-dot"></span>
+            <span class="action-progress-dot"></span>
+            <span class="action-progress-dot"></span>
+          </span>
+          <span class="action-progress-timer" id="action-progress-timer">0s</span>
+        </span>
+      </span>
+      <span class="action-progress-sub" id="action-progress-sub">Preparing your report…</span>
+    </div>
   </form>
 </section>
 <div id="help_popup" class="help-popup hidden" role="tooltip" aria-live="polite">
@@ -571,12 +671,15 @@
 
   const generateForm = document.getElementById("generate_form");
   const generateBtn = document.getElementById("generate_submit_btn");
-  const generateMsg = document.getElementById("generate_processing_msg");
   const resetGenerateUi = () => {
     generateBtn.disabled = false;
+    generateBtn.classList.remove("btn-loading");
     generateBtn.textContent = "Generate Report";
-    generateMsg.classList.add("hidden");
     generateForm.classList.remove("is-loading");
+    const ap = document.getElementById("action-progress");
+    if (ap) ap.classList.remove("is-visible");
+    if (window._genTimerId) { clearInterval(window._genTimerId); window._genTimerId = null; }
+    if (window._genStageId) { clearInterval(window._genStageId); window._genStageId = null; }
   };
   const helpPopup = document.getElementById("help_popup");
   const helpPopupTitle = document.getElementById("help_popup_title");
@@ -676,9 +779,65 @@
       try { sessionStorage.setItem("rv_current_job_id", jobId); } catch (e) {}
     }
     generateBtn.disabled = true;
-    generateBtn.textContent = "Working...";
-    generateMsg.classList.remove("hidden");
+    generateBtn.classList.add("btn-loading");
+    generateBtn.textContent = "Generating…";
     generateForm.classList.add("is-loading");
+
+    /* ── Animated progress steps ────────────────────────────── */
+    const actionProgress = document.getElementById("action-progress");
+    const actionProgressSub = document.getElementById("action-progress-sub");
+    const actionProgressTimer = document.getElementById("action-progress-timer");
+    const actionProgressText = document.getElementById("action-progress-text");
+
+    const providerVal = (provider && provider.value) || "local";
+    const isLocal = providerVal === "local";
+    const stages = isLocal
+      ? [
+          "Uploading data and validating columns.",
+          "Computing plugin metrics from the source data.",
+          "Building report JSON and rendering HTML artifacts.",
+          "Finalising output files and preparing the result page.",
+        ]
+      : [
+          "Uploading data and validating columns.",
+          "Profiling dataset shape, dtypes, and missing rates.",
+          "Computing plugin metrics from the source data.",
+          "Sending prompt and metrics to the AI provider.",
+          "Waiting for the AI model to generate the narrative.",
+          "Validating response against the output JSON schema.",
+          "Rendering styled HTML report and chart images.",
+          "Finalising output files and preparing the result page.",
+        ];
+
+    if (actionProgressText) {
+      const titleNode = actionProgressText.querySelector(".action-progress-title");
+      if (titleNode && titleNode.firstChild) {
+        titleNode.firstChild.nodeValue = isLocal ? "Generating local report" : "Generating AI report";
+      }
+    }
+    if (actionProgressSub) actionProgressSub.textContent = stages[0];
+    if (actionProgress) {
+      actionProgress.classList.add("is-visible");
+      actionProgress.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    }
+
+    /* Timer */
+    const startedAt = Date.now();
+    if (actionProgressTimer) actionProgressTimer.textContent = "0s";
+    window._genTimerId = setInterval(() => {
+      if (actionProgressTimer) {
+        actionProgressTimer.textContent = Math.round((Date.now() - startedAt) / 1000) + "s";
+      }
+    }, 1000);
+
+    /* Stage cycling */
+    if (stages.length > 1 && actionProgressSub) {
+      let idx = 0;
+      window._genStageId = setInterval(() => {
+        idx = (idx + 1) % stages.length;
+        actionProgressSub.textContent = stages[idx];
+      }, 2200);
+    }
   });
 </script>
 {% endblock %}

@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
+import subprocess
 import sys
 from datetime import datetime, timezone
 from collections import defaultdict
@@ -20,7 +22,7 @@ from werkzeug.utils import secure_filename
 import yaml
 import pandas as pd
 
-from rv_reporter.orchestrator import run_pipeline
+from rv_reporter.orchestrator import prepare_pipeline_inputs, run_pipeline
 from rv_reporter.providers.anthropic_provider import AnthropicMessagesProvider
 from rv_reporter.providers.mock_provider import MockProvider
 from rv_reporter.providers.openai_chat_provider import OpenAIChatCompletionsProvider
@@ -30,7 +32,8 @@ from rv_reporter.providers.openai_provider import (
 )
 from rv_reporter.rendering.html_renderer import render_html
 from rv_reporter.rendering.pdf_renderer import render_pdf
-from rv_reporter.report_types.plugins import list_supported_metrics_profiles
+from rv_reporter.report_types.scaffold import DOMAINS, FAMILIES, MODES, scaffold_report_type
+from rv_reporter.report_types.plugins import list_supported_metrics_profiles, invalidate_plugin_cache
 from rv_reporter.report_types.registry import ReportTypeRegistry
 from rv_reporter.services.cost_estimator import (
     MODEL_PRICING_USD,
@@ -39,8 +42,8 @@ from rv_reporter.services.cost_estimator import (
     estimate_openai_cost,
     estimate_tokens,
 )
-from rv_reporter.orchestrator import prepare_pipeline_inputs
-from rv_reporter.services.ingest import describe_tabular_source, list_excel_sheets, load_csv_with_limit
+from rv_reporter.services.ingest import describe_tabular_source, list_excel_sheets, load_csv_with_limit, preflight_tabular_source
+from rv_reporter.services.profiler import profile_dataframe
 
 PROTECTED_REPORT_TYPES = {
     "network_queue_congestion",
@@ -216,18 +219,25 @@ def create_app(config_overrides: dict[str, Any] | None = None) -> Flask:
     app.config["UPLOAD_FOLDER"] = str(_absolute_path("uploads"))
     app.config["OUTPUT_FOLDER"] = str(_absolute_path("outputs/web"))
     app.config["REPORT_TYPES_DIR"] = str(_absolute_path("configs/report_types"))
+    app.config["PLUGIN_ROOT"] = str(_absolute_path("report_type_plugins"))
+    app.config["REPORT_TYPE_AGENT_MODEL"] = os.getenv("REPORT_TYPE_AGENT_MODEL", "gpt-4o")
     app.config.update(config_overrides or {})
     app.config["UPLOAD_FOLDER"] = str(_absolute_path(app.config["UPLOAD_FOLDER"]))
     app.config["OUTPUT_FOLDER"] = str(_absolute_path(app.config["OUTPUT_FOLDER"]))
     app.config["REPORT_TYPES_DIR"] = str(_absolute_path(app.config["REPORT_TYPES_DIR"]))
+    app.config["PLUGIN_ROOT"] = str(_absolute_path(app.config["PLUGIN_ROOT"]))
     Path(app.config["UPLOAD_FOLDER"]).mkdir(parents=True, exist_ok=True)
     Path(app.config["OUTPUT_FOLDER"]).mkdir(parents=True, exist_ok=True)
     Path(app.config["REPORT_TYPES_DIR"]).mkdir(parents=True, exist_ok=True)
+    Path(app.config["PLUGIN_ROOT"]).mkdir(parents=True, exist_ok=True)
 
     @app.get("/")
     def index() -> str:
         registry = ReportTypeRegistry(config_dir=Path(app.config["REPORT_TYPES_DIR"]))
-        report_types = _visible_report_types_for_generation(registry.list_report_types())
+        report_types = _visible_report_types_for_generation(
+            registry.list_report_types(),
+            Path(app.config["PLUGIN_ROOT"]),
+        )
         default_report_type = (
             "network_queue_congestion"
             if "network_queue_congestion" in report_types
@@ -248,7 +258,7 @@ def create_app(config_overrides: dict[str, Any] | None = None) -> Flask:
             defaults={
                 "provider": default_provider,
                 "model": "gpt-5-mini",
-                "row_limit": 1000,
+                "row_limit": None,
                 "report_type_id": default_report_type,
                 "api_key": "",
                 "api_base_url": "",
@@ -381,6 +391,10 @@ def create_app(config_overrides: dict[str, Any] | None = None) -> Flask:
             doc_pages={doc_id: {"title": title} for doc_id, (_, title) in DOC_PAGES.items()},
         )
 
+    @app.get("/logic")
+    def logic() -> str:
+        return render_template("logic.html")
+
     @app.get("/prices")
     def prices() -> str:
         provider_rows: list[dict[str, Any]] = []
@@ -462,10 +476,290 @@ def create_app(config_overrides: dict[str, Any] | None = None) -> Flask:
         registry = ReportTypeRegistry(config_dir=Path(app.config["REPORT_TYPES_DIR"]))
         return render_template(
             "new_report_type.html",
-            starter_yaml=_starter_report_type_yaml(),
-            supported_metrics_profiles=sorted(_supported_metrics_profiles()),
             report_types=registry.list_report_types(),
+            prompt_text="",
+            selected_clone_type="",
+            report_type_agent_model=app.config["REPORT_TYPE_AGENT_MODEL"],
+            recent_uploads=_recent_uploaded_sources(Path(app.config["UPLOAD_FOLDER"])),
+            existing_csv_path="",
+            selected_sheet="",
+            sheet_options=[],
+            source_summary=None,
+            source_sample_percent=100,
+            families=sorted(FAMILIES),
+            domains=sorted(DOMAINS),
+            modes=sorted(MODES),
         )
+
+    @app.post("/api/recommend-classification")
+    def recommend_classification_api() -> Any:
+        """Recommend domain/family/mode from source column names."""
+        data = request.get_json(silent=True) or {}
+        columns = [str(c).strip().lower() for c in data.get("columns", []) if str(c).strip()]
+        if not columns:
+            return jsonify({"domain": "", "family": "", "mode": "", "confidence": "none"})
+
+        joined = " ".join(columns)
+
+        # ── Domain scoring ───────────────────────────────────────────
+        domain_signals: dict[str, list[str]] = {
+            "networking": ["latency", "packet", "throughput", "bandwidth", "queue", "interface", "flow", "byte", "octets", "port"],
+            "telecom": ["twamp", "session", "bearer", "handover", "rssi", "snr", "cell", "lte", "pdv", "ipdv", "delay", "jitter"],
+            "security": ["attack", "threat", "anomaly", "intrusion", "vulnerability", "auth", "firewall", "alert", "severity"],
+            "finance": ["revenue", "cost", "budget", "variance", "profit", "forecast", "spend", "amount", "invoice"],
+            "operations": ["uptime", "sla", "incident", "kpi", "utilization", "capacity", "maintenance", "device", "property", "sensor"],
+            "observability": ["metric", "trace", "error_rate", "service", "endpoint", "percentile", "span"],
+            "healthcare": ["patient", "biomarker", "clinical", "diagnosis", "lab", "cohort", "specimen", "assisted", "living", "vital", "heart", "oxygen", "temperature", "blood", "pulse"],
+            "sales": ["pipeline", "conversion", "opportunity", "deal", "quota", "lead", "funnel"],
+            "product": ["user", "event", "feature", "engagement", "retention", "churn", "signup"],
+            "customer_support": ["ticket", "case", "resolution", "sla", "escalation", "agent", "satisfaction"],
+            "supply_chain": ["warehouse", "shipment", "inventory", "supplier", "sku", "order", "fulfillment"],
+            "manufacturing": ["defect", "yield", "batch", "production", "downtime", "oee", "scrap"],
+            "energy": ["consumption", "kwh", "power", "meter", "generation", "grid", "solar", "wind"],
+            "project_management": ["issue", "sprint", "story", "epic", "assignee", "priority", "status"],
+            "research": ["sample", "experiment", "measurement", "variable", "observation", "trial"],
+            "education": ["student", "grade", "course", "score", "enrollment", "attendance"],
+            "government": ["census", "population", "district", "regulation", "compliance", "agency"],
+        }
+        # Also match against the filename if present
+        filename_hint = data.get("filename", "").lower()
+        domain_scores: dict[str, int] = {}
+        for dom, keywords in domain_signals.items():
+            col_hits = sum(1 for kw in keywords if kw in joined)
+            fname_hits = sum(1 for kw in keywords if kw in filename_hint) if filename_hint else 0
+            # Filename matches are a stronger signal (worth 2 each)
+            total = col_hits + fname_hits * 2
+            if total:
+                domain_scores[dom] = total
+
+        best_domain = ""
+        if domain_scores:
+            best_domain = max(domain_scores, key=lambda d: domain_scores[d])
+        elif has_timestamp:
+            best_domain = "operations"
+
+        # ── Family inference ─────────────────────────────────────────
+        has_timestamp = any(kw in joined for kw in ["time", "date", "timestamp", "start", "elapsed", "interval", "epoch"])
+        has_event = any(kw in joined for kw in ["event", "log", "message", "severity", "type", "action"])
+        has_text = any(kw in joined for kw in ["log", "message", "text", "body", "description", "comment"])
+        has_entity = any(kw in joined for kw in ["id", "name", "status", "type", "category"])
+
+        if has_timestamp and not has_event:
+            best_family = "time_series"
+        elif has_event and has_text:
+            best_family = "log_text"
+        elif has_event:
+            best_family = "event"
+        elif has_entity and not has_timestamp:
+            best_family = "entity_snapshot"
+        else:
+            best_family = "tabular_statistical"
+
+        # Refine with domain-family map
+        from rv_reporter.report_types.scaffold import FAMILIES as _ALL_FAMILIES  # noqa: F811
+        domain_family_map = {
+            "networking": ["time_series", "event", "hybrid"],
+            "telecom": ["time_series", "event"],
+            "observability": ["time_series", "hybrid"],
+            "security": ["event", "log_text", "hybrid"],
+            "operations": ["time_series", "tabular_statistical", "hybrid"],
+            "manufacturing": ["time_series", "tabular_statistical"],
+            "supply_chain": ["time_series", "relational"],
+            "energy": ["time_series", "tabular_statistical"],
+            "finance": ["tabular_statistical", "relational"],
+            "sales": ["tabular_statistical", "relational"],
+            "product": ["tabular_statistical", "event"],
+            "customer_support": ["tabular_statistical", "event"],
+            "healthcare": ["tabular_statistical", "entity_snapshot"],
+            "research": ["tabular_statistical", "time_series"],
+            "education": ["tabular_statistical", "entity_snapshot"],
+            "government": ["tabular_statistical", "relational"],
+            "project_management": ["entity_snapshot", "relational"],
+        }
+        valid_families = domain_family_map.get(best_domain, list(_ALL_FAMILIES))
+        if best_family not in valid_families and valid_families:
+            best_family = valid_families[0]
+
+        # ── Mode inference ───────────────────────────────────────────
+        has_threshold = any(kw in joined for kw in ["threshold", "sla", "limit", "max", "min", "critical", "violation"])
+        has_anomaly = any(kw in joined for kw in ["anomaly", "outlier", "deviation", "abnormal"])
+        has_loss = any(kw in joined for kw in ["loss", "error", "fail", "drop", "reject", "fault"])
+        has_score = any(kw in joined for kw in ["score", "health", "rating", "index", "grade"])
+
+        if has_threshold:
+            best_mode = "threshold_sla"
+        elif has_anomaly:
+            best_mode = "anomaly_detection"
+        elif has_loss:
+            best_mode = "issue_detection"
+        elif has_score:
+            best_mode = "health_score"
+        elif has_timestamp:
+            best_mode = "trend_analysis"
+        else:
+            best_mode = "overview_summary"
+
+        total_hits = sum(domain_scores.values()) if domain_scores else 0
+        if total_hits >= 4:
+            confidence = "high"
+        elif total_hits >= 2:
+            confidence = "medium"
+        elif total_hits >= 1 or best_domain:
+            confidence = "low"
+        else:
+            confidence = "none"
+
+        return jsonify({
+            "domain": best_domain,
+            "family": best_family,
+            "mode": best_mode,
+            "confidence": confidence,
+        })
+
+    @app.post("/api/validate-prompt")
+    def validate_prompt_api() -> Any:
+        data = request.get_json(silent=True) or {}
+        prompt_text = str(data.get("prompt_text", "")).strip()
+        hint_domain = str(data.get("hint_domain", "")).strip()
+
+        issues: list[str] = []
+        warnings: list[str] = []
+        suggestions: list[str] = []
+
+        word_count = len(prompt_text.split()) if prompt_text else 0
+        lower = prompt_text.lower()
+
+        # ── Issues (blocking quality problems, -30 each) ─────────────
+        if word_count < 10:
+            issues.append("Prompt is too short. Describe the report purpose, key columns, and what to detect.")
+
+        # ── Warnings (notable gaps, -15 each) ────────────────────────
+        if word_count >= 10:
+            # Must mention specific column names (exact identifiers, not just "csv" or "columns")
+            col_pattern = re.compile(r"\b[a-z][a-z0-9]*(?:_[a-z0-9]+){1,}\b")
+            has_specific_columns = bool(col_pattern.search(lower))
+            if not has_specific_columns:
+                warnings.append(
+                    "No specific column names detected (e.g. 'delay_ms', 'packet_loss_pct'). "
+                    "Explicit column names improve schema accuracy significantly."
+                )
+
+            # Must define at least one threshold or numeric criterion
+            has_threshold = bool(re.search(r"\b(\d+[\.,]?\d*\s*(?:ms|pct|%|dbm|db|s|k|m|g|x)?)\b|"
+                                           r"[<>≤≥]=?\s*\d|"
+                                           r"\b(threshold|sla|limit|ceiling|floor|baseline|acceptable)\b", lower))
+            if not has_threshold:
+                warnings.append(
+                    "No thresholds or criteria defined. Specify what values constitute 'good', 'degraded', or 'critical' "
+                    "(e.g. 'RSSI < -110 dBm is poor', 'latency > 50ms is critical')."
+                )
+
+            # Unanswered context questions: if question lines are present but no numeric answers follow
+            question_lines = [l.strip() for l in prompt_text.splitlines() if l.strip().endswith("?")]
+            if question_lines:
+                # Check whether any line after a question contains a number or answer-like text
+                answered = bool(re.search(r"\b\d+\b|\b(per.session|per.device|aggregate|absolute|relative|trend)\b", lower))
+                if not answered:
+                    warnings.append(
+                        f"Prompt contains {len(question_lines)} unanswered question(s). "
+                        "Fill in at least some answers (e.g. thresholds, aggregation level, definition of 'degraded') "
+                        "so the AI generates targeted metrics instead of generic ones."
+                    )
+
+            # Must mention derived / computed metrics
+            has_derived = bool(re.search(
+                r"\b(average|avg|mean|median|p95|p99|percentile|ratio|rate|count|sum|trend|score|index|distribution)\b", lower
+            ))
+            if not has_derived:
+                warnings.append(
+                    "No derived metrics mentioned. Specify what to compute "
+                    "(e.g. 'per-session average delay', 'packet loss rate', 'top-10 degraded sessions')."
+                )
+
+        # ── Suggestions (quality improvements, -10 each) ─────────────
+        if word_count >= 10:
+            # Analysis granularity
+            has_granularity = bool(re.search(
+                r"\b(per.session|per.device|per.flow|per.ue|per.interface|aggregate|overall|by.type|by.region|by.bearer)\b", lower
+            ))
+            if not has_granularity:
+                suggestions.append(
+                    "Specify the analysis granularity: should metrics be per-session, per-device, aggregate, or by type/category?"
+                )
+
+            # Intent verb
+            intent_verbs = ["analyze", "detect", "summarize", "identify", "track", "monitor",
+                            "report", "trend", "compare", "rank", "forecast", "highlight", "flag", "surface"]
+            if not any(v in lower for v in intent_verbs):
+                suggestions.append("Add a clear action verb (e.g. 'detect', 'identify', 'rank', 'flag').")
+
+            # Domain keyword match
+            domain_keywords: dict[str, list[str]] = {
+                "networking": ["latency", "packet", "throughput", "bandwidth", "queue", "interface", "flow"],
+                "security": ["attack", "threat", "anomaly", "intrusion", "vulnerability", "auth", "firewall"],
+                "finance": ["revenue", "cost", "budget", "variance", "profit", "forecast", "spend"],
+                "operations": ["uptime", "sla", "incident", "kpi", "utilization", "capacity", "maintenance"],
+                "observability": ["metric", "trace", "latency", "error_rate", "service", "endpoint", "percentile"],
+                "telecom": ["session", "bearer", "ue", "handover", "rssi", "snr", "cell", "lte"],
+                "healthcare": ["patient", "biomarker", "clinical", "diagnosis", "lab", "cohort"],
+                "sales": ["pipeline", "conversion", "opportunity", "deal", "quota", "forecast"],
+            }
+            if hint_domain and hint_domain in domain_keywords:
+                found = [kw for kw in domain_keywords[hint_domain] if kw in lower]
+                if not found:
+                    suggestions.append(
+                        f"Domain is '{hint_domain}' but no typical terms found "
+                        f"(e.g. {', '.join(domain_keywords[hint_domain][:4])}). Add domain context."
+                    )
+
+            # Mention of alert/output expectations
+            has_output_hint = bool(re.search(r"\b(alert|warn|flag|section|chart|table|summary|recommendation)\b", lower))
+            if not has_output_hint:
+                suggestions.append(
+                    "Mention expected output sections (e.g. 'produce a summary table', 'flag sessions as alerts', 'include trend charts')."
+                )
+
+        # ── Score ─────────────────────────────────────────────────────
+        score = 100
+        score -= len(issues) * 30
+        score -= len(warnings) * 15
+        score -= len(suggestions) * 10
+        score = max(0, min(100, score))
+
+        return jsonify({
+            "valid": len(issues) == 0,
+            "score": score,
+            "issues": issues,
+            "warnings": warnings,
+            "suggestions": suggestions,
+        })
+
+    @app.post("/api/improve-prompt")
+    def improve_prompt_api() -> Any:
+        data = request.get_json(silent=True) or {}
+        prompt_text = str(data.get("prompt_text", "")).strip()
+        hint_domain = str(data.get("hint_domain", "")).strip() or None
+        hint_family = str(data.get("hint_family", "")).strip() or None
+        hint_mode = str(data.get("hint_mode", "")).strip() or None
+        source_columns = [
+            str(item).strip()
+            for item in data.get("source_columns", [])
+            if str(item).strip()
+        ]
+        if not prompt_text:
+            return jsonify({"error": "Prompt text is required."}), 400
+        try:
+            result = _improve_report_type_prompt(
+                prompt_text=prompt_text,
+                model=str(app.config["REPORT_TYPE_AGENT_MODEL"]),
+                hint_domain=hint_domain,
+                hint_family=hint_family,
+                hint_mode=hint_mode,
+                source_columns=source_columns,
+            )
+        except Exception as exc:  # noqa: BLE001
+            return jsonify({"error": str(exc)}), 400
+        return jsonify(result)
 
     @app.get("/api/report-type-yaml")
     def report_type_yaml() -> Any:
@@ -476,6 +770,66 @@ def create_app(config_overrides: dict[str, Any] | None = None) -> Flask:
         if not path.exists():
             return jsonify({"error": f"Unknown report_type_id: {report_type_id}"}), 404
         return jsonify({"report_type_id": report_type_id, "yaml": path.read_text(encoding="utf-8")})
+
+    def _report_type_review_context(report_type_id: str) -> dict[str, str]:
+        contexts = session.get("report_type_review_contexts", {})
+        if not isinstance(contexts, dict):
+            return {}
+        context = contexts.get(report_type_id, {})
+        return context if isinstance(context, dict) else {}
+
+    def _store_report_type_review_context(
+        report_type_id: str,
+        *,
+        source_path: str = "",
+        sheet_name: str = "",
+        draft_workflow: list[dict[str, Any]] | None = None,
+    ) -> None:
+        payload: dict[str, str] = {}
+        if source_path:
+            payload["existing_csv_path"] = source_path
+        if sheet_name:
+            payload["sheet_name"] = sheet_name
+        if draft_workflow:
+            payload["draft_workflow"] = json.dumps(draft_workflow)
+        if not payload:
+            return
+
+        contexts = session.get("report_type_review_contexts", {})
+        if not isinstance(contexts, dict):
+            contexts = {}
+        existing = contexts.get(report_type_id, {})
+        if not isinstance(existing, dict):
+            existing = {}
+        existing.update(payload)
+        contexts[report_type_id] = existing
+        session["report_type_review_contexts"] = contexts
+        session.modified = True
+
+    def _persist_sample_source_in_manifest(
+        report_type_id: str,
+        *,
+        plugin_root: Path,
+        source_path: str,
+        sheet_name: str = "",
+    ) -> None:
+        """Write sample_source (and sheet) into manifest extensions so it survives session loss."""
+        if not source_path:
+            return
+        manifest_path = plugin_root / report_type_id / "manifest.yaml"
+        if not manifest_path.exists():
+            return
+        manifest = _load_plugin_manifest(report_type_id, plugin_root)
+        if not manifest:
+            return
+        extensions = manifest.get("extensions") or {}
+        extensions["sample_source"] = source_path
+        if sheet_name:
+            extensions["sample_sheet"] = sheet_name
+        elif "sample_sheet" in extensions:
+            del extensions["sample_sheet"]
+        manifest["extensions"] = extensions
+        manifest_path.write_text(yaml.safe_dump(manifest, sort_keys=False), encoding="utf-8")
 
     @app.get("/report-types/view")
     def view_report_type_yaml_page() -> Any:
@@ -490,14 +844,297 @@ def create_app(config_overrides: dict[str, Any] | None = None) -> Flask:
         if not path.exists():
             flash(f"Report type not found: {report_type_id}", "danger")
             return redirect(url_for("list_report_types_page"))
-        yaml_text = path.read_text(encoding="utf-8")
+
+        plugin_root = Path(app.config["PLUGIN_ROOT"])
+        manifest_path = plugin_root / report_type_id / "manifest.yaml"
+        plugin_path = plugin_root / report_type_id / "plugin.py"
+        smoke_test_path = plugin_root / report_type_id / "tests" / "test_smoke.py"
+        manifest = _load_plugin_manifest(report_type_id, plugin_root)
+        review_context = _report_type_review_context(report_type_id)
+        sample_source_path = str(review_context.get("existing_csv_path", "")).strip()
+        sample_sheet_name = str(review_context.get("sheet_name", "")).strip()
+        if not sample_source_path:
+            _ext = (manifest or {}).get("extensions") or {}
+            sample_source_path = str(_ext.get("sample_source", "")).strip()
+            sample_sheet_name = sample_sheet_name or str(_ext.get("sample_sheet", "")).strip()
+        raw_draft_workflow = str(review_context.get("draft_workflow", "")).strip()
+        draft_workflow: list[dict[str, Any]] = []
+        if raw_draft_workflow:
+            try:
+                parsed_workflow = json.loads(raw_draft_workflow)
+                if isinstance(parsed_workflow, list):
+                    draft_workflow = [item for item in parsed_workflow if isinstance(item, dict)]
+            except json.JSONDecodeError:
+                draft_workflow = []
+        has_sample_source = bool(sample_source_path and Path(sample_source_path).exists())
+        manifest_status = str(manifest.get("status", "unknown")).strip() or "unknown"
+        yaml_payload = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        required_columns = [
+            str(item).strip()
+            for item in (yaml_payload.get("required_columns", []) if isinstance(yaml_payload, dict) else [])
+            if str(item).strip()
+        ]
+        source_summary = _safe_describe_source(sample_source_path, sheet_name=sample_sheet_name or None) if has_sample_source else None
+        source_columns = [
+            str(item).strip()
+            for item in ((source_summary or {}).get("columns", []) if isinstance(source_summary, dict) else [])
+            if str(item).strip()
+        ]
+        missing_source_columns = [col for col in required_columns if col not in set(source_columns)]
+        source_matches_required_columns = has_sample_source and not missing_source_columns
+        source_preflight = _safe_preflight_source(
+            sample_source_path,
+            sheet_name=sample_sheet_name or None,
+            required_columns=required_columns,
+        ) if has_sample_source else None
+        source_preflight_issues = [
+            str(item).strip() for item in ((source_preflight or {}).get("issues", []) if isinstance(source_preflight, dict) else []) if str(item).strip()
+        ]
+        source_preflight_warnings = [
+            str(item).strip() for item in ((source_preflight or {}).get("warnings", []) if isinstance(source_preflight, dict) else []) if str(item).strip()
+        ]
+
+        # Retrieve preview artifact paths stored by the generate route
+        preview_html = str(review_context.get("preview_html_path", "")).strip()
+        preview_json = str(review_context.get("preview_json_path", "")).strip()
+        # Only show if the files actually exist
+        if preview_html and not Path(preview_html).exists():
+            preview_html = ""
+        if preview_json and not Path(preview_json).exists():
+            preview_json = ""
+
+        # Fallback: scan output directory for latest report artifacts
+        if not preview_html or not preview_json:
+            output_dir = Path(app.config["OUTPUT_FOLDER"]) / report_type_id
+            if output_dir.is_dir():
+                latest_html = output_dir / f"{report_type_id}.report.html"
+                latest_json = output_dir / f"{report_type_id}.report.json"
+                if not preview_html and latest_html.exists():
+                    preview_html = str(latest_html)
+                if not preview_json and latest_json.exists():
+                    preview_json = str(latest_json)
+
         return render_template(
             "report_type_yaml_view.html",
             report_type_id=report_type_id,
             report_type_label=_friendly_report_type_label(report_type_id),
-            yaml_text=yaml_text,
+            yaml_text=path.read_text(encoding="utf-8"),
             yaml_path=str(path),
+            manifest_text=manifest_path.read_text(encoding="utf-8") if manifest_path.exists() else "",
+            manifest_path=str(manifest_path),
+            plugin_text=plugin_path.read_text(encoding="utf-8") if plugin_path.exists() else "",
+            plugin_path=str(plugin_path),
+            smoke_test_text=smoke_test_path.read_text(encoding="utf-8") if smoke_test_path.exists() else "",
+            smoke_test_path=str(smoke_test_path),
+            manifest_status=manifest_status,
+            sample_source_path=sample_source_path,
+            sample_sheet_name=sample_sheet_name,
+            has_sample_source=has_sample_source,
+            can_generate_sample=(
+                has_sample_source
+                and manifest_status.lower() in {"draft", "active", "planned"}
+                and source_matches_required_columns
+                and not source_preflight_issues
+            ),
+            required_columns=required_columns,
+            source_columns=source_columns,
+            missing_source_columns=missing_source_columns,
+            source_matches_required_columns=source_matches_required_columns,
+            source_preflight=source_preflight,
+            source_preflight_issues=source_preflight_issues,
+            source_preflight_warnings=source_preflight_warnings,
+            draft_workflow=draft_workflow,
+            preview_html_path=preview_html,
+            preview_json_path=preview_json,
         )
+
+    @app.post("/report-types/save-file")
+    def save_report_type_file() -> Any:
+        report_type_id = request.form.get("report_type_id", "").strip()
+        file_key = request.form.get("file_key", "").strip()   # yaml | manifest | plugin | smoke_test
+        content = request.form.get("content", "")
+
+        if not report_type_id or not re.fullmatch(r"[a-z0-9_]+", report_type_id):
+            return jsonify({"ok": False, "error": "Invalid report_type_id."}), 400
+
+        allowed_keys = {"yaml", "manifest", "plugin", "smoke_test"}
+        if file_key not in allowed_keys:
+            return jsonify({"ok": False, "error": f"Unknown file_key '{file_key}'."}), 400
+
+        config_dir = Path(app.config["REPORT_TYPES_DIR"])
+        plugin_root = Path(app.config["PLUGIN_ROOT"])
+
+        file_map: dict[str, Path] = {
+            "yaml":       config_dir / f"{report_type_id}.yaml",
+            "manifest":   plugin_root / report_type_id / "manifest.yaml",
+            "plugin":     plugin_root / report_type_id / "plugin.py",
+            "smoke_test": plugin_root / report_type_id / "tests" / "test_smoke.py",
+        }
+        target = file_map[file_key]
+
+        if not target.exists():
+            return jsonify({"ok": False, "error": f"File not found: {target}"}), 404
+
+        # Block edits to protected report types
+        if report_type_id in PROTECTED_REPORT_TYPES:
+            return jsonify({"ok": False, "error": f"'{report_type_id}' is protected and cannot be edited via UI."}), 403
+
+        target.write_text(content, encoding="utf-8")
+        return jsonify({"ok": True})
+
+    @app.post("/report-types/mark-planned")
+    def mark_report_type_planned() -> Any:
+        report_type_id = request.form.get("report_type_id", "").strip()
+        if not report_type_id or not re.fullmatch(r"[a-z0-9_]+", report_type_id):
+            flash("Invalid report_type_id.", "danger")
+            return redirect(url_for("list_report_types_page"))
+        if report_type_id in PROTECTED_REPORT_TYPES:
+            flash(f"'{report_type_id}' is protected.", "danger")
+            return redirect(url_for("view_report_type_yaml_page", report_type_id=report_type_id))
+
+        plugin_root = Path(app.config["PLUGIN_ROOT"])
+        manifest_path = plugin_root / report_type_id / "manifest.yaml"
+        manifest = _load_plugin_manifest(report_type_id, plugin_root)
+        if not manifest or not manifest_path.exists():
+            flash(f"Plugin manifest not found for '{report_type_id}'.", "danger")
+            return redirect(url_for("view_report_type_yaml_page", report_type_id=report_type_id))
+
+        manifest["status"] = "planned"
+        manifest["updated_at"] = datetime.now(timezone.utc).isoformat()
+        manifest_path.write_text(yaml.safe_dump(manifest, sort_keys=False), encoding="utf-8")
+        flash(f"'{report_type_id}' marked as planned. Generate a sample report to preview, then publish when ready.", "success")
+        return redirect(url_for("view_report_type_yaml_page", report_type_id=report_type_id))
+
+    @app.post("/report-types/preview-and-mark-planned")
+    def preview_and_mark_planned() -> Any:
+        """Mark report type as planned, then redirect to generate preview sample."""
+        report_type_id = request.form.get("report_type_id", "").strip()
+        if not report_type_id or not re.fullmatch(r"[a-z0-9_]+", report_type_id):
+            flash("Invalid report_type_id.", "danger")
+            return redirect(url_for("list_report_types_page"))
+        if report_type_id in PROTECTED_REPORT_TYPES:
+            flash(f"'{report_type_id}' is protected.", "danger")
+            return redirect(url_for("view_report_type_yaml_page", report_type_id=report_type_id))
+
+        plugin_root = Path(app.config["PLUGIN_ROOT"])
+        manifest_path = plugin_root / report_type_id / "manifest.yaml"
+        manifest = _load_plugin_manifest(report_type_id, plugin_root)
+        if not manifest or not manifest_path.exists():
+            flash(f"Plugin manifest not found for '{report_type_id}'.", "danger")
+            return redirect(url_for("view_report_type_yaml_page", report_type_id=report_type_id))
+
+        # Mark as planned if not already
+        current_status = str(manifest.get("status", "")).strip().lower()
+        if current_status == "draft":
+            manifest["status"] = "planned"
+            manifest["updated_at"] = datetime.now(timezone.utc).isoformat()
+            manifest_path.write_text(yaml.safe_dump(manifest, sort_keys=False), encoding="utf-8")
+
+        # 307 preserves the POST method and body so /generate receives form fields correctly
+        return redirect(url_for("generate"), 307)
+
+    @app.post("/report-types/publish")
+    def publish_report_type() -> Any:
+        report_type_id = request.form.get("report_type_id", "").strip()
+        if not report_type_id or not re.fullmatch(r"[a-z0-9_]+", report_type_id):
+            flash("Invalid report_type_id.", "danger")
+            return redirect(url_for("list_report_types_page"))
+
+        plugin_root = Path(app.config["PLUGIN_ROOT"])
+        manifest_path = plugin_root / report_type_id / "manifest.yaml"
+        manifest = _load_plugin_manifest(report_type_id, plugin_root)
+        if not manifest or not manifest_path.exists():
+            flash(f"Plugin manifest not found for '{report_type_id}'.", "danger")
+            return redirect(url_for("view_report_type_yaml_page", report_type_id=report_type_id))
+
+        current_status = str(manifest.get("status", "")).strip().lower()
+        if current_status != "active":
+            _write_canonical_smoke_test(report_type_id, plugin_root)
+            # Run smoke test before publishing
+            test_success, test_message = _run_smoke_test(report_type_id, plugin_root)
+            if not test_success:
+                flash(f"Cannot publish: {test_message}", "danger")
+                return redirect(url_for("view_report_type_yaml_page", report_type_id=report_type_id))
+            
+            now_utc = datetime.now(timezone.utc).isoformat()
+            manifest["status"] = "active"
+            manifest.setdefault("published_at", now_utc)
+            manifest["updated_at"] = now_utc
+            manifest_path.write_text(yaml.safe_dump(manifest, sort_keys=False), encoding="utf-8")
+            flash(f"Published report type '{report_type_id}'. It is now available for generation.", "success")
+        else:
+            flash(f"Report type '{report_type_id}' is already published.", "info")
+        return redirect(url_for("view_report_type_yaml_page", report_type_id=report_type_id))
+
+    @app.post("/report-types/rename")
+    def rename_report_type() -> Any:
+        current_id = request.form.get("current_report_type_id", "").strip()
+        raw_new_id = request.form.get("new_report_type_id", "").strip()
+        new_id = _normalize_report_type_id(raw_new_id)
+        
+        # Validate both IDs
+        if not current_id or not re.fullmatch(r"[a-z0-9_]+", current_id):
+            flash("Invalid current report_type_id.", "danger")
+            return redirect(url_for("list_report_types_page"))
+        
+        if not new_id or not re.fullmatch(r"[a-z0-9_]+", new_id):
+            flash("Invalid new report_type_id. Use letters, digits, spaces, hyphens, or underscores.", "danger")
+            return redirect(url_for("view_report_type_yaml_page", report_type_id=current_id))
+        
+        if current_id == new_id:
+            flash("New ID is the same as current ID.", "info")
+            return redirect(url_for("view_report_type_yaml_page", report_type_id=current_id))
+        
+        config_dir = Path(app.config["REPORT_TYPES_DIR"])
+        plugin_root = Path(app.config["PLUGIN_ROOT"])
+        
+        # Check source files exist
+        curr_yaml = config_dir / f"{current_id}.yaml"
+        curr_plugin_dir = plugin_root / current_id
+        
+        if not curr_yaml.exists() or not curr_plugin_dir.exists():
+            flash(f"Report type '{current_id}' not found.", "danger")
+            return redirect(url_for("list_report_types_page"))
+        
+        # Check target doesn't already exist
+        new_yaml = config_dir / f"{new_id}.yaml"
+        new_plugin_dir = plugin_root / new_id
+        
+        if new_yaml.exists() or new_plugin_dir.exists():
+            flash(f"Report type '{new_id}' already exists.", "danger")
+            return redirect(url_for("view_report_type_yaml_page", report_type_id=current_id))
+        
+        try:
+            # Rename YAML config file
+            curr_yaml.rename(new_yaml)
+            
+            # Rename plugin directory
+            shutil.move(str(curr_plugin_dir), str(new_plugin_dir))
+            _rewrite_renamed_report_type_files(
+                old_id=current_id,
+                new_id=new_id,
+                yaml_path=new_yaml,
+                plugin_dir=new_plugin_dir,
+            )
+            
+            # Move session context to new ID
+            review_contexts = session.get("report_type_review_contexts", {})
+            if not isinstance(review_contexts, dict):
+                review_contexts = {}
+            if current_id in review_contexts:
+                review_contexts[new_id] = review_contexts.pop(current_id)
+                session["report_type_review_contexts"] = review_contexts
+                session.modified = True
+            
+            if raw_new_id != new_id:
+                flash(f"Renamed report type from '{current_id}' to '{new_id}' (normalized from '{raw_new_id}').", "success")
+            else:
+                flash(f"Renamed report type from '{current_id}' to '{new_id}'.", "success")
+            return redirect(url_for("view_report_type_yaml_page", report_type_id=new_id))
+        
+        except Exception as e:  # noqa: BLE001
+            flash(f"Error renaming report type: {str(e)}", "danger")
+            return redirect(url_for("view_report_type_yaml_page", report_type_id=current_id))
 
     @app.get("/report-types")
     def list_report_types_page() -> str:
@@ -505,54 +1142,231 @@ def create_app(config_overrides: dict[str, Any] | None = None) -> Flask:
         items = []
         for report_type_id in registry.list_report_types():
             path = Path(app.config["REPORT_TYPES_DIR"]) / f"{report_type_id}.yaml"
+            manifest = _load_plugin_manifest(report_type_id, Path(app.config["PLUGIN_ROOT"]))
+            published_raw = str(manifest.get("published_at", "")).strip()
+            updated_raw = str(manifest.get("updated_at", "")).strip()
+            published_at = _display_local_time(_iso_to_utc(published_raw)) if published_raw else "-"
+            updated_at = _display_local_time(_iso_to_utc(updated_raw)) if updated_raw else "-"
             items.append(
                 {
                     "report_type_id": report_type_id,
                     "path": str(path),
                     "is_protected": report_type_id in PROTECTED_REPORT_TYPES,
+                    "published_at": published_at,
+                    "updated_at": updated_at,
                 }
             )
         return render_template("report_types.html", report_types=items)
 
     @app.post("/report-types/new")
     def create_report_type() -> Any:
-        yaml_text = request.form.get("report_type_yaml", "")
+        prompt_text = request.form.get("prompt_text", "").strip()
+        clone_from = request.form.get("clone_source_type", "").strip()
+        sheet_name = request.form.get("sheet_name", "").strip()
+        hint_domain = request.form.get("hint_domain", "").strip()
+        hint_family = request.form.get("hint_family", "").strip()
+        hint_mode = request.form.get("hint_mode", "").strip()
+        source_sample_percent_raw = request.form.get("source_sample_percent", "100").strip()
+        uploaded_files = [f for f in request.files.getlist("csv_upload") if f and f.filename]
+        existing_csv_path = request.form.get("existing_csv_path", "").strip()
+        registry = ReportTypeRegistry(config_dir=Path(app.config["REPORT_TYPES_DIR"]))
+        source_path_for_review = ""
+        draft_workflow: list[dict[str, Any]] = []
         try:
-            parsed = yaml.safe_load(yaml_text)
-            parsed = _normalize_report_type_payload(parsed, Path(app.config["REPORT_TYPES_DIR"]))
-            _validate_report_type_yaml(parsed)
-            report_type_id = str(parsed["report_type_id"])
-            config_dir = Path(app.config["REPORT_TYPES_DIR"])
-            path = config_dir / f"{report_type_id}.yaml"
-            path.write_text(yaml.safe_dump(parsed, sort_keys=False), encoding="utf-8")
-        except Exception as exc:  # noqa: BLE001
-            flash(f"Failed to save report type: {exc}", "danger")
-            registry = ReportTypeRegistry(config_dir=Path(app.config["REPORT_TYPES_DIR"]))
-            return render_template(
-                "new_report_type.html",
-                starter_yaml=yaml_text or _starter_report_type_yaml(),
-                supported_metrics_profiles=sorted(_supported_metrics_profiles()),
-                report_types=registry.list_report_types(),
+            if not prompt_text:
+                raise ValueError("Describe the report type you want the AI to draft.")
+            available_types = registry.list_report_types()
+            if clone_from and clone_from not in available_types:
+                raise ValueError(f"Unknown clone source '{clone_from}'.")
+            source_sample_percent = int(source_sample_percent_raw or "100")
+            if source_sample_percent not in {10, 20, 30, 40, 50, 60, 70, 80, 90, 100}:
+                raise ValueError("Source sampling percentage must be one of: 10, 20, 30, ..., 100.")
+
+            draft_workflow.append(
+                {
+                    "agent": "report_type_request",
+                    "status": "completed",
+                    "summary": "Captured the natural-language request for a new report type.",
+                    "details": {
+                        "prompt_text": prompt_text,
+                        "clone_from": clone_from,
+                        "hint_domain": hint_domain,
+                        "hint_family": hint_family,
+                        "hint_mode": hint_mode,
+                        "source_sample_percent": source_sample_percent,
+                    },
+                }
             )
 
-        flash(f"Saved report type '{report_type_id}'.", "success")
-        return redirect(url_for("index"))
+            clone_yaml = ""
+            if clone_from:
+                clone_yaml = (Path(app.config["REPORT_TYPES_DIR"]) / f"{clone_from}.yaml").read_text(encoding="utf-8")
+                draft_workflow.append(
+                    {
+                        "agent": "report_type_clone_context",
+                        "status": "completed",
+                        "summary": f"Loaded '{clone_from}' as a draft starting point.",
+                        "details": {"clone_from": clone_from},
+                    }
+                )
+
+            source_profile = None
+            resolved_existing_csv_path = existing_csv_path
+            sheet_options: list[str] = []
+            if uploaded_files or existing_csv_path:
+                csv_paths = _resolve_csv_paths(
+                    uploaded_files,
+                    Path(app.config["UPLOAD_FOLDER"]),
+                    existing_csv_path=existing_csv_path,
+                )
+                if len(csv_paths) != 1:
+                    raise ValueError("Select exactly one CSV or Excel file for AI draft classification.")
+                source_path = csv_paths[0]
+                source_path_for_review = source_path
+                resolved_existing_csv_path = source_path
+                if Path(source_path).suffix.lower() in {".xlsx", ".xls"} and not sheet_name:
+                    sheet_options = list_excel_sheets(source_path)
+                    if len(sheet_options) > 1:
+                        flash("Excel file has multiple sheets. Choose a sheet and submit again.", "warning")
+                        return render_template(
+                            "new_report_type.html",
+                            report_types=registry.list_report_types(),
+                            prompt_text=prompt_text,
+                            selected_clone_type=clone_from,
+                            report_type_agent_model=app.config["REPORT_TYPE_AGENT_MODEL"],
+                            recent_uploads=_recent_uploaded_sources(Path(app.config["UPLOAD_FOLDER"])),
+                            existing_csv_path=resolved_existing_csv_path,
+                            selected_sheet="",
+                            sheet_options=sheet_options,
+                            source_summary=describe_tabular_source(source_path),
+                            source_sample_percent=source_sample_percent,
+                        )
+                    if len(sheet_options) == 1:
+                        sheet_name = sheet_options[0]
+                source_profile = _build_report_type_source_profile(
+                    source_path,
+                    sheet_name=sheet_name or None,
+                    sample_percent=source_sample_percent,
+                )
+                draft_workflow.append(
+                    {
+                        "agent": "report_type_source_profiler",
+                        "status": "completed",
+                        "summary": "Profiled the sample source to constrain required columns and plugin design.",
+                        "details": {
+                            "source_path": source_path,
+                            "sheet_name": sheet_name,
+                            "columns": ((source_profile or {}).get("source_metadata") or {}).get("columns", []),
+                            "sampling": (source_profile or {}).get("sampling", {}),
+                        },
+                    }
+                )
+
+            draft = _generate_report_type_agent_draft(
+                prompt_text=prompt_text,
+                clone_from=clone_from or None,
+                clone_yaml=clone_yaml,
+                report_types=available_types,
+                model=str(app.config["REPORT_TYPE_AGENT_MODEL"]),
+                source_profile=source_profile,
+                hint_domain=hint_domain or None,
+                hint_family=hint_family or None,
+                hint_mode=hint_mode or None,
+            )
+            draft_workflow.append(
+                {
+                    "agent": "report_type_drafter",
+                    "status": "completed",
+                    "summary": "Generated the draft YAML, plugin, and smoke test for the new report type.",
+                    "details": {
+                        "report_type_id": draft.get("report_type_id", ""),
+                        "family": draft.get("family", ""),
+                        "domain": draft.get("domain", ""),
+                        "mode": draft.get("mode", ""),
+                        "required_columns": draft.get("required_columns", []),
+                    },
+                }
+            )
+            report_type_id = _materialize_report_type_agent_draft(
+                draft=draft,
+                config_dir=Path(app.config["REPORT_TYPES_DIR"]),
+                plugin_root=Path(app.config["PLUGIN_ROOT"]),
+                clone_from=clone_from or None,
+                source_profile=source_profile,
+            )
+            draft_workflow.append(
+                {
+                    "agent": "report_type_materializer",
+                    "status": "completed",
+                    "summary": "Wrote the draft report type files into the workspace for review and publishing.",
+                    "details": {"report_type_id": report_type_id},
+                }
+            )
+        except Exception as exc:  # noqa: BLE001
+            flash(f"Failed to generate AI draft: {exc}", "danger")
+            return render_template(
+                "new_report_type.html",
+                report_types=registry.list_report_types(),
+                prompt_text=prompt_text,
+                selected_clone_type=clone_from,
+                report_type_agent_model=app.config["REPORT_TYPE_AGENT_MODEL"],
+                recent_uploads=_recent_uploaded_sources(Path(app.config["UPLOAD_FOLDER"])),
+                existing_csv_path=existing_csv_path,
+                selected_sheet=sheet_name,
+                sheet_options=list_excel_sheets(existing_csv_path) if existing_csv_path and Path(existing_csv_path).exists() and Path(existing_csv_path).suffix.lower() in {".xlsx", ".xls"} else [],
+                source_summary=_safe_describe_source(existing_csv_path, sheet_name=sheet_name or None),
+                source_sample_percent=int(source_sample_percent_raw or "100"),
+                families=sorted(FAMILIES),
+                domains=sorted(DOMAINS),
+                modes=sorted(MODES),
+            )
+
+        _store_report_type_review_context(
+            report_type_id,
+            source_path=source_path_for_review,
+            sheet_name=sheet_name,
+            draft_workflow=draft_workflow,
+        )
+        _persist_sample_source_in_manifest(
+            report_type_id,
+            plugin_root=Path(app.config["PLUGIN_ROOT"]),
+            source_path=source_path_for_review,
+            sheet_name=sheet_name,
+        )
+        flash(
+            f"Generated AI draft for report type '{report_type_id}'. Review it, publish it, and generate a sample report when ready.",
+            "success",
+        )
+        return redirect(url_for("view_report_type_yaml_page", report_type_id=report_type_id))
 
     @app.post("/report-types/delete")
     def delete_report_type() -> Any:
+        is_xhr = request.headers.get("X-Requested-With") == "XMLHttpRequest"
         report_type_id = request.form.get("report_type_id", "").strip()
         if not report_type_id:
+            if is_xhr:
+                return {"ok": False, "error": "Missing report_type_id."}, 400
             flash("Missing report_type_id.", "danger")
             return redirect(url_for("list_report_types_page"))
         if report_type_id in PROTECTED_REPORT_TYPES:
+            if is_xhr:
+                return {"ok": False, "error": f"'{report_type_id}' is protected and cannot be removed from UI."}, 403
             flash(f"'{report_type_id}' is protected and cannot be removed from UI.", "danger")
             return redirect(url_for("list_report_types_page"))
 
         path = Path(app.config["REPORT_TYPES_DIR"]) / f"{report_type_id}.yaml"
         if not path.exists():
+            if is_xhr:
+                return {"ok": False, "error": f"Report type not found: {report_type_id}"}, 404
             flash(f"Report type not found: {report_type_id}", "danger")
             return redirect(url_for("list_report_types_page"))
         path.unlink()
+        plugin_dir = Path(app.config["PLUGIN_ROOT"]) / report_type_id
+        if plugin_dir.exists() and plugin_dir.is_dir():
+            import shutil
+            shutil.rmtree(plugin_dir, ignore_errors=True)
+        if is_xhr:
+            return {"ok": True}, 200
         flash(f"Deleted report type '{report_type_id}'.", "success")
         return redirect(url_for("list_report_types_page"))
 
@@ -560,18 +1374,28 @@ def create_app(config_overrides: dict[str, Any] | None = None) -> Flask:
     def generate() -> Any:
         attempt_id = request.form.get("attempt_id", "").strip() or f"evt_{uuid4().hex[:10]}"
         report_type_id = request.form.get("report_type_id", "").strip()
+        return_to_report_type_view = request.form.get("return_to_report_type_view", "").strip() == "1"
+
+        def failure_redirect() -> Any:
+            if return_to_report_type_view and report_type_id:
+                return redirect(url_for("view_report_type_yaml_page", report_type_id=report_type_id))
+            return redirect(url_for("index"))
+
+        registry = ReportTypeRegistry(config_dir=Path(app.config["REPORT_TYPES_DIR"]))
         visible_report_types = _visible_report_types_for_generation(
-            ReportTypeRegistry(config_dir=Path(app.config["REPORT_TYPES_DIR"])).list_report_types()
+            registry.list_report_types(),
+            Path(app.config["PLUGIN_ROOT"]),
         )
         if report_type_id not in visible_report_types:
             flash(f"Report type '{report_type_id}' is not enabled for generation.", "danger")
-            return redirect(url_for("index"))
+            return failure_redirect()
+        definition = registry.get(report_type_id)
         provider_name = request.form.get("provider", "local").strip().lower()
         if provider_name == "mock":
             provider_name = "local"
         if provider_name not in PROVIDER_CATALOG:
             flash(f"Unknown provider '{provider_name}'.", "danger")
-            return redirect(url_for("index"))
+            return failure_redirect()
         model = request.form.get("model", "gpt-5-mini").strip()
         api_key = request.form.get("api_key", "").strip()
         api_base_url = request.form.get("api_base_url", "").strip()
@@ -582,11 +1406,10 @@ def create_app(config_overrides: dict[str, Any] | None = None) -> Flask:
         existing_csv_path = request.form.get("existing_csv_path", "").strip()
         source_labels_text = request.form.get("source_labels", "").strip()
         source_labels = _parse_source_labels_text(source_labels_text)
-        output_token_budget = int(request.form.get("output_token_budget", "1200").strip() or "1200")
+        output_token_budget_raw = request.form.get("output_token_budget", "").strip()
+        output_token_budget = int(output_token_budget_raw) if output_token_budget_raw else None
         row_limit_raw = request.form.get("row_limit", "").strip()
-        if not row_limit_raw:
-            row_limit_raw = "1000"
-        row_limit = int(row_limit_raw)
+        row_limit = int(row_limit_raw) if row_limit_raw else None
         generation_cost_usd_est: float | None = 0.0
         generation_input_tokens_est: int | None = None
         generation_output_tokens_est: int | None = None
@@ -596,31 +1419,11 @@ def create_app(config_overrides: dict[str, Any] | None = None) -> Flask:
         generation_succeeded = False
         session["last_provider"] = provider_name
 
-        prefs = {
-            "tone": request.form.get("tone", "concise").strip(),
-            "audience": request.form.get("audience", "leadership").strip(),
-            "focus": request.form.get("focus", "trends").strip(),
-        }
-        threshold_name = request.form.get("threshold_name", "").strip()
-        threshold_value = request.form.get("threshold_value", "").strip()
-        if threshold_name and threshold_value:
-            try:
-                prefs[threshold_name] = float(threshold_value)
-            except ValueError:
-                _append_report_event(
-                    Path(app.config["OUTPUT_FOLDER"]),
-                    {
-                        "attempt_id": attempt_id,
-                        "report_type_id": report_type_id,
-                        "provider": provider_name,
-                        "model": model,
-                        "status": "failed",
-                        "message": "Threshold value must be numeric.",
-                    },
-                )
-                flash("Threshold value must be numeric.", "danger")
-                return redirect(url_for("index"))
-
+        prefs = _report_type_runtime_default_prefs(
+            report_type_id=report_type_id,
+            definition=definition,
+            plugin_root=Path(app.config["PLUGIN_ROOT"]),
+        )
         try:
             if not confirm_cost:
                 _append_report_event(
@@ -648,12 +1451,26 @@ def create_app(config_overrides: dict[str, Any] | None = None) -> Flask:
                 source_labels=source_labels,
             )
             pipeline_row_limit = None if was_combined_source else row_limit
+            if return_to_report_type_view and report_type_id and not was_combined_source:
+                _store_report_type_review_context(
+                    report_type_id,
+                    source_path=csv_path,
+                    sheet_name=sheet_name or "",
+                )
+                _persist_sample_source_in_manifest(
+                    report_type_id,
+                    plugin_root=Path(app.config["PLUGIN_ROOT"]),
+                    source_path=csv_path,
+                    sheet_name=sheet_name or "",
+                )
             if Path(csv_path).suffix.lower() in {".xlsx", ".xls"} and not sheet_name:
                 sheets = list_excel_sheets(csv_path)
                 if len(sheets) > 1:
                     flash("Excel file has multiple sheets. Choose a sheet and submit again.", "warning")
-                    registry = ReportTypeRegistry(config_dir=Path(app.config["REPORT_TYPES_DIR"]))
-                    report_types = _visible_report_types_for_generation(registry.list_report_types())
+                    report_types = _visible_report_types_for_generation(
+                        registry.list_report_types(),
+                        Path(app.config["PLUGIN_ROOT"]),
+                    )
                     return render_template(
                         "index.html",
                         report_types=report_types,
@@ -665,7 +1482,7 @@ def create_app(config_overrides: dict[str, Any] | None = None) -> Flask:
                         defaults={
                             "provider": provider_name,
                             "model": model,
-                            "row_limit": row_limit if row_limit is not None else 1000,
+                            "row_limit": row_limit,
                             "report_type_id": report_type_id,
                             "api_key": api_key,
                             "api_base_url": api_base_url,
@@ -679,10 +1496,25 @@ def create_app(config_overrides: dict[str, Any] | None = None) -> Flask:
                 if len(sheets) == 1:
                     sheet_name = sheets[0]
 
+            source_preflight = preflight_tabular_source(
+                csv_path,
+                sheet_name=sheet_name or None,
+                required_columns=getattr(definition, "required_columns", []),
+                row_limit=pipeline_row_limit,
+            )
+            if not bool(source_preflight.get("ok")):
+                issues = [
+                    str(item).strip()
+                    for item in source_preflight.get("issues", [])
+                    if str(item).strip()
+                ]
+                raise ValueError("Source preflight failed: " + ("; ".join(issues) if issues else "Unable to safely parse the selected source."))
+
             definition, effective_prefs, csv_profile, metrics = prepare_pipeline_inputs(
                 csv_path=csv_path,
                 report_type_id=report_type_id,
                 user_prefs=prefs,
+                registry=registry,
                 row_limit=pipeline_row_limit,
                 sheet_name=sheet_name or None,
             )
@@ -712,7 +1544,11 @@ def create_app(config_overrides: dict[str, Any] | None = None) -> Flask:
                             "provider": provider_name,
                             "model": model,
                             "status": "cost_estimated",
-                            "message": f"Estimated cost ${float(estimate.get('total_cost_usd_est', 0.0)):.6f}",
+                            "message": (
+                                f"Estimated cost ${float(estimate.get('total_cost_usd_est', 0.0)):.6f}"
+                                if estimate.get("total_cost_usd_est") is not None
+                                else "Estimated cost is unbounded because output budget is unlimited."
+                            ),
                         },
                     )
                     cost_token = (
@@ -731,7 +1567,7 @@ def create_app(config_overrides: dict[str, Any] | None = None) -> Flask:
                         csv_path=csv_path,
                         sheet_name=sheet_name,
                         row_limit=row_limit_raw,
-                        output_token_budget=output_token_budget,
+                        output_token_budget=output_token_budget_raw,
                         prefs=effective_prefs,
                         expected_cost_token=cost_token,
                         attempt_id=attempt_id,
@@ -771,10 +1607,18 @@ def create_app(config_overrides: dict[str, Any] | None = None) -> Flask:
                         },
                     )
                     flash("Cost estimate changed after input update. Please review and confirm again.", "danger")
-                    return redirect(url_for("index"))
-                generation_cost_usd_est = float(fresh_estimate.get("total_cost_usd_est", 0.0))
+                    return failure_redirect()
+                generation_cost_usd_est = (
+                    float(fresh_estimate.get("total_cost_usd_est", 0.0))
+                    if fresh_estimate.get("total_cost_usd_est") is not None
+                    else None
+                )
                 generation_input_tokens_est = int(fresh_estimate.get("input_tokens_est", 0) or 0)
-                generation_output_tokens_est = int(fresh_estimate.get("output_tokens_est", 0) or 0)
+                generation_output_tokens_est = (
+                    int(fresh_estimate.get("output_tokens_est", 0) or 0)
+                    if fresh_estimate.get("output_tokens_est") is not None
+                    else None
+                )
             else:
                 resolved_api_key, resolved_base_url, default_headers = None, None, None
                 generation_cost_usd_est = 0.0
@@ -805,7 +1649,7 @@ def create_app(config_overrides: dict[str, Any] | None = None) -> Flask:
                 )
             else:
                 flash(f"Unsupported provider runtime '{runtime}' for provider '{provider_name}'.", "danger")
-                return redirect(url_for("index"))
+                return failure_redirect()
 
             output_dir = Path(app.config["OUTPUT_FOLDER"]) / report_type_id
             _append_report_event(
@@ -861,7 +1705,7 @@ def create_app(config_overrides: dict[str, Any] | None = None) -> Flask:
                 },
             )
             flash(str(exc), "danger")
-            return redirect(url_for("index"))
+            return failure_redirect()
         finally:
             if generation_started and generation_succeeded and report_json_path is not None:
                 report_name = Path(report_json_path).stem.replace(".report", "")
@@ -879,6 +1723,20 @@ def create_app(config_overrides: dict[str, Any] | None = None) -> Flask:
                 )
 
         flash("Report generated successfully.", "success")
+        if return_to_report_type_view and report_type_id:
+            # Store preview artifact paths in session for the YAML view page
+            contexts = session.get("report_type_review_contexts", {})
+            if not isinstance(contexts, dict):
+                contexts = {}
+            ctx = contexts.get(report_type_id, {})
+            if not isinstance(ctx, dict):
+                ctx = {}
+            ctx["preview_html_path"] = str(report_html_path) if report_html_path else ""
+            ctx["preview_json_path"] = str(report_json_path) if report_json_path else ""
+            contexts[report_type_id] = ctx
+            session["report_type_review_contexts"] = contexts
+            session.modified = True
+            return redirect(url_for("view_report_type_yaml_page", report_type_id=report_type_id))
         raw_path = report_json_path.with_name(report_json_path.name.replace(".report.json", ".openai.raw.json"))
         pdf_path = report_json_path.with_name(report_json_path.name.replace(".report.json", ".report.pdf"))
         return render_template(
@@ -1656,18 +2514,120 @@ def _report_type_options(report_type_ids: list[str]) -> list[dict[str, str]]:
     return [{"id": rid, "label": _friendly_report_type_label(rid)} for rid in report_type_ids]
 
 
-def _visible_report_types_for_generation(all_report_types: list[str]) -> list[str]:
-    configured = (os.getenv("GENERATION_VISIBLE_REPORT_TYPES", "") or "").strip()
-    if not configured:
-        return all_report_types
+def _load_plugin_manifest(report_type_id: str, plugin_root: Path) -> dict[str, Any]:
+    manifest_path = plugin_root / report_type_id / "manifest.yaml"
+    if not manifest_path.exists():
+        return {}
+    try:
+        manifest = yaml.safe_load(manifest_path.read_text(encoding="utf-8")) or {}
+    except Exception:  # noqa: BLE001
+        return {}
+    return manifest if isinstance(manifest, dict) else {}
 
-    requested = [v.strip() for v in configured.split(",") if v.strip()]
-    if not requested:
-        return all_report_types
 
-    requested_set = set(requested)
-    filtered = [rid for rid in all_report_types if rid in requested_set]
-    return filtered or all_report_types
+def _normalize_report_type_id(value: str) -> str:
+    normalized = re.sub(r"[^a-z0-9]+", "_", (value or "").strip().lower())
+    normalized = re.sub(r"_+", "_", normalized).strip("_")
+    return normalized
+
+
+def _rewrite_renamed_report_type_files(*, old_id: str, new_id: str, yaml_path: Path, plugin_dir: Path) -> None:
+    if yaml_path.exists():
+        payload = yaml.safe_load(yaml_path.read_text(encoding="utf-8")) or {}
+        if isinstance(payload, dict):
+            payload["report_type_id"] = new_id
+            if str(payload.get("metrics_profile", "")).strip() == old_id:
+                payload["metrics_profile"] = new_id
+            yaml_path.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
+
+    manifest_path = plugin_dir / "manifest.yaml"
+    if manifest_path.exists():
+        manifest = yaml.safe_load(manifest_path.read_text(encoding="utf-8")) or {}
+        if isinstance(manifest, dict):
+            manifest["plugin_id"] = new_id
+            if str(manifest.get("metrics_profile", "")).strip() == old_id:
+                manifest["metrics_profile"] = new_id
+            manifest["updated_at"] = datetime.now(timezone.utc).isoformat()
+            manifest_path.write_text(yaml.safe_dump(manifest, sort_keys=False), encoding="utf-8")
+
+    for relative_path in (Path("plugin.py"), Path("tests") / "test_smoke.py"):
+        path = plugin_dir / relative_path
+        if not path.exists():
+            continue
+        text = path.read_text(encoding="utf-8")
+        path.write_text(text.replace(old_id, new_id), encoding="utf-8")
+
+
+def _canonical_smoke_test_template(*, report_type_id: str) -> str:
+    return f'''from __future__ import annotations
+
+import pandas as pd
+
+from rv_reporter.report_types.plugins import ReportPluginManager
+
+
+def test_{report_type_id}_smoke_build() -> None:
+    manager = ReportPluginManager(plugin_dir="report_type_plugins")
+    result = manager.compute_metrics(
+        metrics_profile="{report_type_id}",
+        df=pd.DataFrame({{"sample": [1, 2, 3]}}),
+        prefs={{}},
+        report_type_id="{report_type_id}",
+    )
+    assert isinstance(result, dict)
+'''
+
+
+def _write_canonical_smoke_test(report_type_id: str, plugin_root: Path) -> None:
+    smoke_test_path = plugin_root / report_type_id / "tests" / "test_smoke.py"
+    # Preserve agent-generated smoke tests that already use the correct imports;
+    # overwrite only if the file is missing or has broken / stale imports.
+    if smoke_test_path.exists():
+        existing = smoke_test_path.read_text(encoding="utf-8")
+        if "from rv_reporter.report_types.plugins import ReportPluginManager" in existing:
+            return  # valid agent-generated test — keep it
+    smoke_test_path.parent.mkdir(parents=True, exist_ok=True)
+    smoke_test_path.write_text(_canonical_smoke_test_template(report_type_id=report_type_id), encoding="utf-8")
+
+
+def _run_smoke_test(report_type_id: str, plugin_root: Path) -> tuple[bool, str]:
+    """Run smoke test for a plugin. Returns (success, output_message)."""
+    smoke_test_path = plugin_root / report_type_id / "tests" / "test_smoke.py"
+    
+    if not smoke_test_path.exists():
+        return True, "No smoke test found (skipped)."
+    
+    try:
+        result = subprocess.run(
+            [sys.executable, "-m", "pytest", str(smoke_test_path), "-xvs"],
+            cwd=str(plugin_root.parent),
+            capture_output=True,
+            timeout=30,
+            text=True,
+        )
+        if result.returncode == 0:
+            return True, "Smoke test passed."
+        else:
+            return False, f"Smoke test failed:\n{result.stdout}\n{result.stderr}"
+    except subprocess.TimeoutExpired:
+        return False, "Smoke test exceeded 30 second timeout."
+    except Exception as e:  # noqa: BLE001
+        return False, f"Error running smoke test: {str(e)}"
+
+
+def _visible_report_types_for_generation(all_report_types: list[str], plugin_root: Path | None = None) -> list[str]:
+    hidden_raw = (os.getenv("GENERATION_HIDDEN_REPORT_TYPES", "") or "").strip()
+    hidden_set = {v.strip() for v in hidden_raw.split(",") if v.strip()}
+
+    # draft = no local preview yet; planned/active = allowed for generation
+    draft_only_types: set[str] = set()
+    if plugin_root is not None:
+        for report_type_id in all_report_types:
+            manifest = _load_plugin_manifest(report_type_id, plugin_root)
+            if manifest and str(manifest.get("status", "")).strip().lower() == "draft":
+                draft_only_types.add(report_type_id)
+
+    return [rid for rid in all_report_types if rid not in hidden_set and rid not in draft_only_types]
 
 
 def _openai_frontier_models() -> list[str]:
@@ -1705,6 +2665,9 @@ def _provider_default_base_url(provider_name: str) -> str:
         "gemini": "https://generativelanguage.googleapis.com/v1beta/openai",
         "openrouter": "https://openrouter.ai/api/v1",
     }.get(provider_name, "")
+    
+def _provider_pricing_url(provider_name: str) -> str:
+    return str(PROVIDER_PRICING_INFO.get(provider_name, {}).get("pricing_url", PRICING_SOURCE_URL))
 
 
 def _resolve_provider_runtime_options(
@@ -2192,60 +3155,143 @@ def _starter_report_type_yaml() -> str:
         "title": "My Custom Report",
         "required_columns": ["timestamp", "service", "requests", "errors", "latency_ms"],
         "metrics_profile": "ops_kpi",
-        "default_prefs": {"tone": "concise", "audience": "leadership", "focus": "trends"},
+        "default_prefs": _classification_default_prefs(
+            family="tabular_statistical",
+            domain="generic",
+            mode="statistical_summary",
+        ),
         "prompt_instructions": "Describe key patterns and actionable recommendations.",
-        "output_schema": {
-            "type": "object",
-            "additionalProperties": False,
-            "required": [
-                "report_type_id",
-                "report_title",
-                "summary",
-                "sections",
-                "alerts",
-                "recommendations",
-                "tables",
-                "charts",
-                "metadata",
-            ],
-            "properties": {
-                "report_type_id": {"type": "string"},
-                "report_title": {"type": "string"},
-                "summary": {"type": "string"},
-                "sections": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "additionalProperties": False,
-                        "required": ["title", "body"],
-                        "properties": {"title": {"type": "string"}, "body": {"type": "string"}},
-                    },
-                },
-                "alerts": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "additionalProperties": False,
-                        "required": ["severity", "message"],
-                        "properties": {"severity": {"type": "string"}, "message": {"type": "string"}},
-                    },
-                },
-                "recommendations": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "additionalProperties": False,
-                        "required": ["priority", "action"],
-                        "properties": {"priority": {"type": "string"}, "action": {"type": "string"}},
-                    },
-                },
-                "tables": {"type": "array", "items": {"type": "object", "additionalProperties": True}},
-                "charts": {"type": "array", "items": {"type": "object", "additionalProperties": True}},
-                "metadata": {"type": "object", "additionalProperties": True},
-            },
-        },
+        "output_schema": _default_report_output_schema(),
     }
     return yaml.safe_dump(payload, sort_keys=False)
+
+
+def _classification_default_prefs(*, family: str, domain: str, mode: str) -> dict[str, str]:
+    engineering_domains = {"networking", "observability", "operations", "security", "telecom"}
+    business_domains = {
+        "finance",
+        "product",
+        "sales",
+        "project_management",
+        "government",
+        "education",
+        "research",
+    }
+    anomaly_modes = {
+        "issue_detection",
+        "anomaly_detection",
+        "threshold_sla",
+        "burst_detection",
+        "flow_bottleneck",
+        "root_cause_triage",
+    }
+    cost_or_efficiency_domains = {"finance", "supply_chain", "manufacturing", "energy", "sales", "product"}
+
+    if domain in engineering_domains or family in {"time_series", "event", "log_text", "hybrid"}:
+        tone = "technical"
+    elif domain in business_domains:
+        tone = "executive"
+    else:
+        tone = "concise"
+
+    if domain in engineering_domains:
+        audience = "engineering"
+    elif domain == "customer_support":
+        audience = "customer"
+    else:
+        audience = "leadership"
+
+    if mode in anomaly_modes:
+        focus = "anomalies"
+    elif domain in cost_or_efficiency_domains and mode in {
+        "overview_summary",
+        "statistical_summary",
+        "variance_analysis",
+        "ranking_prioritization",
+    }:
+        focus = "cost"
+    else:
+        focus = "trends"
+
+    return {"tone": tone, "audience": audience, "focus": focus}
+
+
+def _report_type_runtime_default_prefs(
+    *,
+    report_type_id: str,
+    definition: Any,
+    plugin_root: Path,
+) -> dict[str, Any]:
+    existing = dict(getattr(definition, "default_prefs", {}) or {})
+    manifest_path = plugin_root / report_type_id / "manifest.yaml"
+    if not manifest_path.exists():
+        return {}
+    try:
+        manifest = yaml.safe_load(manifest_path.read_text(encoding="utf-8")) or {}
+    except Exception:  # noqa: BLE001
+        return {}
+
+    family = str(manifest.get("family", "")).strip()
+    domain = str(manifest.get("domain", "")).strip()
+    mode = str(manifest.get("mode", "")).strip()
+    if not family or not domain or not mode:
+        return {}
+
+    inferred = _classification_default_prefs(family=family, domain=domain, mode=mode)
+    return {key: value for key, value in inferred.items() if not str(existing.get(key, "")).strip()}
+
+
+def _default_report_output_schema() -> dict[str, Any]:
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "required": [
+            "report_type_id",
+            "report_title",
+            "summary",
+            "sections",
+            "alerts",
+            "recommendations",
+            "tables",
+            "charts",
+            "metadata",
+        ],
+        "properties": {
+            "report_type_id": {"type": "string"},
+            "report_title": {"type": "string"},
+            "summary": {"type": "string"},
+            "sections": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "required": ["title", "body"],
+                    "properties": {"title": {"type": "string"}, "body": {"type": "string"}},
+                },
+            },
+            "alerts": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "required": ["severity", "message"],
+                    "properties": {"severity": {"type": "string"}, "message": {"type": "string"}},
+                },
+            },
+            "recommendations": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "required": ["priority", "action"],
+                    "properties": {"priority": {"type": "string"}, "action": {"type": "string"}},
+                },
+            },
+            "tables": {"type": "array", "items": {"type": "object", "additionalProperties": True}},
+            "charts": {"type": "array", "items": {"type": "object", "additionalProperties": True}},
+            "metadata": {"type": "object", "additionalProperties": True},
+        },
+    }
 
 
 def _supported_metrics_profiles() -> set[str]:
@@ -2835,12 +3881,543 @@ def _normalize_report_type_payload(payload: dict[str, Any], report_types_dir: Pa
         report_type_id = "custom_report"
 
     if (report_types_dir / f"{report_type_id}.yaml").exists():
-        raise ValueError(
-            f"report_type_id '{report_type_id}' already exists. "
-            "Please change report_type_id before saving."
-        )
+        # Auto-version: strip any existing _v<n> suffix, then find the next free version
+        base_id = re.sub(r"_v\d+$", "", report_type_id)
+        for version in range(2, 1000):
+            candidate = f"{base_id}_v{version}"
+            if not (report_types_dir / f"{candidate}.yaml").exists():
+                report_type_id = candidate
+                break
+        else:
+            raise ValueError(f"Could not find a free versioned id for '{base_id}'.")
     normalized["report_type_id"] = report_type_id
     return normalized
+
+
+def _enhance_prompt_with_classification_context(
+    prompt_text: str,
+    hint_domain: str | None = None,
+) -> str:
+    """
+    Inject domain-specific contextual questions into the prompt to guide AI generation.
+    
+    This enriches generic prompts with domain-specific clarifications so the AI can
+    generate more contextually-aware initial drafts (e.g., asking about SLA thresholds
+    for telecom data, incident classification for security data, etc.).
+    
+    Args:
+        prompt_text: Original user-provided prompt
+        hint_domain: Domain classification (telecom, observability, security, operations, finance)
+    
+    Returns:
+        Enhanced prompt with domain-specific context questions appended
+    """
+    if not hint_domain:
+        return prompt_text
+
+    domain_context = {
+        "telecom": """
+Before generating the report type, consider these clarifying questions:
+- What are your key SLA/performance thresholds? (e.g., latency < 10ms is good, > 50ms is critical)
+- Should analysis be per-flow (per source-destination pair) or aggregate (whole network)?
+- How do you define "degraded" vs "critical" performance states?
+- Are you tracking absolute metrics (delay, jitter, loss %) or relative trends?
+- Which metrics matter most for your use case? (delay, jitter, packet loss, reordering)
+- What time windows are most relevant? (per-hour, per-day trends)
+""",
+        "observability": """
+Before generating the report type, consider these clarifying questions:
+- What are the key health indicators for your systems? (uptime %, response time, error rate)
+- How do you want to detect anomalies? (static thresholds, baselines/percentiles, ML models)
+- What time windows matter? (real-time, hourly, daily baselines)
+- Are there dependencies between services that should affect health calculation?
+- What triggers an alert vs. warning vs. info level in your system?
+- How should you handle missing/sparse data?
+""",
+        "security": """
+Before generating the report type, consider these clarifying questions:
+- What threat patterns are you tracking? (brute force, lateral movement, data exfiltration, etc.)
+- How do you classify incidents vs. vulnerabilities vs. behavioral anomalies?
+- What confidence or severity thresholds should trigger escalation?
+- Are you tracking root cause (attribution) or just detection?
+- What time windows matter for threat analysis? (per-incident, hourly trends, weekly summaries)
+- Should analysis focus on individual events or aggregated patterns?
+""",
+        "operations": """
+Before generating the report type, consider these clarifying questions:
+- What business SLAs or KPIs are you tracking? (uptime %, throughput, capacity utilization)
+- Should you focus on availability (is it working?), capacity (can it handle more?), or cost efficiency?
+- What escalation procedures should this report trigger? (auto-remediate, alert owner, page on-call)
+- Are there capacity thresholds (e.g., > 85% utilization = warning)?
+- What time windows matter? (hourly spikes, daily capacity trends, weekly planning)
+- How should seasonal patterns affect baselines?
+""",
+        "finance": """
+Before generating the report type, consider these clarifying questions:
+- What are the key financial metrics? (revenue, costs, margin, variance vs. budget)
+- Should you drill down by business unit, cost center, product line, or region?
+- What variance thresholds trigger investigation? (1%, 5%, 10% off budget?)
+- How should you handle timing differences (accrual vs. cash, period-end vs. actual close)?
+- What stakeholder views matter most? (CFO, business owners, controllers)
+- Should analysis show month-to-date, year-to-date, or trailing 12-month trends?
+""",
+    }
+
+    context_questions = domain_context.get(hint_domain, "")
+    if context_questions:
+        return f"{prompt_text}{context_questions}"
+    
+    return prompt_text
+
+
+def _generate_report_type_agent_draft(
+    *,
+    prompt_text: str,
+    clone_from: str | None,
+    clone_yaml: str,
+    report_types: list[str],
+    model: str,
+    source_profile: dict[str, Any] | None,
+    hint_domain: str | None = None,
+    hint_family: str | None = None,
+    hint_mode: str | None = None,
+) -> dict[str, Any]:
+    api_key = os.getenv("OPENAI_API_KEY", "").strip()
+    if not api_key:
+        raise ValueError("OPENAI_API_KEY is required for AI report type generation.")
+
+    try:
+        from openai import OpenAI  # pylint: disable=import-outside-toplevel
+    except ImportError as exc:
+        raise RuntimeError("Install openai extra: pip install -e .[openai]") from exc
+
+    # Enhance the prompt with domain-specific context questions
+    enhanced_prompt = _enhance_prompt_with_classification_context(
+        prompt_text=prompt_text,
+        hint_domain=hint_domain,
+    )
+
+    client = OpenAI(api_key=api_key)
+    response = client.responses.create(
+        model=model,
+        instructions=_report_type_agent_instructions(),
+        input=[
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "input_text",
+                        "text": json.dumps(
+                            {
+                                "prompt": enhanced_prompt,
+                                "clone_from": clone_from or "",
+                                "clone_yaml": clone_yaml,
+                                "existing_report_types": report_types,
+                                "allowed_families": sorted(FAMILIES),
+                                "allowed_domains": sorted(DOMAINS),
+                                "allowed_modes": sorted(MODES),
+                                "source_profile": source_profile,
+                                "classification_hints": {
+                                    "domain": hint_domain or "",
+                                    "family": hint_family or "",
+                                    "mode": hint_mode or "",
+                                },
+                            }
+                        ),
+                    }
+                ],
+            }
+        ],
+        text={
+            "format": {
+                "type": "json_schema",
+                "name": "report_type_agent_draft",
+                "schema": _report_type_agent_response_schema(),
+                "strict": False,
+            }
+        },
+    )
+    draft = json.loads(response.output_text)
+    if not isinstance(draft, dict):
+        raise ValueError("AI draft payload was not an object.")
+    return draft
+
+
+def _materialize_report_type_agent_draft(
+    *,
+    draft: dict[str, Any],
+    config_dir: Path,
+    plugin_root: Path,
+    clone_from: str | None,
+    source_profile: dict[str, Any] | None,
+) -> str:
+    report_type_id = _normalize_generated_report_type_id(
+        str(draft.get("report_type_id", "")).strip() or str(draft.get("title", "")).strip(),
+        config_dir,
+    )
+    title = str(draft.get("title", "")).strip() or _friendly_report_type_label(report_type_id)
+    # If auto-versioned (ends with _v<n>), reflect that in the title too
+    version_match = re.search(r"_v(\d+)$", report_type_id)
+    if version_match:
+        version_num = version_match.group(1)
+        if not re.search(r"\bv\d+\b", title, re.IGNORECASE):
+            title = f"{title} v{version_num}"
+    family = str(draft.get("family", "")).strip()
+    domain = str(draft.get("domain", "")).strip()
+    mode = str(draft.get("mode", "")).strip()
+    description = str(draft.get("description", "")).strip() or f"{title} plugin."
+    prompt_instructions = str(draft.get("prompt_instructions", "")).strip()
+    required_columns = [str(item).strip() for item in draft.get("required_columns", []) if str(item).strip()]
+    required_columns = _sanitize_required_columns_for_source_profile(required_columns, source_profile)
+    if not prompt_instructions:
+        raise ValueError("AI draft is missing prompt_instructions.")
+    if not required_columns:
+        raise ValueError("AI draft required_columns did not match the uploaded source columns.")
+
+    default_prefs = draft.get("default_prefs", {})
+    if not isinstance(default_prefs, dict):
+        raise ValueError("AI draft default_prefs must be an object.")
+    for key, value in _classification_default_prefs(family=family, domain=domain, mode=mode).items():
+        default_prefs.setdefault(key, value)
+
+    scaffold_result = scaffold_report_type(
+        report_type_id=report_type_id,
+        title=title,
+        family=family,
+        domain=domain,
+        mode=mode,
+        required_columns=required_columns,
+        version="1.0.0",
+        description=description,
+        owner="ai-agent",
+        generator="openai_sdk",
+        inherits_from=clone_from or "",
+        status="draft",
+        create_report_type_yaml=True,
+        config_dir=config_dir,
+        plugin_root=plugin_root,
+        force=False,
+    )
+
+    report_yaml = {
+        "report_type_id": report_type_id,
+        "version": "1.0.0",
+        "title": title,
+        "required_columns": required_columns,
+        "metrics_profile": report_type_id,
+        "default_prefs": default_prefs,
+        "prompt_instructions": prompt_instructions,
+        "output_schema": _default_report_output_schema(),
+    }
+    if scaffold_result.report_type_yaml is not None:
+        scaffold_result.report_type_yaml.write_text(yaml.safe_dump(report_yaml, sort_keys=False), encoding="utf-8")
+
+    manifest = yaml.safe_load(scaffold_result.plugin_manifest.read_text(encoding="utf-8"))
+    manifest["description"] = description
+    if clone_from:
+        manifest["inherits_from"] = clone_from
+    extensions = draft.get("manifest_extensions", {})
+    if isinstance(extensions, dict) and extensions:
+        manifest["extensions"] = extensions
+    scaffold_result.plugin_manifest.write_text(yaml.safe_dump(manifest, sort_keys=False), encoding="utf-8")
+
+    plugin_code = _strip_markdown_code_fences(str(draft.get("plugin_code", "")).strip())
+    smoke_test_code = _strip_markdown_code_fences(str(draft.get("smoke_test_code", "")).strip())
+    if plugin_code:
+        scaffold_result.plugin_code.write_text(plugin_code.rstrip() + "\n", encoding="utf-8")
+    if smoke_test_code:
+        # Use agent-generated smoke test if it has valid imports; fall back to
+        # canonical template for broken AI output.
+        if "from rv_reporter.report_types.plugins import ReportPluginManager" in smoke_test_code:
+            scaffold_result.plugin_smoke_test.write_text(
+                smoke_test_code.rstrip() + "\n",
+                encoding="utf-8",
+            )
+        else:
+            scaffold_result.plugin_smoke_test.write_text(
+                _canonical_smoke_test_template(report_type_id=report_type_id),
+                encoding="utf-8",
+            )
+    # New plugin files were written — invalidate the default manager cache so the
+    # next generation request rescans and finds this plugin.
+    invalidate_plugin_cache()
+    return report_type_id
+
+
+def _normalize_generated_report_type_id(candidate: str, report_types_dir: Path) -> str:
+    # Use title as fallback so we get a clean slug regardless
+    normalized = _normalize_report_type_payload({"report_type_id": candidate, "title": candidate}, report_types_dir)
+    return str(normalized["report_type_id"])
+
+
+def _strip_markdown_code_fences(text: str) -> str:
+    stripped = text.strip()
+    if stripped.startswith("```") and stripped.endswith("```"):
+        stripped = re.sub(r"^```[a-zA-Z0-9_+-]*\n", "", stripped)
+        stripped = re.sub(r"\n```$", "", stripped)
+    return stripped.strip()
+
+
+def _report_type_agent_instructions() -> str:
+    return (
+        "You are drafting a new report type for a schema-first reporting system. "
+        "Return a JSON object only. Choose family, domain, and mode from the allowed sets. "
+        "Use snake_case for report_type_id. Keep generator-compatible values. "
+        "Use family to describe source shape: time_series for ordered timestamps, event for activity streams, "
+        "entity_snapshot for per-entity status tables, relational for multi-key/tabular joins, log_text for raw text logs, "
+        "tabular_statistical for mostly numeric/categorical tables, and hybrid when multiple shapes matter. "
+        "Use domain=generic when the source is not strongly tied to a specific industry. "
+        "Use mode=issue_detection for problem-finding, anomaly_detection for unusual outliers, statistical_summary for descriptive stats, "
+        "overview_summary for broad status reports, trend_analysis for time movement, and root_cause_triage when likely drivers matter. "
+        "If source_profile is present, use it to infer family, domain, mode, required_columns, and likely metrics. "
+        "When source_profile is present, required_columns must be copied only from source_profile.source_metadata.columns. "
+        "Never invent missing columns, never paraphrase header names, and never rename them. "
+        "Copy column names exactly, including spaces, punctuation, case, and parentheses. "
+        "If a field is not present in source_profile.source_metadata.columns, do not include it in required_columns. "
+        "If the prompt contains domain-specific clarifying questions (e.g., 'What are your SLA thresholds?', 'How do you define degraded performance?'), "
+        "read those carefully and use them to guide your understanding of the report's purpose. Answer these questions in your mind as you design the metrics and plugin. "
+        "Ensure default_prefs and prompt_instructions reflect the answers to these clarifying questions. "
+        "Generate plugin.py code that defines get_spec() and build(df, prefs, ctx). "
+        "The build function should compute deterministic metrics from the dataframe and return a dict. "
+        "Generate smoke_test_code as a pytest file that loads the plugin through ReportPluginManager. "
+        "Do not wrap code in Markdown fences."
+    )
+
+
+def _report_type_agent_response_schema() -> dict[str, Any]:
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "required": [
+            "report_type_id",
+            "title",
+            "family",
+            "domain",
+            "mode",
+            "description",
+            "required_columns",
+            "default_prefs",
+            "prompt_instructions",
+            "plugin_code",
+            "smoke_test_code",
+            "manifest_extensions",
+        ],
+        "properties": {
+            "report_type_id": {"type": "string"},
+            "title": {"type": "string"},
+            "family": {"type": "string", "enum": sorted(FAMILIES)},
+            "domain": {"type": "string", "enum": sorted(DOMAINS)},
+            "mode": {"type": "string", "enum": sorted(MODES)},
+            "description": {"type": "string"},
+            "required_columns": {"type": "array", "items": {"type": "string"}, "minItems": 1},
+            "default_prefs": {"type": "object", "additionalProperties": True},
+            "prompt_instructions": {"type": "string"},
+            "plugin_code": {"type": "string"},
+            "smoke_test_code": {"type": "string"},
+            "manifest_extensions": {"type": "object", "additionalProperties": True},
+        },
+    }
+
+
+def _build_report_type_source_profile(
+    path_value: str | Path,
+    sheet_name: str | None = None,
+    sample_percent: int = 100,
+) -> dict[str, Any]:
+    path = _absolute_path(path_value)
+    metadata = describe_tabular_source(path, sheet_name=sheet_name)
+    row_count = metadata.get("row_count")
+    # Ensure row_count is safe to use in comparisons (convert string to int if needed)
+    if isinstance(row_count, str):
+        try:
+            row_count = int(row_count)
+        except (ValueError, TypeError):
+            row_count = None
+    normalized_percent = min(100, max(10, int(sample_percent or 100)))
+    sample_row_limit = 25
+    if isinstance(row_count, int) and row_count > 0:
+        sample_row_limit = max(1, int((row_count * normalized_percent + 99) // 100))
+    frame = load_csv_with_limit(path, row_limit=sample_row_limit, sheet_name=sheet_name)
+    profiled = profile_dataframe(frame)
+    sample_rows = _dataframe_sample_rows(frame, limit=5)
+    return {
+        "path": str(path),
+        "source_metadata": metadata,
+        "profile": profiled,
+        "sample_rows": sample_rows,
+        "sampling": {
+            "sample_percent": normalized_percent,
+            "sampled_row_count": int(len(frame.index)),
+            "total_row_count": int(row_count) if isinstance(row_count, int) else None,
+        },
+    }
+
+
+def _improve_report_type_prompt(
+    *,
+    prompt_text: str,
+    model: str,
+    hint_domain: str | None,
+    hint_family: str | None,
+    hint_mode: str | None,
+    source_columns: list[str],
+) -> dict[str, Any]:
+    api_key = os.getenv("OPENAI_API_KEY", "").strip()
+    if not api_key:
+        raise ValueError("OPENAI_API_KEY is required for AI prompt improvement.")
+
+    try:
+        from openai import OpenAI  # pylint: disable=import-outside-toplevel
+    except ImportError as exc:
+        raise RuntimeError("Install openai extra: pip install -e .[openai]") from exc
+
+    client = OpenAI(api_key=api_key)
+    response = client.responses.create(
+        model=model,
+        instructions=(
+            "You improve prompts used to create new report types for a schema-first reporting system. "
+            "Rewrite the prompt so it is clearer, more concrete, and more actionable for generating YAML, plugin logic, and tests. "
+            "Preserve the original intent, but add precision around columns, computed metrics, thresholds, analysis scope, and expected outputs. "
+            "Return JSON only."
+        ),
+        input=[
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "input_text",
+                        "text": json.dumps(
+                            {
+                                "prompt_text": prompt_text,
+                                "hint_domain": hint_domain or "",
+                                "hint_family": hint_family or "",
+                                "hint_mode": hint_mode or "",
+                                "source_columns": source_columns,
+                            }
+                        ),
+                    }
+                ],
+            }
+        ],
+        text={
+            "format": {
+                "type": "json_schema",
+                "name": "improved_report_type_prompt",
+                "schema": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "required": ["improved_prompt", "changes"],
+                    "properties": {
+                        "improved_prompt": {"type": "string"},
+                        "changes": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                        },
+                    },
+                },
+                "strict": False,
+            }
+        },
+    )
+    payload = json.loads(response.output_text)
+    if not isinstance(payload, dict):
+        raise ValueError("AI prompt improvement returned an invalid payload.")
+    improved_prompt = str(payload.get("improved_prompt", "")).strip()
+    changes = [str(item).strip() for item in payload.get("changes", []) if str(item).strip()]
+    if not improved_prompt:
+        raise ValueError("AI prompt improvement did not return an improved prompt.")
+    return {"improved_prompt": improved_prompt, "changes": changes}
+
+
+def _sanitize_required_columns_for_source_profile(
+    required_columns: list[str],
+    source_profile: dict[str, Any] | None,
+) -> list[str]:
+    if not source_profile or not isinstance(source_profile, dict):
+        return required_columns
+
+    source_metadata = source_profile.get("source_metadata", {})
+    if not isinstance(source_metadata, dict):
+        return required_columns
+
+    available_columns = [str(item).strip() for item in source_metadata.get("columns", []) if str(item).strip()]
+    if not available_columns:
+        return required_columns
+
+    exact_set = set(available_columns)
+    normalized_lookup = {re.sub(r"\s+", " ", col).strip().lower(): col for col in available_columns}
+
+    sanitized: list[str] = []
+    for column in required_columns:
+        if column in exact_set:
+            if column not in sanitized:
+                sanitized.append(column)
+            continue
+        normalized = re.sub(r"\s+", " ", column).strip().lower()
+        mapped = normalized_lookup.get(normalized)
+        if mapped and mapped not in sanitized:
+            sanitized.append(mapped)
+    return sanitized
+
+
+def _dataframe_sample_rows(frame: pd.DataFrame, limit: int = 5) -> list[dict[str, Any]]:
+    sample = frame.head(limit).copy()
+    sample = sample.astype(object)
+    rows: list[dict[str, Any]] = []
+    for row in sample.to_dict(orient="records"):
+        rows.append({str(key): _json_safe_value(value) for key, value in row.items()})
+    return rows
+
+
+def _json_safe_value(value: Any) -> Any:
+    if value is None:
+        return None
+    try:
+        if pd.isna(value):
+            return None
+    except Exception:  # noqa: BLE001
+        pass
+    if hasattr(value, "isoformat"):
+        try:
+            return value.isoformat()
+        except Exception:  # noqa: BLE001
+            return str(value)
+    if isinstance(value, (str, int, float, bool)):
+        return value
+    return str(value)
+
+
+def _safe_describe_source(path_value: str, sheet_name: str | None = None) -> dict[str, Any] | None:
+    if not path_value:
+        return None
+    path = _absolute_path(path_value)
+    if not path.exists():
+        return None
+    try:
+        return describe_tabular_source(path, sheet_name=sheet_name)
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _safe_preflight_source(
+    path_value: str,
+    *,
+    sheet_name: str | None = None,
+    required_columns: list[str] | None = None,
+) -> dict[str, Any] | None:
+    if not path_value:
+        return None
+    path = _absolute_path(path_value)
+    if not path.exists():
+        return None
+    try:
+        return preflight_tabular_source(
+            path,
+            sheet_name=sheet_name,
+            required_columns=required_columns,
+        )
+    except Exception:  # noqa: BLE001
+        return None
 
 
 def _fetch_provider_models(provider_id: str, api_key: str, base_url: str) -> tuple[list[str], str | None]:
@@ -2960,10 +4537,29 @@ def _estimate_provider_cost(
     provider_name: str,
     model: str,
     prompt_text: str,
-    estimated_output_tokens: int,
+    estimated_output_tokens: int | None,
     output_root: Path,
     report_type_id: str,
-) -> dict[str, float | int | str]:
+) -> dict[str, float | int | str | None]:
+    if estimated_output_tokens is None:
+        return {
+            "model": model,
+            "input_tokens_est": estimate_tokens(prompt_text),
+            "output_tokens_est": None,
+            "output_tokens_user_budget": None,
+            "output_tokens_scale_factor": None,
+            "input_cost_usd_est": None,
+            "output_cost_usd_est": None,
+            "total_cost_usd_est": None,
+            "raw_total_cost_usd_est": None,
+            "pricing_source_url": _provider_pricing_url(provider_name),
+            "pricing_verified_date": PRICING_VERIFIED_DATE,
+            "calibration_applied": False,
+            "calibration_factor": 1.0,
+            "calibration_sample_size": 0,
+            "calibration_scope": "unbounded_output",
+        }
+
     effective_output_tokens = _scaled_output_tokens(provider_name, estimated_output_tokens)
     scale_factor = round(effective_output_tokens / max(1, int(estimated_output_tokens)), 2)
     if provider_name == "openai":

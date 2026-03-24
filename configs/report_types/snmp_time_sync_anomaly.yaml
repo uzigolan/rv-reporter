@@ -1,0 +1,100 @@
+report_type_id: snmp_time_sync_anomaly
+version: 1.0.0
+title: "SNMP Time Sync & Performance \u2014 Anomaly Detection"
+required_columns:
+- Entry OID
+- Date And Time (Local)
+- Date And Time (UTC)
+- System Uptime (Seconds)
+- Device ID
+- Interval Length (Seconds)
+metrics_profile: snmp_time_sync_anomaly
+default_prefs:
+  interval_seconds: 60
+  gap_multiplier: 1.5
+  drift_threshold_seconds: 5
+  top_n_samples: 10
+  min_rows_for_device: 3
+  tone: technical
+  audience: engineering
+  focus: anomalies
+prompt_instructions: 'Provide a CSV or dataframe containing SNMP export rows with
+  local and UTC timestamps, system uptime (seconds), device identifier, and optionally
+  an Interval Length value. The report will: (1) parse timestamps robustly, (2) derive
+  expected interval (default 60s) and count large gaps, (3) compute clock drift between
+  local and UTC timestamps and flag large drifts, (4) detect uptime decreases (resets/reboots),
+  (5) count duplicate timestamps, and (6) produce per-device summaries and top anomaly
+  samples. Adjust prefs for interval_seconds, drift_threshold_seconds and top_n_samples
+  for tuning.'
+output_schema:
+  type: object
+  additionalProperties: false
+  required:
+  - report_type_id
+  - report_title
+  - summary
+  - sections
+  - alerts
+  - recommendations
+  - tables
+  - charts
+  - metadata
+  properties:
+    report_type_id:
+      type: string
+    report_title:
+      type: string
+    summary:
+      type: string
+    sections:
+      type: array
+      items:
+        type: object
+        additionalProperties: false
+        required:
+        - title
+        - body
+        properties:
+          title:
+            type: string
+          body:
+            type: string
+    alerts:
+      type: array
+      items:
+        type: object
+        additionalProperties: false
+        required:
+        - severity
+        - message
+        properties:
+          severity:
+            type: string
+          message:
+            type: string
+    recommendations:
+      type: array
+      items:
+        type: object
+        additionalProperties: false
+        required:
+        - priority
+        - action
+        properties:
+          priority:
+            type: string
+          action:
+            type: string
+    tables:
+      type: array
+      items:
+        type: object
+        additionalProperties: true
+    charts:
+      type: array
+      items:
+        type: object
+        additionalProperties: true
+    metadata:
+      type: object
+      additionalProperties: true

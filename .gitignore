@@ -18,6 +18,7 @@ htmlcov/
 # Local outputs
 outputs/
 uploads/
+data/
 .env.sandbox
 
 # OS files

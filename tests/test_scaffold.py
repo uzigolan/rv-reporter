@@ -73,3 +73,31 @@ def test_scaffold_report_type_refuses_overwrite_without_force(tmp_path: Path) ->
             config_dir=config_dir,
             plugin_root=plugin_root,
         )
+
+
+def test_scaffold_report_type_supports_generalized_taxonomy(tmp_path: Path) -> None:
+    config_dir = tmp_path / "configs" / "report_types"
+    plugin_root = tmp_path / "report_type_plugins"
+    plugin_root.mkdir(parents=True, exist_ok=True)
+    (plugin_root / "manifest.schema.yaml").write_text(
+        Path("report_type_plugins/manifest.schema.yaml").read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+
+    result = scaffold_report_type(
+        report_type_id="dataset_overview",
+        title="Dataset Overview",
+        family="entity_snapshot",
+        domain="generic",
+        mode="statistical_summary",
+        required_columns=["entity_id", "status"],
+        generator="openai_sdk",
+        create_report_type_yaml=True,
+        config_dir=config_dir,
+        plugin_root=plugin_root,
+    )
+
+    manifest = yaml.safe_load(result.plugin_manifest.read_text(encoding="utf-8"))
+    assert manifest["family"] == "entity_snapshot"
+    assert manifest["domain"] == "generic"
+    assert manifest["mode"] == "statistical_summary"

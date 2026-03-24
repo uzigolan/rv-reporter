@@ -143,6 +143,8 @@ class ReportPluginManager:
         if not isinstance(raw_spec, dict):
             raise ValueError(f"Plugin '{plugin_path.parent.name}' get_spec() must return a dict.")
 
+        raw_spec = self._normalize_raw_spec(raw_spec, manifest)
+
         metrics_profile = str(raw_spec.get("metrics_profile", "")).strip()
         if not metrics_profile:
             raise ValueError(f"Plugin '{plugin_path.parent.name}' missing metrics_profile in get_spec().")
@@ -171,8 +173,38 @@ class ReportPluginManager:
         )
         return _LoadedPlugin(spec=validated_spec, manifest=manifest, build_fn=build)
 
+    def _normalize_raw_spec(self, raw_spec: dict[str, Any], manifest: dict[str, Any]) -> dict[str, Any]:
+        normalized = dict(raw_spec)
+
+        metrics_profile = str(normalized.get("metrics_profile", "")).strip()
+        if not metrics_profile:
+            metrics_profile = str(normalized.get("id", "")).strip() or str(manifest.get("metrics_profile", "")).strip()
+            if metrics_profile:
+                normalized["metrics_profile"] = metrics_profile
+
+        api_version = normalized.get("api_version")
+        if api_version in (None, ""):
+            normalized["api_version"] = manifest.get("api_version", PLUGIN_API_VERSION)
+
+        title = str(normalized.get("title", "")).strip()
+        if not title:
+            normalized["title"] = str(manifest.get("title", "")).strip() or str(manifest.get("metrics_profile", "")).strip()
+
+        description = str(normalized.get("description", "")).strip()
+        if not description:
+            manifest_description = str(manifest.get("description", "")).strip()
+            if manifest_description:
+                normalized["description"] = manifest_description
+
+        return normalized
+
 
 _DEFAULT_MANAGER = ReportPluginManager()
+
+
+def invalidate_plugin_cache() -> None:
+    """Force the default manager to rescan the plugin directory on the next call."""
+    _DEFAULT_MANAGER._plugin_cache = None  # noqa: SLF001
 
 
 def list_supported_metrics_profiles() -> set[str]:

@@ -16,7 +16,7 @@ Top navigation:
 Purpose:
 - Build a report from a tabular source (`.csv`, `.xlsx`, `.xls`).
 - Choose local vs OpenAI generation.
-- Apply preferences and optional thresholds.
+- Apply report-type-defined defaults and optional thresholds.
 
 ### Fields
 
@@ -49,25 +49,19 @@ Purpose:
   - For single-sheet files, sheet is auto-selected.
   - For CSV, this is not required.
 
-- `Tone`
-  - Writing style: `concise`, `executive`, `technical`.
-
-- `Audience`
-  - Target reader: `leadership`, `engineering`, `customer`.
-
-- `Focus`
-  - Emphasis: `trends`, `anomalies`, `cost`.
-
-- `Threshold Key (optional)` + `Threshold Value (optional)`
-  - Optional override for report-specific thresholds.
-  - Value must be numeric.
+- Narrative defaults
+  - Tone, audience, and focus are no longer selected on the generate form.
+  - They come from the selected report type's `default_prefs`.
+  - If a report type does not define them explicitly, the app derives them from the report type classification.
 
 - `Row Limit (cost control)`
   - Max rows loaded from source.
+  - Leave blank for unlimited rows.
   - Useful for runtime and OpenAI cost control.
 
 - `Output Tokens Budget (OpenAI estimate)`
-  - Expected response size used for OpenAI cost estimation.
+  - Optional response-size hint used for OpenAI cost estimation.
+  - Leave blank for unlimited output.
 
 ### Help Popups
 
@@ -96,6 +90,10 @@ Displays:
 - Model
 - Estimated input/output tokens
 - Estimated total cost
+
+Notes:
+- If output budget is blank, output is treated as unlimited.
+- In that case the cost confirmation shows output cost as unbounded instead of inventing a capped estimate.
 
 Actions:
 - `Continue and Generate`: proceeds with generation.

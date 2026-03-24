@@ -1,0 +1,17 @@
+plugin_id: twamp_session_threshold_sla_compliance
+metrics_profile: twamp_session_threshold_sla_compliance
+api_version: 1
+version: 1.0.0
+title: TWAMP Session Threshold SLA Compliance
+description: Evaluate the health and compliance of telecom sessions using defined
+  SLA thresholds for delay, jitter, and packet loss.
+family: event
+domain: telecom
+mode: threshold_sla
+entrypoint: plugin.py
+owner: ai-agent
+generator: openai_sdk
+status: planned
+extensions:
+  sample_source: C:\Users\uzi_g\Downloads\ai-projects\rv-reporter\uploads\pm-csv-es_f083d07c.csv
+updated_at: '2026-03-19T13:41:36.744169+00:00'

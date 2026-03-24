@@ -1,5 +1,94 @@
 {% extends "layout.html" %}
 {% block title %}Manage Report Types | RV Reporter{% endblock %}
+{% block head %}
+<style>
+  .report-types-table th,
+  .report-types-table td {
+    padding-top: 0.45rem;
+    padding-bottom: 0.45rem;
+    vertical-align: middle;
+  }
+  .report-types-table td:last-child,
+  .report-types-table th:last-child {
+    width: 1%;
+    white-space: nowrap;
+  }
+  .action-icons {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+  }
+  .action-icon,
+  .action-icon-btn {
+    width: 1.9rem;
+    height: 1.9rem;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: var(--surface);
+    color: var(--text);
+    text-decoration: none;
+    font-size: 0.95rem;
+    line-height: 1;
+  }
+  .action-icon.action-view,
+  .action-icon-btn.action-delete {
+    width: 2.15rem;
+    height: 2.15rem;
+    font-size: 1.15rem;
+    font-weight: 700;
+  }
+  .action-icon-btn {
+    cursor: pointer;
+  }
+  .action-icon.action-view {
+    color: #1d4ed8;
+    border-color: #93c5fd;
+    background: #dbeafe;
+  }
+  .action-icon:hover,
+  .action-icon-btn:hover {
+    border-color: #93c5fd;
+    background: #eff6ff;
+  }
+  .action-icon-btn.action-delete {
+    color: #991b1b;
+    border-color: #fca5a5;
+    background: #fee2e2;
+  }
+  .action-icon.action-delete-disabled {
+    color: #9ca3af;
+    border-color: #e5e7eb;
+    background: #f3f4f6;
+    cursor: not-allowed;
+    opacity: 0.6;
+  }
+  .action-icon.state-locked {
+    color: #92400e;
+    background: #fffbeb;
+    border-color: #fcd34d;
+    font-weight: 700;
+    font-size: 1.4rem;
+    width: 2.3rem;
+    height: 2.3rem;
+  }
+  .action-icon.state-unlocked {
+    color: #15803d;
+    background: #dcfce7;
+    border-color: #86efac;
+    font-weight: 700;
+    font-size: 1.4rem;
+    width: 2.3rem;
+    height: 2.3rem;
+  }
+  .inline-action-form {
+    display: inline;
+    margin: 0;
+  }
+</style>
+{% endblock %}
 {% block content %}
 <section class="panel hero">
   <h1>Manage Report Types</h1>
@@ -8,10 +97,12 @@
 
 <section class="panel">
   {% if report_types %}
-    <table class="table">
+    <table class="table report-types-table">
       <thead>
         <tr>
           <th>Report Type</th>
+          <th>Published</th>
+          <th>Updated</th>
           <th>Config Path</th>
           <th>Action</th>
         </tr>
@@ -29,17 +120,55 @@
                 'wireshark_capture_health': 'wireshark'
               }.get(item.report_type_id, item.report_type_id) }}
             </td>
+            <td><span class="muted">{{ item.published_at }}</span></td>
+            <td><span class="muted">{{ item.updated_at }}</span></td>
             <td><span class="muted">{{ item.path }}</span></td>
             <td>
-              <a class="btn-link" href="{{ url_for('view_report_type_yaml_page', report_type_id=item.report_type_id) }}">View YAML</a>
-              {% if item.is_protected %}
-                <span class="muted">protected</span>
-              {% else %}
-                <form method="post" action="{{ url_for('delete_report_type') }}">
-                  <input type="hidden" name="report_type_id" value="{{ item.report_type_id }}" />
-                  <button type="submit" class="btn-link">Delete</button>
-                </form>
-              {% endif %}
+              <div class="action-icons">
+                <a
+                  class="action-icon action-view"
+                  href="{{ url_for('view_report_type_yaml_page', report_type_id=item.report_type_id) }}"
+                  title="View report type"
+                  aria-label="View {{ item.report_type_id }}"
+                >
+                  &#128065;
+                </a>
+                {% if item.is_protected %}
+                  <span
+                    class="action-icon state-locked"
+                    title="Protected report type — cannot be deleted"
+                    aria-label="Protected report type"
+                  >
+                    &#128274;
+                  </span>
+                  <span
+                    class="action-icon action-delete-disabled"
+                    title="Cannot delete: this is a protected report type"
+                    aria-label="Delete disabled"
+                  >
+                    &#128465;
+                  </span>
+                {% else %}
+                  <span
+                    class="action-icon state-unlocked"
+                    title="Unprotected — can be deleted"
+                    aria-label="Unprotected report type"
+                  >
+                    &#128275;
+                  </span>
+                  <form method="post" action="{{ url_for('delete_report_type') }}" class="inline-action-form" data-delete-form data-report-type-id="{{ item.report_type_id }}">
+                    <input type="hidden" name="report_type_id" value="{{ item.report_type_id }}" />
+                    <button
+                      type="submit"
+                      class="action-icon-btn action-delete"
+                      title="Delete report type"
+                      aria-label="Delete {{ item.report_type_id }}"
+                    >
+                      &#128465;
+                    </button>
+                  </form>
+                {% endif %}
+              </div>
             </td>
           </tr>
         {% endfor %}
@@ -49,4 +178,31 @@
     <p class="muted">No report types found.</p>
   {% endif %}
 </section>
+<script>
+  (function () {
+    document.querySelectorAll('[data-delete-form]').forEach(function (form) {
+      form.addEventListener('submit', function (e) {
+        e.preventDefault();
+        var reportTypeId = form.getAttribute('data-report-type-id');
+        var confirmed = window.confirm('Delete report type "' + reportTypeId + '"?');
+        if (!confirmed) return;
+        var body = new URLSearchParams({ report_type_id: reportTypeId });
+        fetch(form.action, { method: 'POST', body: body, headers: { 'X-Requested-With': 'XMLHttpRequest' } })
+          .then(function (res) {
+            if (!res.ok) throw new Error('Server returned ' + res.status);
+            var row = form.closest('tr');
+            if (row) {
+              row.style.transition = 'opacity 0.2s';
+              row.style.opacity = '0';
+              setTimeout(function () { row.remove(); }, 220);
+            }
+          })
+          .catch(function () {
+            /* fall back to normal POST on any error */
+            form.submit();
+          });
+      });
+    });
+  })();
+</script>
 {% endblock %}

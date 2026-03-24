@@ -1,0 +1,17 @@
+plugin_id: ai_optimized_assisted_living_sla_compliance
+metrics_profile: ai_optimized_assisted_living_sla_compliance
+api_version: 1
+version: 1.0.0
+title: AI Optimized Assisted Living SLA and Compliance Report
+description: Report analyzing SLA compliance and performance metrics for assisted
+  living environments based on event logs of resident-call interactions.
+family: event
+domain: healthcare
+mode: issue_detection
+entrypoint: plugin.py
+owner: ai-agent
+generator: openai_sdk
+status: planned
+extensions:
+  sample_source: C:\Users\uzi_g\Downloads\ai-projects\rv-reporter\uploads\assisted_living_demo_v2_d70b86a3.csv
+updated_at: '2026-03-19T19:00:51.950250+00:00'

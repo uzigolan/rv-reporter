@@ -1,0 +1,213 @@
+/**
+ * wizard/data.js
+ * Static lookup tables used across the report-type creation wizard.
+ * No DOM access. No side effects. Extend freely when adding domains/modes.
+ */
+
+window.RVWizard = window.RVWizard || {};
+
+RVWizard.data = {
+
+  /* Which data-shape families are valid for each domain */
+  DOMAIN_FAMILY_MAP: {
+    networking:        ["time_series", "event", "hybrid"],
+    telecom:           ["time_series", "event"],
+    observability:     ["time_series", "hybrid"],
+    security:          ["event", "log_text", "hybrid"],
+    operations:        ["time_series", "tabular_statistical", "hybrid"],
+    manufacturing:     ["time_series", "tabular_statistical"],
+    supply_chain:      ["time_series", "relational"],
+    energy:            ["time_series", "tabular_statistical"],
+    finance:           ["tabular_statistical", "relational"],
+    sales:             ["tabular_statistical", "relational"],
+    product:           ["tabular_statistical", "event"],
+    customer_support:  ["tabular_statistical", "event"],
+    healthcare:        ["tabular_statistical", "entity_snapshot"],
+    research:          ["tabular_statistical", "time_series"],
+    education:         ["tabular_statistical", "entity_snapshot"],
+    government:        ["tabular_statistical", "relational"],
+    project_management:["entity_snapshot", "relational"],
+    generic:           ["hybrid", "tabular_statistical", "time_series", "event",
+                        "log_text", "entity_snapshot", "relational"],
+  },
+
+  /* Which analysis modes are recommended for each domain */
+  DOMAIN_MODE_MAP: {
+    networking:    ["trend_analysis", "anomaly_detection", "flow_bottleneck",
+                    "issue_detection", "threshold_sla", "health_score",
+                    "root_cause_triage", "top_n_hotspots"],
+    telecom:       ["trend_analysis", "anomaly_detection", "issue_detection",
+                    "threshold_sla", "health_score", "burst_detection"],
+    observability: ["trend_analysis", "anomaly_detection", "statistical_summary",
+                    "health_score", "top_n_hotspots"],
+    security:      ["issue_detection", "anomaly_detection", "burst_detection",
+                    "root_cause_triage", "change_detection", "overview_summary"],
+    operations:    ["health_score", "issue_detection", "overview_summary",
+                    "root_cause_triage", "trend_analysis", "threshold_sla"],
+    manufacturing: ["health_score", "issue_detection", "trend_analysis",
+                    "burst_detection", "variance_analysis"],
+    supply_chain:  ["overview_summary", "trend_analysis", "variance_analysis",
+                    "ranking_prioritization"],
+    energy:        ["trend_analysis", "anomaly_detection", "threshold_sla",
+                    "statistical_summary"],
+    finance:       ["variance_analysis", "overview_summary", "statistical_summary",
+                    "forecast_outlook", "ranking_prioritization"],
+    sales:         ["trend_analysis", "forecast_outlook", "ranking_prioritization",
+                    "overview_summary"],
+    product:       ["trend_analysis", "statistical_summary", "segmentation_analysis",
+                    "change_detection"],
+    customer_support: ["overview_summary", "trend_analysis", "ranking_prioritization",
+                       "statistical_summary"],
+    healthcare:    ["statistical_summary", "overview_summary", "distribution_analysis",
+                    "correlation_analysis"],
+    research:      ["statistical_summary", "distribution_analysis", "correlation_analysis",
+                    "change_detection"],
+    education:     ["overview_summary", "statistical_summary", "ranking_prioritization"],
+    government:    ["overview_summary", "statistical_summary"],
+    project_management: ["overview_summary", "ranking_prioritization", "trend_analysis",
+                         "issue_detection"],
+    // generic is populated at runtime from WIZARD_CONFIG.modes
+  },
+
+  /* Human-readable labels for family keys */
+  FAMILY_LABELS: {
+    time_series:          "Time-series",
+    tabular_statistical:  "Tabular / Statistical",
+    event:                "Event stream",
+    log_text:             "Log / Text",
+    entity_snapshot:      "Entity snapshot",
+    relational:           "Relational",
+    hybrid:               "Hybrid",
+  },
+
+  /* Human-readable labels for mode keys */
+  MODE_LABELS: {
+    overview_summary:       "Overview",
+    health_score:           "Health Score",
+    issue_detection:        "Issue Detection",
+    anomaly_detection:      "Anomaly Detection",
+    trend_analysis:         "Trend Analysis",
+    statistical_summary:    "Statistics",
+    threshold_sla:          "Threshold / SLA",
+    burst_detection:        "Burst Detection",
+    correlation_analysis:   "Correlation",
+    distribution_analysis:  "Distribution",
+    variance_analysis:      "Variance",
+    change_detection:       "Change Detection",
+    segmentation_analysis:  "Segmentation",
+    ranking_prioritization: "Ranking",
+    forecast_outlook:       "Forecast",
+    top_n_hotspots:         "Top-N Hotspots",
+    flow_bottleneck:        "Flow / Bottleneck",
+    root_cause_triage:      "Root Cause",
+  },
+
+  /* Opening verb per domain for rich prompt construction */
+  DOMAIN_VERB: {
+    networking:        "Create a network performance report",
+    telecom:           "Create a telecom session health report",
+    observability:     "Create a system observability report",
+    security:          "Create a security event analysis report",
+    operations:        "Create an operations health report",
+    manufacturing:     "Create a manufacturing operations report",
+    supply_chain:      "Create a supply chain health report",
+    energy:            "Create an energy consumption report",
+    finance:           "Create a financial variance report",
+    sales:             "Create a sales pipeline report",
+    product:           "Create a product analytics report",
+    customer_support:  "Create a customer support analysis report",
+    healthcare:        "Create a biomarker / clinical registry report",
+    research:          "Create a research dataset summary report",
+    education:         "Create an education outcomes report",
+    government:        "Create a government data summary report",
+    project_management:"Create a project portfolio health report",
+    generic:           "Create a data analysis report",
+  },
+
+  /* One-sentence goal description per mode (appended to rich prompt) */
+  MODE_GOAL: {
+    issue_detection:        "Identify and flag issues, SLA breaches, and threshold violations.",
+    anomaly_detection:      "Detect statistical outliers and unexpected deviations from baseline.",
+    trend_analysis:         "Analyze trends over time and highlight significant changes.",
+    health_score:           "Compute an overall health score and surface the top risk factors.",
+    statistical_summary:    "Provide descriptive statistics, distributions, and data quality metrics.",
+    overview_summary:       "Produce a high-level executive summary with key indicators.",
+    threshold_sla:          "Evaluate metric compliance against defined SLA thresholds.",
+    root_cause_triage:      "Identify likely root causes and contributing factors for failures.",
+    variance_analysis:      "Highlight deviations from budget, plan, or historical baseline.",
+    forecast_outlook:       "Project future trends based on historical data patterns.",
+    burst_detection:        "Detect sudden spikes or bursts of activity.",
+    correlation_analysis:   "Identify correlations and relationships between key metrics.",
+    ranking_prioritization: "Rank and prioritize items by risk, value, or impact.",
+    top_n_hotspots:         "Surface the top-N problem hotspots or high-impact items.",
+    flow_bottleneck:        "Identify flow-level constraints and bottlenecks.",
+    change_detection:       "Detect significant state or behavioural changes over time.",
+    segmentation_analysis:  "Segment the population and profile each segment.",
+    distribution_analysis:  "Characterise the distribution of key variables.",
+  },
+
+  /* Fallback example prompt templates (used when no CSV columns are available) */
+  PROMPT_TEMPLATES: {
+    networking:   "Create a network performance report for CSVs containing timestamp, device_id, interface, rx_bytes, tx_bytes, packet_loss_pct, and latency_ms. Identify congestion, top talkers, and SLA risk.",
+    telecom:      "Create a telecom session health report for CSVs with session_id, timestamp, ue_id, rssi_dbm, snr_db, handover_count, and bearer_type. Detect degraded sessions and signal anomalies.",
+    security:     "Create a security event analysis report for CSVs with event_time, src_ip, dst_ip, event_type, severity, and action. Detect threats, burst activity, and blocked access patterns.",
+    operations:   "Create an operations health report for CSVs with device_id, timestamp, uptime_pct, cpu_pct, memory_pct, and incident_count. Highlight SLA breaches and root-cause indicators.",
+    finance:      "Create a financial variance report for CSVs with period, category, budget_usd, actual_usd. Identify overspend, underspend, and forecast deviations.",
+    sales:        "Create a sales pipeline report for CSVs with rep_id, opportunity_name, stage, amount_usd, and close_date. Rank by deal size and forecast close probability.",
+    healthcare:   "Create a biomarker registry health report for CSVs with patient_id, registry_name, collection_date, biomarker, value, and unit. Summarize distributions and flag outliers.",
+    research:     "Create a research dataset summary for CSVs with sample_id, condition, value, and group. Apply statistical summary, distribution analysis, and correlation checks.",
+    generic:      "Create a general summary report for the uploaded CSV. Identify key patterns, outliers, and produce actionable insights.",
+  },
+
+  /* Domain-specific clarifying questions embedded in the rich prompt */
+  DOMAIN_CONTEXT_QUESTIONS: {
+    telecom: [
+      "• What are your key SLA/performance thresholds? (e.g., RSSI > -110 dBm is poor, SNR > 5 dB is good)",
+      "• Should analysis be per-session or aggregate across all sessions?",
+      "• How do you define 'degraded' vs 'critical' session states?",
+      "• Are you tracking absolute signal metrics or relative trends?",
+      "• What time windows matter most? (per-hour, per-day trends)",
+      "• Should the report focus on bearer-type specific analysis?",
+    ],
+    networking: [
+      "• What are your SLA thresholds? (e.g., latency < 10ms good, > 50ms critical)",
+      "• Should analysis be per-flow or aggregate (whole network)?",
+      "• How do you define 'degraded' vs 'critical' performance?",
+      "• Are you tracking absolute metrics or relative trends?",
+      "• Which metrics matter most? (latency, jitter, loss %, reordering)",
+      "• What time windows are relevant? (per-hour, per-day trends)",
+    ],
+    observability: [
+      "• What are the key health indicators for your systems? (uptime %, response time, error rate)",
+      "• How should you detect anomalies? (static thresholds, baselines, ML models)",
+      "• What time windows matter most? (real-time, hourly, daily baselines)",
+      "• Are there service dependencies that should affect health scores?",
+      "• What triggers alert vs warning vs info levels?",
+      "• How should you handle missing/sparse data?",
+    ],
+    security: [
+      "• What threat patterns are you tracking? (brute force, lateral movement, data exfil, etc.)",
+      "• How do you classify incidents vs vulnerabilities vs behavioral anomalies?",
+      "• What confidence/severity thresholds trigger escalation?",
+      "• Are you tracking root cause (attribution) or just detection?",
+      "• What time windows matter? (per-incident, hourly trends, weekly summaries)",
+      "• Should you focus on individual events or aggregated patterns?",
+    ],
+    operations: [
+      "• What business SLAs or KPIs are you tracking? (uptime %, throughput, utilization)",
+      "• Should you focus on availability, capacity, or cost efficiency?",
+      "• What escalation procedures should this report trigger?",
+      "• Are there capacity thresholds? (e.g., > 85% utilization = warning)",
+      "• What time windows matter? (hourly spikes, daily trends, weekly planning)",
+      "• How should seasonal patterns affect baselines?",
+    ],
+    finance: [
+      "• What are the key financial metrics? (revenue, costs, margin, variance)",
+      "• Should you drill down by cost center, product line, or region?",
+      "• What variance thresholds trigger investigation? (1%, 5%, 10%)",
+      "• How should you handle timing differences (accrual vs cash)?",
+      "• What stakeholder views matter most? (CFO, controllers, business owners)",
+      "• Should analysis show month-to-date, year-to-date, or trailing 12-month?",
+    ],
+  },
+};

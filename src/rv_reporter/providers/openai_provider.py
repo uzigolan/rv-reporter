@@ -36,9 +36,11 @@ class OpenAIResponsesProvider(ReportProvider):
         csv_profile: dict[str, Any],
         metrics: dict[str, Any],
         user_prefs: dict[str, Any],
+        agent_plan: dict[str, Any] | None = None,
+        prompt: str | None = None,
     ) -> dict[str, Any]:
         instructions = _model_instructions()
-        input_payload = build_model_input_payload(definition, csv_profile, metrics, user_prefs)
+        input_payload = build_model_input_payload(definition, csv_profile, metrics, user_prefs, agent_plan=agent_plan)
         response = self._client.responses.create(
             model=self._model,
             instructions=instructions,
@@ -71,8 +73,9 @@ def build_model_input_payload(
     csv_profile: dict[str, Any],
     metrics: dict[str, Any],
     user_prefs: dict[str, Any],
+    agent_plan: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    return {
+    payload = {
         "report_type_id": definition.report_type_id,
         "report_title": definition.title,
         "custom_instructions": definition.prompt_instructions,
@@ -80,6 +83,9 @@ def build_model_input_payload(
         "metrics": metrics,
         "user_prefs": user_prefs,
     }
+    if isinstance(agent_plan, dict):
+        payload["agent_plan"] = agent_plan
+    return payload
 
 
 def build_model_prompt_for_estimation(
@@ -87,6 +93,7 @@ def build_model_prompt_for_estimation(
     csv_profile: dict[str, Any],
     metrics: dict[str, Any],
     user_prefs: dict[str, Any],
+    agent_plan: dict[str, Any] | None = None,
 ) -> str:
-    payload = build_model_input_payload(definition, csv_profile, metrics, user_prefs)
+    payload = build_model_input_payload(definition, csv_profile, metrics, user_prefs, agent_plan=agent_plan)
     return f"{_model_instructions()}\n{json.dumps(payload)}"

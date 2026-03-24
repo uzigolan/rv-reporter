@@ -1,0 +1,15 @@
+plugin_id: telecom_session_health
+metrics_profile: telecom_session_health
+api_version: 1
+version: 1.0.0
+title: Telecom Session Health
+description: Analyze session-level time-series measurements to detect degraded sessions
+  and signal radio/signal anomalies. Computes RSSI/SNR/handovers statistics, flags
+  sessions below configured thresholds, and returns top degraded sessions for triage.
+family: time_series
+domain: telecom
+mode: anomaly_detection
+entrypoint: plugin.py
+owner: ai-agent
+generator: openai_sdk
+status: draft

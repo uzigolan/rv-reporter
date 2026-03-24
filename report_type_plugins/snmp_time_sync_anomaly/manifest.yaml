@@ -1,0 +1,16 @@
+plugin_id: snmp_time_sync_anomaly
+metrics_profile: snmp_time_sync_anomaly
+api_version: 1
+version: 1.0.0
+title: "SNMP Time Sync & Performance \u2014 Anomaly Detection"
+description: Detect time synchronization and basic SNMP performance anomalies from
+  SNMP polling/export CSVs that include local/UTC timestamps and system uptime. Identifies
+  missing polling intervals, clock drift between local and UTC timestamps, uptime
+  resets (device reboots), duplicate timestamps, and basic uptime statistics per device.
+family: time_series
+domain: networking
+mode: anomaly_detection
+entrypoint: plugin.py
+owner: ai-agent
+generator: openai_sdk
+status: draft

@@ -14,5 +14,7 @@ class ReportProvider(ABC):
         csv_profile: dict[str, Any],
         metrics: dict[str, Any],
         user_prefs: dict[str, Any],
+        agent_plan: dict[str, Any] | None = None,
+        prompt: str | None = None,
     ) -> dict[str, Any]:
         raise NotImplementedError

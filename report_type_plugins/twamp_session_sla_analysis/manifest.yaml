@@ -1,0 +1,17 @@
+plugin_id: twamp_session_sla_analysis
+metrics_profile: twamp_session_sla_analysis
+api_version: 1
+version: 1.0.0
+title: TWAMP Session SLA Analysis
+description: Analyze TWAMP session data against specified SLA thresholds to determine
+  compliance and identify performance issues.
+family: event
+domain: telecom
+mode: threshold_sla
+entrypoint: plugin.py
+owner: ai-agent
+generator: openai_sdk
+status: planned
+extensions:
+  sample_source: C:\Users\uzi_g\Downloads\ai-projects\rv-reporter\uploads\pm-csv-es_f083d07c.csv
+updated_at: '2026-03-19T09:46:43.345599+00:00'

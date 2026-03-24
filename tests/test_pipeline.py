@@ -4,6 +4,7 @@ import re
 from rv_reporter.orchestrator import run_pipeline
 from rv_reporter.providers.base import ReportProvider
 from rv_reporter.report_types.registry import ReportTypeDefinition
+from rv_reporter.services.ingest import load_csv_with_limit, preflight_tabular_source
 
 
 def test_pipeline_network_queue_generates_outputs(tmp_path) -> None:
@@ -102,3 +103,18 @@ def test_pipeline_pm_export_health_generates_outputs(tmp_path) -> None:
     html = html_path.read_text(encoding="utf-8")
     assert "PM Health Charts" in html
     assert "Top Interface" in html
+
+
+def test_pm_export_structured_parser_keeps_single_table_cleanly() -> None:
+    frame = load_csv_with_limit("samples/pm-csv-es.csv")
+
+    assert "twampReportCurrentDelayMin" in frame.columns
+    assert frame.iloc[0]["twampReportCurrentDelayMin"] == "0"
+    assert not any(str(value).strip() == "ifIndex" for value in frame.iloc[0].tolist())
+
+    preflight = preflight_tabular_source(
+        "samples/pm-csv-es.csv",
+        required_columns=["twampControllerId", "twampReportCurrentDelayMin", "twampReportCurrentLossPackets"],
+    )
+    assert preflight["ok"] is True
+    assert preflight["issues"] == []

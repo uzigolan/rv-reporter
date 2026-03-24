@@ -1,0 +1,17 @@
+plugin_id: telecom_session_sla_compliance_v2
+metrics_profile: telecom_session_sla_compliance_v2
+api_version: 1
+version: 1.0.0
+title: Telecom Session SLA Compliance v2
+description: Evaluates telecom session metrics against specified SLA thresholds to
+  determine session health and compliance.
+family: event
+domain: telecom
+mode: threshold_sla
+entrypoint: plugin.py
+owner: ai-agent
+generator: openai_sdk
+status: planned
+extensions:
+  sample_source: C:\Users\uzi_g\Downloads\ai-projects\rv-reporter\uploads\pm-csv-es_f083d07c.csv
+updated_at: '2026-03-19T13:21:53.884559+00:00'

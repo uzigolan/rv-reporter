@@ -1,0 +1,14 @@
+plugin_id: telecom_session_health_threshold_sla_v2
+metrics_profile: telecom_session_health_threshold_sla_v2
+api_version: 1
+version: 1.0.0
+title: Telecom Session Health SLA Threshold Analysis v2
+description: Evaluates telecom session compliance with SLA thresholds for latency,
+  jitter, and packet loss with configurable focus metrics and aggregate analysis.
+family: time_series
+domain: telecom
+mode: threshold_sla
+entrypoint: plugin.py
+owner: ai-agent
+generator: openai_sdk
+status: active

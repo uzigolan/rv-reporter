@@ -1,0 +1,166 @@
+report_type_id: telecom_session_health_sla_report
+version: 1.0.0
+title: Telecom Session Health SLA Report
+required_columns:
+- twampControllerId
+- twampPeerAddrType
+- twampPeerAddr
+- twampContSessionId
+- twampReportCurrentStartDateAndTime
+- twampReportCurrentElapsedTime
+- twampReportCurrentTxPackets
+- twampReportCurrentRxValidPackets
+- twampReportCurrentLossPackets
+- twampReportCurrentAvailableSeconds
+- twampReportCurrentDelayMin
+- twampReportCurrentDelayMax
+- twampReportCurrentDelaySum
+- twampReportCurrentDelayAverage
+- twampReportCurrentDelayedPackets
+- twampReportCurrentPdvMax
+- twampReportCurrentIpdvMax
+- twampReportCurrentIpdvSum
+- twampReportCurrentIpdvValidResults
+- twampReportCurrentIpdvFwdMax
+- twampReportCurrentIpdvFwdSum
+- twampReportCurrentIpdvFwdValidResults
+- twampReportCurrentIpdvBckMax
+- twampReportCurrentIpdvBckSum
+- twampReportCurrentIpdvBckValidResults
+- twampReportCurrentReorderedFwd
+- twampReportCurrentReorderedBck
+- twampReportCurrentDuplicateFwd
+- twampReportCurrentDuplicateBck
+- twampReportCurrentFragmentedFwd
+- twampReportCurrentFragmentedBck
+- twampReportCurrentDelayFwdMin
+- twampReportCurrentDelayFwdMax
+- twampReportCurrentDelayFwdSum
+- twampReportCurrentDelayBckMin
+- twampReportCurrentDelayBckMax
+- twampReportCurrentDelayBckSum
+- twampReportCurrentDelayedPacketsFwd
+- twampReportCurrentDelayedPacketsBck
+- twampReportCurrentPdvMaxFwd
+- twampReportCurrentPdvMaxBck
+- twampReportCurrentTxPacketsFwd
+- twampReportCurrentTxPacketsBck
+- twampReportCurrentRxValidPacketsFwd
+- twampReportCurrentRxValidPacketsBck
+- twampReportCurrentLossPacketsFwd
+- twampReportCurrentLossPacketsBck
+- twampReportCurrentAvailableSecondsFwd
+- twampReportCurrentAvailableSecondsBck
+- twampReportCurrentRxSyncValidPacketsFwd
+- twampReportCurrentRxSyncValidPacketsBck
+- twampReportCurrentSyncSeconds
+- twampReportCurrentReordered
+- twampReportCurrentDuplicate
+metrics_profile: telecom_session_health_sla_report
+default_prefs:
+  sla_thresholds:
+    latency:
+      min: 0
+      max: 50
+    jitter:
+      max: 10
+    loss_percentage:
+      max: 1
+  analysis_scope: per-session
+  performance_states:
+    degraded:
+      latency:
+        max: 30
+      jitter:
+        max: 5
+      loss_percentage:
+        max: 0.5
+    critical:
+      latency:
+        max: 50
+      jitter:
+        max: 10
+      loss_percentage:
+        max: 1
+  time_windows:
+  - per-hour
+  - per-day
+  tone: technical
+  audience: engineering
+  focus: anomalies
+prompt_instructions: Analyze telecom session health based on SLA thresholds for latency,
+  jitter, and packet loss. Evaluate compliance on a per-session basis with 'degraded'
+  and 'critical' states defined by set thresholds. Focus on per-hour and per-day time
+  windows.
+output_schema:
+  type: object
+  additionalProperties: false
+  required:
+  - report_type_id
+  - report_title
+  - summary
+  - sections
+  - alerts
+  - recommendations
+  - tables
+  - charts
+  - metadata
+  properties:
+    report_type_id:
+      type: string
+    report_title:
+      type: string
+    summary:
+      type: string
+    sections:
+      type: array
+      items:
+        type: object
+        additionalProperties: false
+        required:
+        - title
+        - body
+        properties:
+          title:
+            type: string
+          body:
+            type: string
+    alerts:
+      type: array
+      items:
+        type: object
+        additionalProperties: false
+        required:
+        - severity
+        - message
+        properties:
+          severity:
+            type: string
+          message:
+            type: string
+    recommendations:
+      type: array
+      items:
+        type: object
+        additionalProperties: false
+        required:
+        - priority
+        - action
+        properties:
+          priority:
+            type: string
+          action:
+            type: string
+    tables:
+      type: array
+      items:
+        type: object
+        additionalProperties: true
+    charts:
+      type: array
+      items:
+        type: object
+        additionalProperties: true
+    metadata:
+      type: object
+      additionalProperties: true

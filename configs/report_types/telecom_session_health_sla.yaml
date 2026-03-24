@@ -1,0 +1,140 @@
+report_type_id: telecom_session_health_sla
+version: 1.0.0
+title: Telecom Session Health SLA Report
+required_columns:
+- Version 1
+- 'Device ID: 00-20-D2-61-5C-2A'
+- 'Unnamed: 2'
+- 'Unnamed: 3'
+- 'Unnamed: 4'
+- 'Unnamed: 5'
+- 'Unnamed: 6'
+- 'Unnamed: 7'
+- 'Unnamed: 8'
+- 'Unnamed: 9'
+- 'Unnamed: 10'
+- 'Unnamed: 11'
+- 'Unnamed: 12'
+- 'Unnamed: 13'
+- 'Unnamed: 14'
+- 'Unnamed: 15'
+- 'Unnamed: 16'
+- 'Unnamed: 17'
+- 'Unnamed: 18'
+- 'Unnamed: 19'
+- 'Unnamed: 20'
+- 'Unnamed: 21'
+- 'Unnamed: 22'
+- 'Unnamed: 23'
+- 'Unnamed: 24'
+- 'Unnamed: 25'
+- 'Unnamed: 26'
+- 'Unnamed: 27'
+- 'Unnamed: 28'
+- 'Unnamed: 29'
+- 'Unnamed: 30'
+- 'Unnamed: 31'
+- 'Unnamed: 32'
+- 'Unnamed: 33'
+- 'Unnamed: 34'
+- 'Unnamed: 35'
+- 'Unnamed: 36'
+- 'Unnamed: 37'
+- 'Unnamed: 38'
+- 'Unnamed: 39'
+- 'Unnamed: 40'
+- 'Unnamed: 41'
+- 'Unnamed: 42'
+- 'Unnamed: 43'
+- 'Unnamed: 44'
+- 'Unnamed: 45'
+- 'Unnamed: 46'
+- 'Unnamed: 47'
+- 'Unnamed: 48'
+- 'Unnamed: 49'
+- 'Unnamed: 50'
+- 'Unnamed: 51'
+- 'Unnamed: 52'
+- 'Unnamed: 53'
+metrics_profile: telecom_session_health_sla
+default_prefs:
+  sla_delay_critical: 50
+  sla_delay_degraded: 10
+  tone: technical
+  audience: engineering
+  focus: anomalies
+prompt_instructions: 'This report evaluates telecom session compliance against defined
+  SLA thresholds. Key thresholds include: latency < 10ms (good), > 50ms (critical).
+  Analyze per-session and focus on absolute signal metrics. Use per-day time windows.'
+output_schema:
+  type: object
+  additionalProperties: false
+  required:
+  - report_type_id
+  - report_title
+  - summary
+  - sections
+  - alerts
+  - recommendations
+  - tables
+  - charts
+  - metadata
+  properties:
+    report_type_id:
+      type: string
+    report_title:
+      type: string
+    summary:
+      type: string
+    sections:
+      type: array
+      items:
+        type: object
+        additionalProperties: false
+        required:
+        - title
+        - body
+        properties:
+          title:
+            type: string
+          body:
+            type: string
+    alerts:
+      type: array
+      items:
+        type: object
+        additionalProperties: false
+        required:
+        - severity
+        - message
+        properties:
+          severity:
+            type: string
+          message:
+            type: string
+    recommendations:
+      type: array
+      items:
+        type: object
+        additionalProperties: false
+        required:
+        - priority
+        - action
+        properties:
+          priority:
+            type: string
+          action:
+            type: string
+    tables:
+      type: array
+      items:
+        type: object
+        additionalProperties: true
+    charts:
+      type: array
+      items:
+        type: object
+        additionalProperties: true
+    metadata:
+      type: object
+      additionalProperties: true

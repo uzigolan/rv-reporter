@@ -1,0 +1,111 @@
+report_type_id: telecom_session_health_sla_compliance_v2
+version: 1.0.0
+title: Telecom Session Health SLA Compliance v2
+required_columns:
+- twampControllerId
+- twampPeerAddrType
+- twampPeerAddr
+- twampContSessionId
+- twampReportCurrentStartDateAndTime
+- twampReportCurrentElapsedTime
+- twampReportCurrentTxPackets
+- twampReportCurrentRxValidPackets
+- twampReportCurrentLossPackets
+- twampReportCurrentDelayMin
+- twampReportCurrentDelayMax
+- twampReportCurrentDelayAverage
+- twampReportCurrentPdvMax
+- twampReportCurrentReordered
+- twampReportCurrentDuplicate
+metrics_profile: telecom_session_health_sla_compliance_v2
+default_prefs:
+  sla_latency_thresholds:
+    good: 10
+    critical: 50
+  sla_jitter_thresholds:
+    good: 5
+    critical: 30
+  sla_loss_percentage_thresholds:
+    good: 1
+    critical: 5
+  time_window: hourly
+  tone: technical
+  audience: engineering
+  focus: anomalies
+prompt_instructions: Evaluate the given telecom session data for compliance with predefined
+  SLA thresholds. Key performance metrics include latency, jitter, and packet loss.
+  Determine if sessions are performing within 'good', 'degraded', or 'critical' states
+  based on these thresholds. Focus the analysis on aggregated network metrics over
+  hourly time windows.
+output_schema:
+  type: object
+  additionalProperties: false
+  required:
+  - report_type_id
+  - report_title
+  - summary
+  - sections
+  - alerts
+  - recommendations
+  - tables
+  - charts
+  - metadata
+  properties:
+    report_type_id:
+      type: string
+    report_title:
+      type: string
+    summary:
+      type: string
+    sections:
+      type: array
+      items:
+        type: object
+        additionalProperties: false
+        required:
+        - title
+        - body
+        properties:
+          title:
+            type: string
+          body:
+            type: string
+    alerts:
+      type: array
+      items:
+        type: object
+        additionalProperties: false
+        required:
+        - severity
+        - message
+        properties:
+          severity:
+            type: string
+          message:
+            type: string
+    recommendations:
+      type: array
+      items:
+        type: object
+        additionalProperties: false
+        required:
+        - priority
+        - action
+        properties:
+          priority:
+            type: string
+          action:
+            type: string
+    tables:
+      type: array
+      items:
+        type: object
+        additionalProperties: true
+    charts:
+      type: array
+      items:
+        type: object
+        additionalProperties: true
+    metadata:
+      type: object
+      additionalProperties: true

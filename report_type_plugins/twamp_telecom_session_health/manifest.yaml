@@ -1,0 +1,17 @@
+plugin_id: twamp_telecom_session_health
+metrics_profile: twamp_telecom_session_health
+api_version: 1
+version: 1.0.0
+title: TWAMP Telecom Session Health Report
+description: Evaluates telecom session metrics against SLA thresholds to determine
+  performance states.
+family: event
+domain: telecom
+mode: threshold_sla
+entrypoint: plugin.py
+owner: ai-agent
+generator: openai_sdk
+status: planned
+extensions:
+  sample_source: C:\Users\uzi_g\Downloads\ai-projects\rv-reporter\uploads\pm-csv-es_f083d07c.csv
+updated_at: '2026-03-19T15:22:31.334279+00:00'

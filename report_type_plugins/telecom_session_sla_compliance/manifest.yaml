@@ -1,0 +1,15 @@
+plugin_id: telecom_session_sla_compliance
+metrics_profile: telecom_session_sla_compliance
+api_version: 1
+version: 1.0.0
+title: Telecom Session SLA Compliance Report
+description: This report evaluates telecom session data against predefined SLA thresholds
+  to identify compliance issues and potential degradations based on key performance
+  metrics over specific time windows.
+family: time_series
+domain: telecom
+mode: threshold_sla
+entrypoint: plugin.py
+owner: ai-agent
+generator: openai_sdk
+status: draft

@@ -17,6 +17,7 @@ It supports deterministic local generation and OpenAI-backed narrative generatio
 - cost confirmation before OpenAI generation
 - report history + JSON/HTML/PDF/raw artifact views
 - UI creation/deletion of custom report types
+- **AI-powered report type creation**: describe your data in plain language → AI designs and scaffolds the full plugin (manifest, plugin.py, smoke test, YAML config)
 
 ## Built-in report types
 
@@ -97,24 +98,42 @@ Generate page (`/`) fields:
 - `Model`: OpenAI model used for `openai` provider
 - `CSV Source`: `sample` or `upload`
 - `Sample CSV` / `Upload CSV`: input dataset
-- `Tone`: `concise`, `executive`, `technical`
-- `Audience`: `leadership`, `engineering`, `customer`
-- `Focus`: `trends`, `anomalies`, `cost`
-- `Threshold Key` + `Threshold Value`: optional metric override
-- `Row Limit`: cap rows processed (cost/performance control)
-- `Output Tokens Budget`: output-size estimate for OpenAI cost preview
+- Narrative style comes from the selected report type's defaults and classification
+- `Row Limit`: optional cap on rows processed; leave blank for unlimited
+- `Output Tokens Budget`: optional output-size hint for OpenAI cost preview; leave blank for unlimited
 
 Cost confirmation page (`/generate` with `openai`):
 
 - shows `Report Type`, `CSV Source`, `Rows Used`
 - shows `Model`, estimated input/output tokens, and estimated cost
+- if output budget is blank, output is treated as unlimited and the output-cost side is shown as unbounded
 - actions: `Continue and Generate` or `Abort`
 
 Other UI pages:
 
 - `/reports`: report history with JSON/HTML/PDF/OpenAI-raw links
-- `/report-types/new`: create custom report type YAML
+- `/report-types/new`: AI-powered report type creation (describe your data → AI designs + scaffolds the full plugin)
 - `/report-types`: list/delete custom report types (protected types cannot be deleted)
+
+AI report type creation (`/report-types/new`) fields:
+
+- `Describe your report type`: free-text goal in plain language
+- `Clone From Existing Type` (optional): base taxonomy/column hints on an existing type
+- `Source Data` (optional): upload a CSV/Excel file (or pick a recent upload) so the AI can inspect real column names, types, and sample rows; sheet selection for multi-sheet workbooks
+- Submit → OpenAI produces a structured spec → scaffold writes `manifest.yaml`, `plugin.py`, `tests/test_smoke.py`, and `configs/report_types/<id>.yaml` automatically
+
+Env vars that control AI report type creation:
+
+| Var | Default | Purpose |
+|---|---|---|
+| `REPORT_TYPE_AGENT_MODEL` | `gpt-5-mini` | Model used for report-type design |
+| `OPENAI_API_KEY` | — | Required for AI creation |
+
+The AI classifies each draft along three axes:
+
+- `family`: source shape such as `time_series`, `event`, `entity_snapshot`, `relational`
+- `domain`: business context such as `generic`, `operations`, `finance`, `security`, `project_management`
+- `mode`: analysis intent such as `issue_detection`, `anomaly_detection`, `statistical_summary`, `trend_analysis`, `root_cause_triage`
 
 ## CLI examples
 

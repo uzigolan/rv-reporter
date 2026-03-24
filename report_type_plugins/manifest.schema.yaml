@@ -38,28 +38,51 @@ properties:
       - tabular_statistical
       - event
       - log_text
+      - entity_snapshot
+      - relational
       - hybrid
   domain:
     type: string
     enum:
+      - generic
       - networking
+      - observability
       - project_management
       - healthcare
       - operations
       - security
       - finance
+      - product
+      - sales
+      - customer_support
+      - supply_chain
+      - manufacturing
+      - energy
+      - telecom
+      - research
+      - education
+      - government
   mode:
     type: string
     enum:
+      - overview_summary
       - health_score
+      - issue_detection
       - anomaly_detection
       - trend_analysis
+      - statistical_summary
       - threshold_sla
       - burst_detection
       - correlation_analysis
       - distribution_analysis
+      - variance_analysis
+      - change_detection
+      - segmentation_analysis
+      - ranking_prioritization
+      - forecast_outlook
       - top_n_hotspots
       - flow_bottleneck
+      - root_cause_triage
   entrypoint:
     type: string
     const: plugin.py
@@ -73,9 +96,14 @@ properties:
   extensions:
     type: object
     additionalProperties: true
+  published_at:
+    type: string
+  updated_at:
+    type: string
   status:
     type: string
     enum:
       - draft
+      - planned
       - active
       - deprecated

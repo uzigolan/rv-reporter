@@ -1,0 +1,103 @@
+{% macro workflow_pipeline(active_step) %}
+{#
+  active_step: integer 1-7
+  Steps: 1=Upload, 2=Classify, 3=Prompt, 4=AI Draft, 5=Review & Edit, 6=Preview Sample, 7=Publish
+  Review & Edit (step 5) can loop back to Prompt (step 3) or forward to Preview Sample (step 6)
+#}
+{% set steps = [
+  ("1", "Upload Data",      "CSV / Excel source"),
+  ("2", "Classify",         "Domain · Family · Mode"),
+  ("3", "Write Prompt",     "Validated by guardrail"),
+  ("4", "AI Draft",         "YAML · plugin · tests"),
+  ("5", "Review & Edit",    "Inspect & edit files"),
+  ("6", "Preview Sample",   "Run sample report"),
+  ("7", "Publish",          "Activate for generation"),
+] %}
+<style>
+  @keyframes wf-glow {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(15,118,110,0.25); }
+    50%      { box-shadow: 0 0 0 6px rgba(15,118,110,0); }
+  }
+  @keyframes wf-badge-spin {
+    from { background-position: 0% 50%; }
+    to   { background-position: 200% 50%; }
+  }
+  @keyframes wf-ping {
+    0%   { transform: scale(1); opacity: 1; }
+    75%  { transform: scale(1.8); opacity: 0; }
+    100% { transform: scale(1.8); opacity: 0; }
+  }
+  .wf-bar { display:flex; align-items:center; gap:0; overflow-x:auto; padding-bottom:.2rem; }
+  .wf-box {
+    display:flex; flex-direction:column; align-items:center; gap:.22rem;
+    padding:.4rem .65rem; border-radius:11px; min-width:82px; max-width:105px;
+    border: 1.5px solid var(--border); background: var(--surface);
+    transition: border-color .3s, background .3s, box-shadow .3s;
+  }
+  .wf-box.is-done {
+    border-color: #15803d; background: #f0fdf4;
+  }
+  .wf-box.is-active {
+    border-color: var(--brand); background: rgba(15,118,110,.07);
+    animation: wf-glow 2s ease-in-out infinite;
+  }
+  .wf-badge {
+    position: relative;
+    width:1.5rem; height:1.5rem; border-radius:50%;
+    display:flex; align-items:center; justify-content:center;
+    font-size:.7rem; font-weight:800; flex-shrink:0;
+    background: var(--border); color: var(--muted);
+    transition: background .3s, color .3s;
+  }
+  .wf-box.is-done .wf-badge { background: #15803d; color: #fff; }
+  .wf-box.is-active .wf-badge {
+    background: linear-gradient(90deg, var(--brand), #38bdf8, var(--brand));
+    background-size: 200% 100%;
+    animation: wf-badge-spin 2.5s linear infinite;
+    color: #fff;
+  }
+  .wf-box.is-active .wf-badge::after {
+    content: "";
+    position: absolute; inset: 0; border-radius: 50%;
+    border: 2px solid var(--brand);
+    animation: wf-ping 1.8s cubic-bezier(0,0,0.2,1) infinite;
+  }
+  .wf-label {
+    font-size:.7rem; font-weight:700; text-align:center; line-height:1.2;
+    color: var(--text); transition: color .3s;
+  }
+  .wf-box.is-done .wf-label { color: #15803d; }
+  .wf-box.is-active .wf-label { color: var(--brand); }
+  .wf-desc {
+    font-size:.6rem; color:var(--muted); text-align:center; line-height:1.25;
+  }
+</style>
+<section class="panel" style="padding: .85rem 1.4rem;">
+  <div style="font-size:.7rem; font-weight:700; text-transform:uppercase; letter-spacing:.1em; color:var(--muted); margin-bottom:.65rem;">Report Type Workflow</div>
+  <div class="wf-bar">
+    {% for num, label, desc in steps %}
+      {% set n = num|int %}
+      {% set is_active = (n == active_step) %}
+      {% set is_done   = (n < active_step) %}
+      <div style="display:flex; align-items:center; gap:0; flex-shrink:0;">
+        <div class="wf-box{{ ' is-active' if is_active else (' is-done' if is_done else '') }}" id="wf-node-{{ num }}">
+          <div class="wf-badge" id="wf-badge-{{ num }}">{{ '✓' if is_done else num }}</div>
+          <div class="wf-label">{{ label }}</div>
+          <div class="wf-desc">{{ desc }}</div>
+        </div>
+        {% if not loop.last %}
+        <div style="flex-shrink:0; margin:0 1px; margin-bottom:1rem;">
+          <svg id="wf-arrow-{{ num }}" width="26" height="14" viewBox="0 0 26 14" fill="none">
+            <path d="M2 7 L20 7" stroke="{{ '#15803d' if (loop.index < active_step) else '#dbe5f0' }}" stroke-width="1.6" stroke-dasharray="{{ '0' if (loop.index < active_step) else '4 2' }}"/>
+            <polygon points="20,3 25,7 20,11" fill="{{ '#15803d' if (loop.index < active_step) else '#dbe5f0' }}"/>
+          </svg>
+        </div>
+        {% endif %}
+      </div>
+    {% endfor %}
+  </div>
+  <div style="font-size:.65rem; color:var(--muted); margin-top:.4rem; padding-left:.65rem;">
+    ↻ From <strong>Review & Edit</strong>, loop back to <strong>Write Prompt</strong> to iterate before previewing and publishing
+  </div>
+</section>
+{% endmacro %}

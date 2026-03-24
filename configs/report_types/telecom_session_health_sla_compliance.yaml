@@ -1,0 +1,146 @@
+report_type_id: telecom_session_health_sla_compliance
+version: 1.0.0
+title: Telecom Session Health SLA Compliance
+required_columns:
+- twampControllerId
+- twampPeerAddrType
+- twampPeerAddr
+- twampContSessionId
+- twampReportCurrentStartDateAndTime
+- twampReportCurrentElapsedTime
+- twampReportCurrentTxPackets
+- twampReportCurrentRxValidPackets
+- twampReportCurrentLossPackets
+- twampReportCurrentAvailableSeconds
+- twampReportCurrentDelayMin
+- twampReportCurrentDelayMax
+- twampReportCurrentDelaySum
+- twampReportCurrentDelayAverage
+- twampReportCurrentDelayedPackets
+- twampReportCurrentPdvMax
+- twampReportCurrentIpdvMax
+- twampReportCurrentIpdvSum
+- twampReportCurrentIpdvValidResults
+- twampReportCurrentIpdvFwdMax
+- twampReportCurrentIpdvFwdSum
+- twampReportCurrentIpdvFwdValidResults
+- twampReportCurrentIpdvBckMax
+- twampReportCurrentIpdvBckSum
+- twampReportCurrentIpdvBckValidResults
+- twampReportCurrentReorderedFwd
+- twampReportCurrentReorderedBck
+- twampReportCurrentDuplicateFwd
+- twampReportCurrentDuplicateBck
+- twampReportCurrentFragmentedFwd
+- twampReportCurrentFragmentedBck
+- twampReportCurrentDelayFwdMin
+- twampReportCurrentDelayFwdMax
+- twampReportCurrentDelayFwdSum
+- twampReportCurrentDelayBckMin
+- twampReportCurrentDelayBckMax
+- twampReportCurrentDelayBckSum
+- twampReportCurrentDelayedPacketsFwd
+- twampReportCurrentDelayedPacketsBck
+- twampReportCurrentPdvMaxFwd
+- twampReportCurrentPdvMaxBck
+- twampReportCurrentTxPacketsFwd
+- twampReportCurrentTxPacketsBck
+- twampReportCurrentRxValidPacketsFwd
+- twampReportCurrentRxValidPacketsBck
+- twampReportCurrentLossPacketsFwd
+- twampReportCurrentLossPacketsBck
+- twampReportCurrentAvailableSecondsFwd
+- twampReportCurrentAvailableSecondsBck
+- twampReportCurrentRxSyncValidPacketsFwd
+- twampReportCurrentRxSyncValidPacketsBck
+- twampReportCurrentSyncSeconds
+- twampReportCurrentReordered
+- twampReportCurrentDuplicate
+metrics_profile: telecom_session_health_sla_compliance
+default_prefs:
+  sla_latency_critical: 50
+  sla_latency_degraded: 10
+  sla_jitter_critical: 30
+  sla_jitter_degraded: 10
+  sla_packet_loss_critical: 5
+  sla_packet_loss_degraded: 1
+  tone: technical
+  audience: engineering
+  focus: anomalies
+prompt_instructions: Provide the input CSV files for telecom session data. Define
+  your SLA thresholds such as maximum allowable latency, jitter, and packet loss percentages.
+  The analysis will determine which sessions meet the criteria and classify them as
+  good, degraded, or critical. Specify the time windows you wish to analyze (e.g.,
+  per-hour, per-day).
+output_schema:
+  type: object
+  additionalProperties: false
+  required:
+  - report_type_id
+  - report_title
+  - summary
+  - sections
+  - alerts
+  - recommendations
+  - tables
+  - charts
+  - metadata
+  properties:
+    report_type_id:
+      type: string
+    report_title:
+      type: string
+    summary:
+      type: string
+    sections:
+      type: array
+      items:
+        type: object
+        additionalProperties: false
+        required:
+        - title
+        - body
+        properties:
+          title:
+            type: string
+          body:
+            type: string
+    alerts:
+      type: array
+      items:
+        type: object
+        additionalProperties: false
+        required:
+        - severity
+        - message
+        properties:
+          severity:
+            type: string
+          message:
+            type: string
+    recommendations:
+      type: array
+      items:
+        type: object
+        additionalProperties: false
+        required:
+        - priority
+        - action
+        properties:
+          priority:
+            type: string
+          action:
+            type: string
+    tables:
+      type: array
+      items:
+        type: object
+        additionalProperties: true
+    charts:
+      type: array
+      items:
+        type: object
+        additionalProperties: true
+    metadata:
+      type: object
+      additionalProperties: true

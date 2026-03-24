@@ -14,6 +14,9 @@
     <a class="btn-link" href="{{ url_for('view_raw', path=report_raw_path) }}" target="_blank" rel="noopener noreferrer">View OpenAI Raw</a>
     {% endif %}
     <a class="btn-link" href="{{ url_for('reports') }}">All reports</a>
+    {% if report_type_id %}
+    <a class="btn-secondary" href="{{ url_for('view_report_type_yaml_page', report_type_id=report_type_id) }}">← Back to {{ report_type_label or report_type_id }}</a>
+    {% endif %}
   </div>
 </section>
 
@@ -27,6 +30,16 @@
   </div>
 </section>
 
+{% if report_json.sections %}
+<section class="panel">
+  <h2>Sections</h2>
+  {% for section in report_json.sections %}
+    <h3>{{ section.title }}</h3>
+    <p>{{ section.body }}</p>
+  {% endfor %}
+</section>
+{% endif %}
+
 <section class="panel">
   <h2>Alerts</h2>
   {% if report_json.alerts %}
@@ -39,6 +52,50 @@
     <p class="muted">No alerts.</p>
   {% endif %}
 </section>
+
+{% if report_json.recommendations %}
+<section class="panel">
+  <h2>Recommendations</h2>
+  <ul>
+    {% for rec in report_json.recommendations %}
+      <li><strong>{{ rec.priority }}</strong>: {{ rec.action }}</li>
+    {% endfor %}
+  </ul>
+</section>
+{% endif %}
+
+{% if report_json.tables %}
+<section class="panel">
+  <h2>Computed Metrics</h2>
+  {% for table in report_json.tables %}
+    {% if table.rows %}
+      {% if table.title is defined %}<h3 style="margin:.8rem 0 .3rem;">{{ table.title }}</h3>{% endif %}
+      {% if table.columns is defined and table.rows[0] is sequence and table.rows[0] is not mapping %}
+        {# Columnar format: columns + list-of-lists rows #}
+        <table class="table" style="font-size:.82rem; margin-bottom:1rem;">
+          <thead><tr>{% for col in table.columns %}<th style="padding:.3rem .6rem;">{{ col }}</th>{% endfor %}</tr></thead>
+          <tbody>
+            {% for row in table.rows %}
+              <tr>{% for cell in row %}<td style="padding:.3rem .6rem;">{{ cell }}</td>{% endfor %}</tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      {% else %}
+        {# Dict rows: render each row as a vertical key-value table #}
+        {% for row in table.rows %}
+          <table class="table" style="font-size:.82rem; margin-bottom:1rem;">
+            <tbody>
+              {% for k, v in row.items() %}
+                <tr><th style="width:40%; padding:.3rem .6rem;">{{ k }}</th><td style="padding:.3rem .6rem;">{{ v }}</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        {% endfor %}
+      {% endif %}
+    {% endif %}
+  {% endfor %}
+</section>
+{% endif %}
 {% endblock %}
 {% block head %}
 <script>

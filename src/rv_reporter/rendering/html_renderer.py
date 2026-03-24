@@ -288,6 +288,153 @@ _HTML_TEMPLATE = """
       </section>
       {% endif %}
 
+      {% if is_telecom_session %}
+      <section>
+        <h2>Session Health Summary</h2>
+        <div class="stats-grid">
+          <div class="stat-card">
+            <div class="stat-label">Total Sessions</div>
+            <div class="stat-value">{{ telecom_session.summary.get('total_sessions', 0) }}</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Healthy Sessions</div>
+            <div class="stat-value ok">{{ telecom_session.summary.get('healthy_sessions', 0) }}</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Degraded Sessions</div>
+            <div class="stat-value {% if telecom_session.summary.get('degraded_sessions', 0) > 0 %}alert{% endif %}">{{ telecom_session.summary.get('degraded_sessions', 0) }}</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Critical Sessions</div>
+            <div class="stat-value {% if telecom_session.summary.get('critical_sessions', 0) > 0 %}alert{% endif %}">{{ telecom_session.summary.get('critical_sessions', 0) }}</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">SLA Compliance</div>
+            <div class="stat-value {% if telecom_session.summary.get('sla_compliance_pct', 100) < 90 %}alert{% elif telecom_session.summary.get('sla_compliance_pct', 100) < 100 %}info{% else %}ok{% endif %}">
+              {{ "%.1f"|format(telecom_session.summary.get('sla_compliance_pct', 100)) }}%
+            </div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Avg Delay</div>
+            <div class="stat-value {% if telecom_session.delay_stats.get('avg_ms', 0) > telecom_session.delay_stats.get('delay_limit_ms', 50) %}alert{% endif %}">
+              {{ "%.3f"|format(telecom_session.delay_stats.get('avg_ms', 0)) }} ms
+            </div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Max Delay (p95)</div>
+            <div class="stat-value {% if telecom_session.delay_stats.get('p95_ms', 0) > telecom_session.delay_stats.get('delay_limit_ms', 50) %}alert{% endif %}">
+              {{ "%.3f"|format(telecom_session.delay_stats.get('p95_ms', 0)) }} ms
+            </div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Packet Loss</div>
+            <div class="stat-value {% if telecom_session.loss_stats.get('loss_pct', 0) > telecom_session.loss_stats.get('loss_limit_pct', 5) %}alert{% elif telecom_session.loss_stats.get('loss_pct', 0) > 0 %}info{% else %}ok{% endif %}">
+              {{ "%.4f"|format(telecom_session.loss_stats.get('loss_pct', 0)) }}%
+            </div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Max PDV</div>
+            <div class="stat-value {% if telecom_session.jitter_stats.get('pdv_max_ms', 0) > telecom_session.jitter_stats.get('pdv_limit_ms', 30) %}alert{% endif %}">
+              {{ "%.3f"|format(telecom_session.jitter_stats.get('pdv_max_ms', 0)) }} ms
+            </div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Max IPDV</div>
+            <div class="stat-value">{{ "%.3f"|format(telecom_session.jitter_stats.get('ipdv_max_ms', 0)) }} ms</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Total Tx Packets</div>
+            <div class="stat-value">{{ "{:,}".format(telecom_session.summary.get('total_tx_packets', 0)) }}</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Total Lost Packets</div>
+            <div class="stat-value {% if telecom_session.summary.get('total_loss_packets', 0) > 0 %}alert{% else %}ok{% endif %}">
+              {{ "{:,}".format(telecom_session.summary.get('total_loss_packets', 0)) }}
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <h2>SLA Thresholds</h2>
+        <div class="stats-grid">
+          <div class="stat-card">
+            <div class="stat-label">Delay Limit</div>
+            <div class="stat-value info">{{ telecom_session.thresholds.get('delay_max_ms', 50) }} ms</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Loss Limit</div>
+            <div class="stat-value info">{{ telecom_session.thresholds.get('loss_pct_limit', 5) }}%</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">PDV Limit</div>
+            <div class="stat-value info">{{ telecom_session.thresholds.get('pdv_max_ms', 30) }} ms</div>
+          </div>
+        </div>
+      </section>
+
+      {% if telecom_session.per_session %}
+      <section>
+        <h2>Per-Session Details</h2>
+        <div class="table-scroll">
+          <table>
+            <thead>
+              <tr>
+                {% for col in telecom_session.per_session[0].keys() %}
+                <th>{{ col }}</th>
+                {% endfor %}
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in telecom_session.per_session %}
+              <tr {% if row.get('Status') == 'Critical' %}style="background:#fff1f2;"{% elif row.get('Status') == 'Degraded' %}style="background:#fffbeb;"{% endif %}>
+                {% for v in row.values() %}
+                <td>{{ v }}</td>
+                {% endfor %}
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section>
+        <h2>Session Health Charts</h2>
+        <p class="small muted">Charts are interactive: hover to inspect values.</p>
+        <div class="chart-grid">
+          <div class="chart-wrap">
+            <div class="chart-head">
+              <div class="chart-title">Session Status Distribution</div>
+              <button type="button" class="chart-export-btn" data-canvas-id="tsSessionStatusChart" data-file-prefix="{{ report.metadata.get('report_id', report.report_type_id) }}">Export PNG</button>
+            </div>
+            <canvas id="tsSessionStatusChart"></canvas>
+          </div>
+          <div class="chart-wrap">
+            <div class="chart-head">
+              <div class="chart-title">Delay Avg vs Max per Session (ms)</div>
+              <button type="button" class="chart-export-btn" data-canvas-id="tsDelayChart" data-file-prefix="{{ report.metadata.get('report_id', report.report_type_id) }}">Export PNG</button>
+            </div>
+            <canvas id="tsDelayChart"></canvas>
+          </div>
+          <div class="chart-wrap">
+            <div class="chart-head">
+              <div class="chart-title">Packet Loss % per Session</div>
+              <button type="button" class="chart-export-btn" data-canvas-id="tsLossChart" data-file-prefix="{{ report.metadata.get('report_id', report.report_type_id) }}">Export PNG</button>
+            </div>
+            <canvas id="tsLossChart"></canvas>
+          </div>
+          <div class="chart-wrap">
+            <div class="chart-head">
+              <div class="chart-title">PDV Max &amp; IPDV Max per Session (ms)</div>
+              <button type="button" class="chart-export-btn" data-canvas-id="tsJitterChart" data-file-prefix="{{ report.metadata.get('report_id', report.report_type_id) }}">Export PNG</button>
+            </div>
+            <canvas id="tsJitterChart"></canvas>
+          </div>
+        </div>
+      </section>
+      {% endif %}
+      {% endif %}
+
       {% if is_twamp %}
       <section>
         <h2>TWAMP Summary</h2>
@@ -1773,7 +1920,7 @@ _HTML_TEMPLATE = """
 
       <section>
         <h2>Tables</h2>
-        {% if is_network_queue or is_twamp or is_pm or is_jira or is_ms_biomarker or is_wireshark %}
+        {% if is_network_queue or is_twamp or is_pm or is_jira or is_ms_biomarker or is_wireshark or is_telecom_session %}
           <p class="muted">Detailed metric payload is available in the JSON artifact for this report.</p>
         {% else %}
         {% for t in report.tables %}
@@ -1987,6 +2134,115 @@ _HTML_TEMPLATE = """
               legend: { position: "bottom" }
             },
             cutout: "62%"
+          }
+        });
+
+        document.querySelectorAll(".chart-export-btn").forEach((btn) => {
+          btn.addEventListener("click", () => {
+            const canvasId = btn.getAttribute("data-canvas-id");
+            const prefix = btn.getAttribute("data-file-prefix") || "report";
+            const canvas = document.getElementById(canvasId);
+            if (!canvas) return;
+            const a = document.createElement("a");
+            a.href = canvas.toDataURL("image/png");
+            a.download = `${prefix}.${canvasId}.png`;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+          });
+        });
+      })();
+    </script>
+    {% endif %}
+    {% if is_telecom_session and telecom_session.per_session %}
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+    <script>
+      (function() {
+        if (!window.Chart) return;
+        Chart.defaults.font.family = "'Segoe UI', Tahoma, sans-serif";
+        Chart.defaults.font.size = 13;
+        Chart.defaults.color = "#334155";
+        const sessions = {{ telecom_session.per_session_json | safe }};
+        if (!Array.isArray(sessions) || sessions.length === 0) return;
+
+        const labels = sessions.map((s, i) => s["Session ID"] || `S${i+1}`);
+        const statusColors = sessions.map((s) => {
+          const st = (s["Status"] || "").toLowerCase();
+          if (st === "critical") return "#b91c1c";
+          if (st === "degraded") return "#b45309";
+          return "#15803d";
+        });
+
+        const createChart = (id, cfg) => {
+          const el = document.getElementById(id);
+          if (!el) return;
+          new Chart(el, cfg);
+        };
+
+        // Status distribution (doughnut)
+        const counts = { Healthy: 0, Degraded: 0, Critical: 0 };
+        sessions.forEach((s) => { counts[s["Status"]] = (counts[s["Status"]] || 0) + 1; });
+        createChart("tsSessionStatusChart", {
+          type: "doughnut",
+          data: {
+            labels: ["Healthy", "Degraded", "Critical"],
+            datasets: [{
+              data: [counts.Healthy, counts.Degraded, counts.Critical],
+              backgroundColor: ["#15803d", "#b45309", "#b91c1c"],
+              hoverOffset: 6
+            }]
+          },
+          options: {
+            responsive: true, maintainAspectRatio: false,
+            plugins: { legend: { position: "bottom" } }
+          }
+        });
+
+        // Delay chart
+        createChart("tsDelayChart", {
+          type: "bar",
+          data: {
+            labels,
+            datasets: [
+              { label: "Delay Avg (ms)", data: sessions.map((s) => Number(s["Delay Avg (ms)"] || 0)), backgroundColor: "rgba(37,99,235,0.7)" },
+              { label: "Delay Max (ms)", data: sessions.map((s) => Number(s["Delay Max (ms)"] || 0)), backgroundColor: "rgba(37,99,235,0.25)", borderColor: "#2563eb", borderWidth: 1 }
+            ]
+          },
+          options: {
+            responsive: true, maintainAspectRatio: false,
+            scales: { y: { beginAtZero: true, title: { display: true, text: "ms" } } },
+            plugins: { legend: { position: "bottom" } }
+          }
+        });
+
+        // Loss chart
+        createChart("tsLossChart", {
+          type: "bar",
+          data: {
+            labels,
+            datasets: [{ label: "Loss %", data: sessions.map((s) => Number(s["Loss %"] || 0)), backgroundColor: statusColors }]
+          },
+          options: {
+            responsive: true, maintainAspectRatio: false,
+            scales: { y: { beginAtZero: true, title: { display: true, text: "%" } } },
+            plugins: { legend: { display: false } }
+          }
+        });
+
+        // Jitter chart
+        createChart("tsJitterChart", {
+          type: "bar",
+          data: {
+            labels,
+            datasets: [
+              { label: "PDV Max (ms)", data: sessions.map((s) => Number(s["PDV Max (ms)"] || 0)), backgroundColor: "rgba(15,118,110,0.7)" },
+              { label: "IPDV Max (ms)", data: sessions.map((s) => Number(s["IPDV Max (ms)"] || 0)), backgroundColor: "rgba(15,118,110,0.25)", borderColor: "#0f766e", borderWidth: 1 }
+            ]
+          },
+          options: {
+            responsive: true, maintainAspectRatio: false,
+            scales: { y: { beginAtZero: true, title: { display: true, text: "ms" } } },
+            plugins: { legend: { position: "bottom" } }
           }
         });
 
@@ -3089,6 +3345,7 @@ def render_html(report: dict) -> str:
     jira = _extract_jira_metrics(report)
     ms = _extract_ms_biomarker_metrics(report)
     wireshark = _extract_wireshark_metrics(report)
+    telecom_session = _extract_telecom_session_metrics(report)
     is_wireshark_style = report.get("report_type_id") in _WIRESHARK_STYLE_REPORT_TYPES
     return template.render(
         report=report_view,
@@ -3098,13 +3355,39 @@ def render_html(report: dict) -> str:
         is_jira=report.get("report_type_id") == "jira_issue_portfolio" and jira is not None,
         is_ms_biomarker=report.get("report_type_id") == "ms_biomarker_registry_health" and ms is not None,
         is_wireshark=is_wireshark_style and wireshark is not None,
+        is_telecom_session=report.get("report_type_id") == "telecom_session_health_report" and telecom_session is not None,
         network=network or {},
         twamp=twamp or {},
         pm=pm or {},
         jira=jira or {},
         ms=ms or {},
         wireshark=wireshark or {},
+        telecom_session=telecom_session or {},
     )
+
+
+def _extract_telecom_session_metrics(report: dict) -> dict | None:
+    if report.get("report_type_id") != "telecom_session_health_report":
+        return None
+    tables = report.get("tables", [])
+    payload: dict = {}
+    for table in tables:
+        if table.get("name") == "metrics_payload" and table.get("rows"):
+            payload = table["rows"][0] if isinstance(table["rows"][0], dict) else {}
+            break
+    if not payload:
+        return None
+    per_session = payload.get("per_session", [])
+    return {
+        "summary": payload.get("summary", {}),
+        "delay_stats": payload.get("delay_stats", {}),
+        "jitter_stats": payload.get("jitter_stats", {}),
+        "loss_stats": payload.get("loss_stats", {}),
+        "thresholds": payload.get("thresholds", {}),
+        "anomalies": payload.get("anomalies", {}),
+        "per_session": per_session if isinstance(per_session, list) else [],
+        "per_session_json": json.dumps(per_session if isinstance(per_session, list) else []),
+    }
 
 
 def _format_sections_for_display(sections: list[dict]) -> list[dict]:

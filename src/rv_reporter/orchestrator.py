@@ -61,18 +61,24 @@ def run_pipeline(
     generation_context: dict[str, Any] | None = None,
 ) -> tuple[Path, Path]:
     start_time = perf_counter()
+    report_registry = registry or ReportTypeRegistry()
+    report_provider = provider or MockProvider()
+    context = dict(generation_context or {})
     definition, prefs, csv_profile, metrics = prepare_pipeline_inputs(
-        csv_path=csv_path,
+        csv_path=str(csv_path),
         report_type_id=report_type_id,
         user_prefs=user_prefs,
-        registry=registry,
+        registry=report_registry,
         row_limit=row_limit,
         sheet_name=sheet_name,
         ignore_columns=ignore_columns,
     )
-
-    report_provider = provider or MockProvider()
-    report_json = report_provider.generate_report_json(definition, csv_profile, metrics, prefs)
+    report_json = report_provider.generate_report_json(
+        definition,
+        csv_profile,
+        metrics,
+        prefs,
+    )
     report_json = _normalize_report_output(report_json, definition.report_type_id, definition.title)
     _enrich_sparse_report(report_json, definition.metrics_profile, csv_profile, metrics)
     _ensure_metrics_payload_for_charted_reports(report_json, definition.report_type_id, metrics)
@@ -83,7 +89,6 @@ def run_pipeline(
     run_id = generated_at.strftime("%y%m%d_%H%M_%f")
     elapsed_seconds = int(round(perf_counter() - start_time))
     _stamp_report_metadata(report_json, run_id=run_id, generated_at=generated_at)
-    context = dict(generation_context or {})
     provider_usage = getattr(report_provider, "last_usage", None)
     if isinstance(provider_usage, dict):
         in_actual = provider_usage.get("input_tokens")
@@ -232,6 +237,7 @@ def _ensure_metrics_payload_for_charted_reports(
         "jira_issue_portfolio",
         "ms_biomarker_registry_health",
         "wireshark_capture_health",
+        "telecom_session_health_report",
     }:
         return
     tables = report_json.get("tables")

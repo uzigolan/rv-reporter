@@ -1,0 +1,15 @@
+plugin_id: telecom_session_health_sla_v2
+metrics_profile: telecom_session_health_sla_v2
+api_version: 1
+version: 1.0.0
+title: Telecom Session Health SLA v2
+description: This report analyzes telecom session data to assess compliance with defined
+  Service Level Agreements (SLAs). It evaluates session parameters against SLA thresholds
+  to identify performance issues.
+family: time_series
+domain: telecom
+mode: threshold_sla
+entrypoint: plugin.py
+owner: ai-agent
+generator: openai_sdk
+status: draft

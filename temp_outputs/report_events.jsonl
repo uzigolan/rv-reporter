@@ -1,0 +1,4 @@
+{"attempt_id": "evt_3d32951662", "report_type_id": "network_queue_congestion", "provider": "openai", "model": "gpt-4.1-mini", "status": "requested", "message": "Report generation request submitted.", "ts_utc": "2026-03-16T13:28:03.619111+00:00"}
+{"attempt_id": "evt_3d32951662", "report_type_id": "network_queue_congestion", "provider": "openai", "model": "gpt-4.1-mini", "status": "failed", "message": "Missing required columns: ['Time']", "ts_utc": "2026-03-16T13:28:03.628112+00:00"}
+{"attempt_id": "evt_2301e44423", "report_type_id": "network_queue_congestion", "provider": "openai", "model": "gpt-4.1-mini", "status": "requested", "message": "Report generation request submitted.", "ts_utc": "2026-03-16T13:28:21.685914+00:00"}
+{"attempt_id": "evt_2301e44423", "report_type_id": "network_queue_congestion", "provider": "openai", "model": "gpt-4.1-mini", "status": "failed", "message": "Missing required columns: ['Time']", "ts_utc": "2026-03-16T13:28:21.692915+00:00"}

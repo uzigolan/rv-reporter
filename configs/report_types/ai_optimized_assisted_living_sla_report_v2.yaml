@@ -1,0 +1,99 @@
+report_type_id: ai_optimized_assisted_living_sla_report_v2
+version: 1.0.0
+title: AI Optimized Assisted Living SLA and Compliance Report v2
+required_columns:
+- timestamp
+- device_name
+- property
+metrics_profile: ai_optimized_assisted_living_sla_report_v2
+default_prefs:
+  sla_response_threshold: 300
+  sla_resolution_threshold: 900
+  risk_score_weights:
+    high_call_frequency: 30
+    response_time: 25
+    incomplete_incidents: 25
+    resolution_time: 20
+  caregiver_cost_range:
+  - 20
+  - 30
+  shift_plane_cost: 25
+  tone: technical
+  audience: leadership
+  focus: trends
+prompt_instructions: Analyze the CSV dataset containing call-button and caregiver
+  interaction logs, generating a compliance-ready report. Consider California Title
+  22 requirements and detail caregiver performance and SLA compliance. Assess risk
+  levels and optimize staffing.
+output_schema:
+  type: object
+  additionalProperties: false
+  required:
+  - report_type_id
+  - report_title
+  - summary
+  - sections
+  - alerts
+  - recommendations
+  - tables
+  - charts
+  - metadata
+  properties:
+    report_type_id:
+      type: string
+    report_title:
+      type: string
+    summary:
+      type: string
+    sections:
+      type: array
+      items:
+        type: object
+        additionalProperties: false
+        required:
+        - title
+        - body
+        properties:
+          title:
+            type: string
+          body:
+            type: string
+    alerts:
+      type: array
+      items:
+        type: object
+        additionalProperties: false
+        required:
+        - severity
+        - message
+        properties:
+          severity:
+            type: string
+          message:
+            type: string
+    recommendations:
+      type: array
+      items:
+        type: object
+        additionalProperties: false
+        required:
+        - priority
+        - action
+        properties:
+          priority:
+            type: string
+          action:
+            type: string
+    tables:
+      type: array
+      items:
+        type: object
+        additionalProperties: true
+    charts:
+      type: array
+      items:
+        type: object
+        additionalProperties: true
+    metadata:
+      type: object
+      additionalProperties: true

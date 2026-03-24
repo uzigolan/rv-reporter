@@ -6,6 +6,7 @@ import re
 import subprocess
 from functools import lru_cache
 from pathlib import Path
+from typing import Any
 
 import pandas as pd
 
@@ -223,6 +224,78 @@ def load_csv_with_limit(
     raise ValueError("Unsupported file type. Supported: .csv, .xlsx, .xls, .pcap, .pcapng")
 
 
+def preflight_tabular_source(
+    path: str | Path,
+    *,
+    sheet_name: str | None = None,
+    required_columns: list[str] | None = None,
+    row_limit: int | None = 250,
+) -> dict[str, Any]:
+    issues: list[str] = []
+    warnings: list[str] = []
+    metadata = describe_tabular_source(path, sheet_name=sheet_name)
+    try:
+        frame = load_csv_with_limit(path, row_limit=row_limit, sheet_name=sheet_name)
+    except Exception as exc:  # noqa: BLE001
+        return {
+            "ok": False,
+            "issues": [str(exc)],
+            "warnings": [],
+            "metadata": metadata,
+            "stats": {},
+        }
+
+    if frame.empty:
+        issues.append("Source parsed successfully but produced no data rows.")
+
+    required = [str(item).strip() for item in (required_columns or []) if str(item).strip()]
+    if required:
+        missing = [col for col in required if col not in frame.columns]
+        if missing:
+            issues.append(f"Missing required columns: {', '.join(missing)}.")
+
+    repeated_header_rows = _count_duplicate_header_rows(frame)
+    if repeated_header_rows:
+        issues.append(
+            f"Parsed data still contains {repeated_header_rows} repeated header row(s), which usually means the source has multiple embedded tables."
+        )
+
+    metadata_rows = _count_metadata_rows(frame)
+    if metadata_rows:
+        issues.append(
+            f"Parsed data still contains {metadata_rows} metadata row(s), which means the source was not cleanly isolated to one table."
+        )
+
+    suspicious_numeric = _find_suspicious_numeric_columns(frame)
+    if suspicious_numeric:
+        formatted = ", ".join(
+            f"{name} ({ratio}% numeric)" for name, ratio in suspicious_numeric[:5]
+        )
+        warnings.append(
+            "Some numeric-looking columns contain mostly non-numeric values after parsing: "
+            f"{formatted}."
+        )
+
+    unnamed_columns = [str(col) for col in frame.columns if str(col).startswith("Unnamed:")]
+    if unnamed_columns and len(unnamed_columns) >= max(3, len(frame.columns) // 2):
+        warnings.append(
+            "Parsed table contains many unnamed columns. This often indicates the wrong header row was selected."
+        )
+
+    return {
+        "ok": not issues,
+        "issues": issues,
+        "warnings": warnings,
+        "metadata": metadata,
+        "stats": {
+            "row_count": int(len(frame.index)),
+            "column_count": int(len(frame.columns)),
+            "repeated_header_rows": repeated_header_rows,
+            "metadata_rows": metadata_rows,
+        },
+    }
+
+
 def _read_excel(path: Path, sheet_name: str | None, nrows: int | None) -> pd.DataFrame:
     normalized_sheet = (sheet_name or "").strip()
     if normalized_sheet:
@@ -240,8 +313,204 @@ def _read_excel(path: Path, sheet_name: str | None, nrows: int | None) -> pd.Dat
 
 
 def _read_delimited_auto(path: Path, nrows: int | None) -> pd.DataFrame:
-    # Wireshark exports are commonly tab-delimited even with .csv extension.
+    frame = _read_pm_export_format(path, nrows=nrows)
+    if frame is not None:
+        return frame
+
     return pd.read_csv(path, nrows=nrows, sep=None, engine="python")
+
+
+def _read_pm_export_format(path: Path, nrows: int | None) -> pd.DataFrame | None:
+    try:
+        raw_frame = pd.read_csv(path, dtype=str, na_filter=False, header=None, sep=None, engine="python")
+        if raw_frame.empty or len(raw_frame.columns) == 0:
+            return None
+        if not _has_structured_table_markers(raw_frame):
+            return None
+        section = _extract_structured_table_section(raw_frame)
+        if section is None or section.empty:
+            return None
+        if nrows is not None and len(section) > nrows:
+            section = section.iloc[:nrows].reset_index(drop=True)
+        # Return result with correct columns even if empty (for nrows=0 case)
+        return section
+    except Exception:
+        return None
+
+
+def _extract_structured_table_section(raw_frame: pd.DataFrame) -> pd.DataFrame | None:
+    candidates: list[tuple[int, pd.DataFrame]] = []
+    row_count = len(raw_frame.index)
+    if row_count < 2:
+        return None
+
+    for idx in range(row_count - 1):
+        header_idx: int | None = None
+        row_values = _row_values(raw_frame.iloc[idx])
+        next_values = _row_values(raw_frame.iloc[idx + 1])
+        if _is_oid_row(row_values) and _looks_like_table_header(next_values):
+            header_idx = idx + 1
+        elif _looks_like_table_header(row_values) and _looks_like_data_row(next_values, row_values):
+            header_idx = idx
+        if header_idx is None:
+            continue
+
+        header_values = _sanitize_header_values(raw_frame.iloc[header_idx])
+        if len(header_values) < 2:
+            continue
+
+        data_rows: list[list[str]] = []
+        for data_idx in range(header_idx + 1, row_count):
+            values = _row_values(raw_frame.iloc[data_idx])
+            if _is_blank_row(values):
+                if data_rows:
+                    break
+                continue
+            if _is_metadata_like_row(values):
+                if data_rows:
+                    break
+                continue
+            if _is_oid_row(values):
+                if data_rows:
+                    break
+                continue
+            if _looks_like_table_header(values):
+                if data_rows:
+                    break
+                continue
+            data_rows.append(values[: len(header_values)] + [""] * max(0, len(header_values) - len(values)))
+
+        if not data_rows:
+            continue
+
+        section = pd.DataFrame(data_rows, columns=header_values)
+        section = _remove_empty_rows(section)
+        section = _remove_duplicate_header_rows(section)
+        section = _remove_metadata_rows(section)
+        if section.empty:
+            continue
+        score = (len(header_values) * 1000) + len(section.index)
+        candidates.append((score, section.reset_index(drop=True)))
+
+    if not candidates:
+        return None
+    # Merge candidates that share the same column headers (same table
+    # repeated across measurement intervals in PM CSV-ES exports).
+    merged: dict[tuple[str, ...], list[pd.DataFrame]] = {}
+    for _score, section in candidates:
+        key = tuple(section.columns)
+        merged.setdefault(key, []).append(section)
+    combined: list[tuple[int, pd.DataFrame]] = []
+    for cols_key, frames in merged.items():
+        df = pd.concat(frames, ignore_index=True) if len(frames) > 1 else frames[0]
+        score = (len(cols_key) * 1000) + len(df.index)
+        combined.append((score, df))
+    combined.sort(key=lambda item: item[0], reverse=True)
+    return combined[0][1]
+
+
+def _row_values(row: pd.Series) -> list[str]:
+    return [str(value).strip() if pd.notna(value) else "" for value in row.tolist()]
+
+
+def _is_blank_row(values: list[str]) -> bool:
+    return not any(values)
+
+
+def _is_metadata_like_row(values: list[str]) -> bool:
+    first_value = next((value for value in values if value), "")
+    if not first_value:
+        return False
+    return any(first_value.startswith(pattern) for pattern in _METADATA_PREFIXES)
+
+
+def _is_oid_token(value: str) -> bool:
+    if not value or "." not in value or not value[0].isdigit():
+        return False
+    parts = [part for part in value.split(".") if part]
+    return bool(parts) and all(part.isdigit() for part in parts)
+
+
+def _is_oid_row(values: list[str]) -> bool:
+    nonempty = [value for value in values if value]
+    if len(nonempty) < 2:
+        return False
+    dotted_oid_count = sum(1 for value in nonempty if _is_oid_token(value))
+    if dotted_oid_count >= max(1, len(nonempty) // 4):
+        return True
+    integer_tokens = [int(value) for value in nonempty if re.fullmatch(r"\d+", value)]
+    if len(integer_tokens) != len(nonempty):
+        return False
+    return integer_tokens == sorted(integer_tokens) and max(integer_tokens, default=0) <= max(10, len(integer_tokens) * 3)
+
+
+def _looks_like_table_header(values: list[str]) -> bool:
+    nonempty = [value for value in values if value]
+    if len(nonempty) < 2 or _is_metadata_like_row(values) or _is_oid_row(values):
+        return False
+    identifier_like = 0
+    for value in nonempty:
+        if _is_oid_token(value) or re.fullmatch(r"[+-]?\d+(\.\d+)?([Ee][+-]?\d+)?", value):
+            continue
+        if any(char.isalpha() for char in value):
+            identifier_like += 1
+    return identifier_like >= max(2, min(6, max(2, len(nonempty) // 2)))
+
+
+def _looks_like_data_row(values: list[str], header_values: list[str]) -> bool:
+    nonempty = [value for value in values if value]
+    if not nonempty or _is_metadata_like_row(values):
+        return False
+    normalized_header = {value.strip().lower() for value in header_values if value.strip()}
+    overlap = sum(1 for value in nonempty if value.strip().lower() in normalized_header)
+    return overlap < max(1, len(nonempty) // 2)
+
+
+def _sanitize_header_values(row: pd.Series) -> list[str]:
+    values = _row_values(row)
+    last_nonempty = max((idx for idx, value in enumerate(values) if value), default=-1)
+    if last_nonempty < 0:
+        return []
+
+    headers: list[str] = []
+    seen: dict[str, int] = {}
+    for idx, value in enumerate(values[: last_nonempty + 1]):
+        base_name = value or f"Unnamed: {idx}"
+        suffix = seen.get(base_name, 0)
+        seen[base_name] = suffix + 1
+        headers.append(base_name if suffix == 0 else f"{base_name}.{suffix}")
+    return headers
+
+
+def _has_structured_table_markers(raw_frame: pd.DataFrame) -> bool:
+    sample_size = min(len(raw_frame.index), 40)
+    saw_metadata = False
+    saw_oid_row = False
+    for idx in range(sample_size):
+        values = _row_values(raw_frame.iloc[idx])
+        if _is_metadata_like_row(values):
+            saw_metadata = True
+        if _is_oid_row(values):
+            saw_oid_row = True
+        if saw_metadata and saw_oid_row:
+            return True
+    return False
+
+
+def _remove_empty_rows(frame: pd.DataFrame) -> pd.DataFrame:
+    if frame.empty:
+        return frame
+
+    mask = frame.astype(str).apply(lambda row: not all(str(v).strip() == "" for v in row), axis=1)
+    return frame[mask].reset_index(drop=True)
+
+
+def _remove_metadata_rows_by_pattern(frame: pd.DataFrame) -> pd.DataFrame:
+    if frame.empty or len(frame.columns) == 0:
+        return frame
+
+    mask = ~_metadata_row_mask(frame)
+    return frame[mask].reset_index(drop=True)
 
 
 def _read_pcap(path: Path, nrows: int | None) -> pd.DataFrame:
@@ -379,11 +648,35 @@ def _tshark_field_catalog(tshark_exe: str) -> set[str]:
     return fields
 
 
+def _remove_duplicate_header_rows(frame: pd.DataFrame) -> pd.DataFrame:
+    if frame.empty:
+        return frame
+
+    mask = ~frame.apply(lambda row: _matches_header_row(row, frame.columns), axis=1)
+    return frame[mask].reset_index(drop=True)
+
+
+def _remove_metadata_rows(frame: pd.DataFrame) -> pd.DataFrame:
+    if frame.empty or len(frame.columns) == 0:
+        return frame
+
+    mask = ~_metadata_row_mask(frame)
+    return frame[mask].reset_index(drop=True)
+
+
 def _normalize_wireshark_export_frame(frame: pd.DataFrame) -> pd.DataFrame:
     if frame.empty and not list(frame.columns):
         return frame
 
+    frame = _remove_duplicate_header_rows(frame)
+    frame = _remove_metadata_rows(frame)
+
     cols = {str(c).strip().lower(): c for c in frame.columns}
+    wireshark_alias_hits = sum(1 for name in ("time", "length", "source", "destination", "protocol", "info", "no.", "no") if name in cols)
+    canonical_hits = sum(1 for name in ("frame_time_epoch", "frame_len", "src_ip", "dst_ip", "transport") if name in frame.columns)
+    if wireshark_alias_hits < 3 and canonical_hits < 3:
+        return frame
+
     alias_map = {
         "time": "frame_time_epoch",
         "length": "frame_len",
@@ -403,7 +696,6 @@ def _normalize_wireshark_export_frame(frame: pd.DataFrame) -> pd.DataFrame:
     if rename_map:
         frame = frame.rename(columns=rename_map)
 
-    # If this is not a Wireshark-export-like table, keep original frame unchanged.
     expected_hit = sum(1 for name in ("frame_time_epoch", "frame_len", "src_ip", "dst_ip", "transport") if name in frame.columns)
     if expected_hit < 3:
         return frame
@@ -461,3 +753,70 @@ def validate_required_columns(df: pd.DataFrame, required_columns: list[str]) -> 
     missing = [col for col in required_columns if col not in df.columns]
     if missing:
         raise ValueError(f"Missing required columns: {missing}")
+
+
+_METADATA_PREFIXES = (
+    "Table Name",
+    "Interval State",
+    "Version",
+    "Device ID",
+    "Device ",
+    "Entry OID",
+    "Date And Time",
+    "System Uptime",
+)
+
+_NUMERIC_COLUMN_HINT = re.compile(
+    r"(count|delay|loss|rate|packet|pkt|byte|octet|speed|latency|jitter|sum|avg|average|max|min|second|error|ratio|score|util|throughput|duration)",
+    flags=re.IGNORECASE,
+)
+
+
+def _matches_header_row(row: pd.Series, columns: Any) -> bool:
+    row_values = [str(value).strip() if pd.notna(value) else "" for value in row]
+    header_values = [str(value).strip() for value in columns]
+    return row_values == header_values
+
+
+def _metadata_row_mask(frame: pd.DataFrame) -> pd.Series:
+    if frame.empty or len(frame.columns) == 0:
+        return pd.Series(dtype=bool)
+    first_col = frame.iloc[:, 0]
+    return first_col.apply(
+        lambda value: any(
+            str(value).strip().startswith(prefix) for prefix in _METADATA_PREFIXES if str(value).strip()
+        )
+    )
+
+
+def _count_duplicate_header_rows(frame: pd.DataFrame) -> int:
+    if frame.empty:
+        return 0
+    return int(frame.apply(lambda row: _matches_header_row(row, frame.columns), axis=1).sum())
+
+
+def _count_metadata_rows(frame: pd.DataFrame) -> int:
+    if frame.empty or len(frame.columns) == 0:
+        return 0
+    return int(_metadata_row_mask(frame).sum())
+
+
+def _find_suspicious_numeric_columns(frame: pd.DataFrame) -> list[tuple[str, int]]:
+    suspicious: list[tuple[str, int]] = []
+    if frame.empty:
+        return suspicious
+
+    for column in frame.columns:
+        column_name = str(column).strip()
+        if not _NUMERIC_COLUMN_HINT.search(column_name):
+            continue
+        series = frame[column].fillna("").astype(str).str.strip()
+        nonempty = series[series != ""]
+        if len(nonempty.index) < 3:
+            continue
+        numeric = pd.to_numeric(nonempty, errors="coerce")
+        numeric_ratio = int(round((numeric.notna().sum() / len(nonempty.index)) * 100))
+        if numeric_ratio < 60:
+            suspicious.append((column_name, numeric_ratio))
+    suspicious.sort(key=lambda item: item[1])
+    return suspicious

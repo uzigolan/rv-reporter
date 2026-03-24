@@ -1,0 +1,1385 @@
+{% extends "layout.html" %}
+{% block title %}Logic | RV Reporter{% endblock %}
+{% block head %}
+<style>
+  .logic-tabs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: .4rem;
+    margin: 0 0 .5rem;
+  }
+  .logic-tab {
+    border: 1px solid #cbd5e1;
+    background: #f8fafc;
+    color: #334155;
+    padding: .4rem .7rem;
+    border-radius: 999px;
+    font: inherit;
+    font-size: .82rem;
+    font-weight: 700;
+    cursor: pointer;
+    transition: background .18s ease, border-color .18s ease, color .18s ease;
+  }
+  .logic-tab:hover {
+    background: #eef6ff;
+    border-color: #93c5fd;
+    color: #0f172a;
+  }
+  .logic-tab[aria-selected="true"] {
+    background: #111827;
+    color: #fff;
+    border-color: #111827;
+    box-shadow: 0 10px 24px rgba(15, 23, 42, 0.18);
+  }
+  .logic-panel[hidden] {
+    display: none;
+  }
+  .logic-canvas {
+    position: relative;
+    border: 1px solid #d6d9df;
+    border-radius: 28px;
+    background:
+      linear-gradient(180deg, rgba(244, 244, 245, 0.92), rgba(239, 239, 240, 0.96)),
+      linear-gradient(90deg, rgba(255,255,255,0.3) 1px, transparent 1px),
+      linear-gradient(rgba(255,255,255,0.3) 1px, transparent 1px);
+    background-size: auto, 36px 36px, 36px 36px;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.8);
+  }
+  .logic-canvas-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: .9rem 1rem .8rem;
+    gap: .8rem;
+    flex-wrap: wrap;
+  }
+  .logic-canvas-actions,
+  .logic-canvas-modes,
+  .logic-canvas-zoom {
+    display: flex;
+    gap: .55rem;
+    align-items: center;
+  }
+  .logic-round-btn,
+  .logic-mode-pill,
+  .logic-publish-pill {
+    border: 1px solid rgba(15, 23, 42, 0.08);
+    background: rgba(255, 255, 255, 0.78);
+    color: #111827;
+    border-radius: 999px;
+    font: inherit;
+    font-weight: 700;
+  }
+  .logic-round-btn {
+    width: 38px;
+    height: 38px;
+    display: inline-grid;
+    place-items: center;
+    opacity: .72;
+  }
+  .logic-mode-pill,
+  .logic-publish-pill {
+    padding: .55rem .9rem;
+  }
+  .logic-mode-pill.is-muted {
+    color: #6b7280;
+  }
+  .logic-publish-pill {
+    background: #f3f4f6;
+    color: #374151;
+    border-color: #e5e7eb;
+  }
+  .logic-zoom-btn {
+    border: 1px solid rgba(15, 23, 42, 0.12);
+    background: rgba(255, 255, 255, 0.84);
+    color: #111827;
+    border-radius: 999px;
+    min-width: 38px;
+    height: 38px;
+    padding: 0 .9rem;
+    font: inherit;
+    font-weight: 800;
+    cursor: pointer;
+  }
+  .logic-zoom-label {
+    min-width: 60px;
+    text-align: center;
+    font-size: .82rem;
+    font-weight: 700;
+    color: #475569;
+  }
+  .logic-workbench {
+    display: flex;
+    gap: 1rem;
+    align-items: flex-start;
+  }
+  .logic-workbench .logic-canvas {
+    flex: 1;
+    min-width: 0;
+  }
+  .logic-canvas-viewport {
+    position: relative;
+    margin: 0 1rem 1rem;
+    height: 760px;
+    overflow: auto;
+    border: 1px solid rgba(148, 163, 184, 0.28);
+    border-radius: 24px;
+    background: rgba(255, 255, 255, 0.2);
+    scroll-behavior: smooth;
+  }
+  .logic-zoom-stage {
+    position: relative;
+    min-width: 1480px;
+    min-height: 900px;
+  }
+  .logic-zoom-surface {
+    position: relative;
+    width: 1480px;
+    height: 900px;
+    transform-origin: top left;
+  }
+  .logic-node-layer {
+    position: relative;
+    height: 620px;
+    margin-top: 68px;
+  }
+  .logic-node,
+  .logic-node-start,
+  .logic-node-end {
+    position: absolute;
+    border: 1px solid #d7dce4;
+    background: rgba(255,255,255,0.94);
+    border-radius: 24px;
+    box-shadow: 0 14px 30px rgba(15, 23, 42, 0.08);
+    transition: border-color .25s, box-shadow .25s, transform .2s;
+  }
+  .logic-node:hover,
+  .logic-node-start:hover,
+  .logic-node-end:hover,
+  .logic-condition:hover,
+  .logic-approval:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 18px 38px rgba(15, 23, 42, 0.14);
+  }
+  .logic-node {
+    display: flex;
+    align-items: center;
+    gap: .85rem;
+    padding: .9rem 1rem;
+    min-width: 184px;
+  }
+  .logic-node button,
+  .logic-node-start button,
+  .logic-node-end button,
+  .logic-condition button {
+    all: unset;
+    display: flex;
+    align-items: center;
+    gap: .85rem;
+    width: 100%;
+    cursor: pointer;
+  }
+  .logic-node.is-active,
+  .logic-node-start.is-active,
+  .logic-node-end.is-active,
+  .logic-condition.is-active,
+  .logic-approval.is-active {
+    border-color: #9db7ff;
+    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.14), 0 16px 34px rgba(15, 23, 42, 0.12);
+  }
+  /* Type-specific accent borders */
+  .logic-node-start { border-left: 4px solid #22c55e; }
+  .logic-node-end   { border-left: 4px solid #0f766e; }
+  .logic-node-guard,
+  .logic-node-return,
+  .logic-node-info   { border-left: 4px solid #f59e0b; }
+  .logic-node-classify,
+  .logic-node-retain  { border-left: 4px solid #6366f1; }
+  .logic-condition    { border-left: 4px solid #f59e0b; }
+  .logic-approval     { border-left: 4px solid #a855f7; }
+  /* Flow-through highlight animation */
+  @keyframes node-pulse {
+    0%   { box-shadow: 0 0 0 0 rgba(59,130,246,0.35); }
+    70%  { box-shadow: 0 0 0 12px rgba(59,130,246,0); }
+    100% { box-shadow: 0 0 0 0 rgba(59,130,246,0); }
+  }
+  .logic-node.is-flowing,
+  .logic-node-start.is-flowing,
+  .logic-node-end.is-flowing,
+  .logic-condition.is-flowing,
+  .logic-approval.is-flowing {
+    animation: node-pulse .7s ease-out;
+    border-color: #3b82f6;
+  }
+  /* SVG connector overlay */
+  .logic-svg-connectors {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    z-index: 1;
+    overflow: visible;
+  }
+  .logic-svg-connectors path.connector-line {
+    fill: none;
+    stroke: #c7cdd6;
+    stroke-width: 2.5;
+    stroke-linecap: round;
+  }
+  .logic-svg-connectors path.connector-flow {
+    fill: none;
+    stroke: #3b82f6;
+    stroke-width: 3;
+    stroke-linecap: round;
+    stroke-dasharray: 8 14;
+    stroke-dashoffset: 0;
+    animation: dash-flow 1.2s linear infinite;
+    opacity: 0.7;
+  }
+  @keyframes dash-flow {
+    to { stroke-dashoffset: -22; }
+  }
+  .logic-svg-connectors .connector-arrow {
+    fill: #94a3b8;
+  }
+  /* Ensure nodes sit above the SVG layer */
+  [data-pane] {
+    z-index: 2;
+  }
+  .logic-node-start,
+  .logic-node-end {
+    padding: .5rem .7rem;
+    width: auto;
+    min-width: 0;
+    max-width: 100px;
+  }
+  .logic-node-start button,
+  .logic-node-end button {
+    gap: .45rem;
+  }
+  .logic-node-start .logic-node-icon,
+  .logic-node-end .logic-node-icon {
+    width: 26px;
+    height: 26px;
+    border-radius: 8px;
+    font-size: .75rem;
+  }
+  .logic-node-start .logic-node-title,
+  .logic-node-end .logic-node-title {
+    font-size: .78rem;
+  }
+  .logic-node-icon {
+    width: 34px;
+    height: 34px;
+    border-radius: 12px;
+    display: grid;
+    place-items: center;
+    font-size: .9rem;
+    font-weight: 800;
+    flex: 0 0 auto;
+  }
+  .logic-node-icon.agent { background: #eef2ff; color: #4f46e5; }
+  .logic-node-icon.guard { background: #fef3c7; color: #b45309; }
+  .logic-node-icon.start { background: #dcfce7; color: #15803d; }
+  .logic-node-icon.end { background: #d1fae5; color: #0f766e; }
+  .logic-node-copy {
+    min-width: 0;
+  }
+  .logic-node-title {
+    font-weight: 800;
+    color: #111827;
+    line-height: 1.2;
+  }
+  .logic-node-sub {
+    color: #6b7280;
+    font-size: .82rem;
+    margin-top: .18rem;
+  }
+  .logic-node-start { top: 240px; left: 28px; width: 90px; }
+  .logic-node-guard { top: 188px; left: 150px; width: 160px; }
+  .logic-node-classify { top: 222px; left: 374px; width: 188px; }
+  .logic-node-end-left { top: 308px; left: 420px; width: 80px; }
+  .logic-condition {
+    position: absolute;
+    top: 136px;
+    left: 648px;
+    width: 260px;
+    padding: .78rem;
+    border-radius: 24px;
+    border: 1px solid #dadde3;
+    background: rgba(255,255,255,0.94);
+    box-shadow: 0 16px 34px rgba(15, 23, 42, 0.08);
+  }
+  .logic-condition-head {
+    display: flex;
+    align-items: center;
+    gap: .7rem;
+    margin-bottom: .6rem;
+  }
+  .logic-condition-body {
+    display: grid;
+    gap: .45rem;
+  }
+  .logic-rule {
+    padding: .7rem .75rem;
+    border-radius: 14px;
+    background: #f8fafc;
+    color: #64748b;
+    font-size: .82rem;
+    line-height: 1.35;
+  }
+  .logic-rule.is-else {
+    text-align: right;
+    padding: .55rem .75rem;
+  }
+  .logic-node-return { top: 178px; left: 978px; width: 138px; }
+  .logic-node-retain { top: 238px; left: 978px; width: 138px; }
+  .logic-node-info { top: 298px; left: 978px; width: 138px; }
+  .logic-node-end-right { top: 364px; left: 1240px; width: 80px; }
+  .logic-approval {
+    position: absolute;
+    top: 118px;
+    left: 1198px;
+    width: 164px;
+    padding: .85rem;
+    border-radius: 24px;
+    border: 1px solid #e5e7eb;
+    background: rgba(255,255,255,0.94);
+    box-shadow: 0 16px 34px rgba(15, 23, 42, 0.08);
+  }
+  .logic-approval-head {
+    display: flex;
+    gap: .7rem;
+    margin-bottom: .65rem;
+  }
+  .logic-approval-choice {
+    padding: .62rem .78rem;
+    border-radius: 14px;
+    background: #f5f5f5;
+    color: #52525b;
+    font-weight: 700;
+    margin-top: .45rem;
+    text-align: center;
+  }
+  .logic-select-hint {
+    margin: .9rem 1rem 1rem;
+    color: #6b7280;
+    font-size: .84rem;
+  }
+  [data-pane] {
+    cursor: grab;
+    user-select: none;
+  }
+  [data-pane].is-dragging {
+    cursor: grabbing;
+    z-index: 10;
+    opacity: 0.88;
+  }
+  .logic-summary-panel {
+    flex: 0 0 360px;
+    width: 360px;
+    display: none;
+    flex-direction: column;
+    border: 1px solid #d8dde6;
+    border-radius: 24px;
+    background: rgba(255,255,255,0.96);
+    box-shadow: 0 18px 40px rgba(15, 23, 42, 0.12);
+    overflow: hidden;
+    position: sticky;
+    top: 16px;
+    align-self: flex-start;
+    max-height: 90vh;
+  }
+  .logic-summary-panel.is-visible {
+    display: flex;
+    flex-direction: column;
+  }
+  .logic-summary-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: .9rem 1rem;
+    color: #6b7280;
+    font-size: .82rem;
+  }
+  .logic-summary-title {
+    font-weight: 800;
+    color: #111827;
+  }
+  .logic-summary-actions {
+    display: flex;
+    gap: .5rem;
+    align-items: center;
+  }
+  .logic-summary-toggle,
+  .logic-summary-close {
+    border: 1px solid #e5e7eb;
+    background: #f9fafb;
+    color: #374151;
+    border-radius: 999px;
+    font: inherit;
+    font-size: .8rem;
+    font-weight: 700;
+    padding: .42rem .7rem;
+    cursor: pointer;
+  }
+  .logic-summary-close {
+    width: 34px;
+    height: 34px;
+    padding: 0;
+  }
+  .logic-inspector-body {
+    padding: .75rem 1rem 1rem;
+    max-height: calc(90vh - 80px);
+    overflow: auto;
+    flex: 1;
+  }
+  .logic-inspector-pane {
+    display: none;
+  }
+  .logic-inspector-pane.is-active {
+    display: block;
+  }
+  .logic-pane-title {
+    font-family: "Space Grotesk", "Segoe UI", sans-serif;
+    font-size: 1.55rem;
+    margin: 0 0 .2rem;
+  }
+  .logic-pane-subtitle {
+    color: #71717a;
+    margin-bottom: 1rem;
+  }
+  .logic-field {
+    margin-bottom: .9rem;
+  }
+  .logic-field-label {
+    font-size: .88rem;
+    font-weight: 700;
+    color: #27272a;
+    margin-bottom: .4rem;
+  }
+  .logic-field-box {
+    border: 1px solid #e4e4e7;
+    background: #f5f5f5;
+    border-radius: 12px;
+    padding: .8rem .85rem;
+    color: #27272a;
+    line-height: 1.45;
+  }
+  .logic-param-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    color: #71717a;
+    font-size: .88rem;
+    margin-top: .55rem;
+  }
+  .logic-slider {
+    height: 4px;
+    margin-top: .35rem;
+    border-radius: 999px;
+    background: linear-gradient(90deg, #52525b 0%, #52525b 58%, #d4d4d8 58%, #d4d4d8 100%);
+  }
+  .logic-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: .35rem;
+    margin-top: .35rem;
+    padding: .3rem .55rem;
+    border-radius: 999px;
+    background: #f4f4f5;
+    color: #52525b;
+    font-size: .8rem;
+    font-weight: 700;
+  }
+  .logic-toggle-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: .55rem 0;
+    border-top: 1px solid #f0f0f2;
+    color: #27272a;
+  }
+  .logic-toggle {
+    width: 42px;
+    height: 24px;
+    border-radius: 999px;
+    background: #111827;
+    position: relative;
+  }
+  .logic-toggle::after {
+    content: "";
+    position: absolute;
+    right: 3px;
+    top: 3px;
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    background: #fff;
+  }
+  .logic-chip-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: .45rem;
+  }
+  .logic-chip {
+    display: inline-flex;
+    align-items: center;
+    padding: .3rem .55rem;
+    border-radius: 999px;
+    background: #eff6ff;
+    color: #1d4ed8;
+    font-size: .77rem;
+    font-weight: 700;
+  }
+  .logic-svg-wrap {
+    margin-top: 1rem;
+    border: 1px solid #dbe5f0;
+    border-radius: 24px;
+    background:
+      linear-gradient(180deg, rgba(248, 250, 252, 0.95), rgba(255, 255, 255, 0.98)),
+      radial-gradient(circle at top left, rgba(14, 165, 233, 0.08), transparent 36%);
+    padding: 1rem;
+    overflow-x: auto;
+  }
+  .logic-svg {
+    display: block;
+    width: 100%;
+    min-width: 980px;
+    height: auto;
+  }
+  .logic-list {
+    margin: .2rem 0 0;
+    padding-left: 1.1rem;
+    color: #475569;
+  }
+  .logic-runtime-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: .9rem;
+    margin-top: 1rem;
+  }
+  .logic-runtime-card {
+    border: 1px solid #e4e4e7;
+    border-radius: 20px;
+    background: #fff;
+    padding: 1rem;
+    box-shadow: 0 14px 30px rgba(15, 23, 42, 0.05);
+  }
+  .logic-runtime-step {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    margin-bottom: .65rem;
+    border-radius: 999px;
+    background: #111827;
+    color: #fff;
+    font-size: .78rem;
+    font-weight: 800;
+  }
+  .logic-lifecycle-track {
+    display: grid;
+    gap: .85rem;
+    margin-top: 1rem;
+  }
+  .logic-lifecycle-item {
+    display: grid;
+    grid-template-columns: 96px 1fr;
+    gap: 1rem;
+    align-items: start;
+    padding: 1rem;
+    border: 1px solid #e4e4e7;
+    border-radius: 20px;
+    background: #fff;
+  }
+  .logic-lifecycle-state {
+    display: inline-flex;
+    justify-content: center;
+    padding: .42rem .6rem;
+    border-radius: 999px;
+    background: #f3f4f6;
+    font-size: .8rem;
+    font-weight: 800;
+  }
+  .logic-lifecycle-state.is-active { background: #dcfce7; color: #166534; }
+  .logic-lifecycle-state.is-planned { background: #fef3c7; color: #92400e; }
+  .logic-lifecycle-state.is-draft { background: #e0e7ff; color: #3730a3; }
+  @media (max-width: 760px) {
+    .logic-tabs {
+      flex-direction: column;
+    }
+    .logic-tab {
+      width: 100%;
+      text-align: left;
+    }
+  }
+  @media (max-width: 900px) {
+    .logic-canvas-viewport {
+      height: 620px;
+    }
+    .logic-workbench {
+      flex-direction: column;
+    }
+    .logic-summary-panel {
+      position: static;
+      width: 100%;
+      flex: none;
+      max-height: 60vh;
+    }
+  }
+</style>
+{% endblock %}
+{% block content %}
+<section class="panel" style="padding-top:.6rem;">
+  <div class="logic-tabs" role="tablist" aria-label="RV Reporter logic tabs">
+    <button class="logic-tab" type="button" role="tab" id="tab-new-type" aria-controls="panel-new-type" aria-selected="true">New Type</button>
+    <button class="logic-tab" type="button" role="tab" id="tab-generate" aria-controls="panel-generate" aria-selected="false">Generate</button>
+    <button class="logic-tab" type="button" role="tab" id="tab-lifecycle" aria-controls="panel-lifecycle" aria-selected="false">Lifecycle</button>
+  </div>
+
+  <section class="logic-panel" role="tabpanel" id="panel-new-type" aria-labelledby="tab-new-type">
+    <div class="logic-workbench">
+      <div class="logic-canvas" aria-label="New Type flow canvas">
+        <div class="logic-canvas-toolbar">
+          <div class="logic-canvas-actions">
+            <span class="logic-round-btn">◌</span>
+            <span class="logic-round-btn">◁</span>
+          </div>
+          <div class="logic-canvas-modes">
+            <span class="logic-mode-pill is-muted">Overview</span>
+            <span class="logic-mode-pill">Blueprint</span>
+            <span class="logic-publish-pill">Workflow map</span>
+          </div>
+          <div class="logic-canvas-zoom" aria-label="Canvas zoom controls">
+            <button type="button" class="logic-zoom-btn" id="logic-zoom-out" aria-label="Zoom out">−</button>
+            <span class="logic-zoom-label" id="logic-zoom-label">100%</span>
+            <button type="button" class="logic-zoom-btn" id="logic-zoom-in" aria-label="Zoom in">+</button>
+            <button type="button" class="logic-zoom-btn" id="logic-zoom-reset">Reset</button>
+            <span style="width:1px;height:18px;background:#d7dce4;margin:0 2px;"></span>
+            <button type="button" class="logic-zoom-btn" id="logic-replay-btn" title="Replay flow animation">▶ Replay</button>
+          </div>
+        </div>
+
+        <div class="logic-canvas-viewport" id="logic-canvas-viewport">
+          <div class="logic-zoom-stage" id="logic-zoom-stage">
+            <div class="logic-zoom-surface" id="logic-zoom-surface">
+              <div class="logic-inspector-body" id="logic-inspector-body" style="display:none;" aria-hidden="true">
+                  <section class="logic-inspector-pane" id="pane-start">
+                    <h3 class="logic-pane-title">Start</h3>
+                    <p class="logic-pane-subtitle">Entry point for the New Type workflow map.</p>
+                    <div class="logic-field">
+                      <div class="logic-field-label">Trigger</div>
+                      <div class="logic-field-box">User submits the New Type form — with or without a source file attached.</div>
+                    </div>
+                    <div class="logic-field">
+                      <div class="logic-field-label">Input</div>
+                      <div class="logic-field-box">HTTP POST to <code>/report-types/new</code>. Optional file upload, prompt text, domain / family / mode hints.</div>
+                    </div>
+                    <div class="logic-chip-row">
+                      <span class="logic-chip" style="background:#f0fdf4;color:#15803d;">Entry point</span>
+                      <span class="logic-chip" style="background:#f1f5f9;color:#475569;">Not an agent</span>
+                    </div>
+                  </section>
+
+                  <section class="logic-inspector-pane" id="pane-guardrail">
+                    <h3 class="logic-pane-title">Sample guardrail</h3>
+                    <p class="logic-pane-subtitle">Rule-based preflight checks on the uploaded source file.</p>
+                    <div class="logic-field">
+                      <div class="logic-field-label">Type</div>
+                      <div class="logic-field-box">Code — no AI. Calls <code>preflight_tabular_source()</code> in <code>services/ingest.py</code>.</div>
+                    </div>
+                    <div class="logic-field">
+                      <div class="logic-field-label">Trigger</div>
+                      <div class="logic-field-box">Runs immediately after Start when a source file is present. Skipped if no file was attached.</div>
+                    </div>
+                    <div class="logic-field">
+                      <div class="logic-field-label">Checks</div>
+                      <div class="logic-field-box">File parses cleanly · has tabular structure · no repeated headers · no metadata leakage · non-zero row count</div>
+                    </div>
+                    <div class="logic-field">
+                      <div class="logic-field-label">Output</div>
+                      <div class="logic-field-box"><strong>Pass</strong> → continue to Classification agent. <strong>Fail</strong> → route to End (blocked) with issue list.</div>
+                    </div>
+                    <div class="logic-chip-row">
+                      <span class="logic-chip" style="background:#fef3c7;color:#b45309;">Code · no AI</span>
+                      <span class="logic-chip" style="background:#f1f5f9;color:#475569;">services/ingest.py</span>
+                    </div>
+                  </section>
+
+                  <section class="logic-inspector-pane" id="pane-classify">
+                    <h3 class="logic-pane-title">Classification agent</h3>
+                    <p class="logic-pane-subtitle">Determines the user's next action in the authoring journey.</p>
+                    <div class="logic-field">
+                      <div class="logic-field-label">Trigger</div>
+                      <div class="logic-field-box">After guardrail passes. Also re-runs when the user saves edits in the Review &amp; Edit step and re-submits.</div>
+                    </div>
+                    <div class="logic-field">
+                      <div class="logic-field-label">Output</div>
+                      <div class="logic-field-box">Returns an <code>intent</code> string: one of <code>upload_sample</code>, <code>write_prompt</code>, or <code>preview_and_review</code>.</div>
+                    </div>
+                    <div class="logic-chip-row">
+                      <span class="logic-chip" style="background:#eef2ff;color:#4338ca;">Agent</span>
+                      <span class="logic-chip" style="background:#eef2ff;color:#4338ca;">OpenAI Responses API</span>
+                    </div>
+                    <h4 style="font-size:.82rem;font-weight:700;color:#334155;margin:1rem 0 .5rem;">API call parameters</h4>
+                    <div class="logic-field">
+                      <div class="logic-field-label">Endpoint</div>
+                      <div class="logic-field-box"><code>client.responses.create()</code></div>
+                    </div>
+                    <div class="logic-field">
+                      <div class="logic-field-label">Model</div>
+                      <div class="logic-field-box"><code>gpt-4o</code> (default) · configurable via <code>REPORT_TYPE_AGENT_MODEL</code> env var</div>
+                    </div>
+                    <div class="logic-field">
+                      <div class="logic-field-label">Instructions (system)</div>
+                      <div class="logic-field-box" style="font-size:.78rem;line-height:1.45;">"You are drafting a new report type for a schema-first reporting system. Return a JSON object only. Choose family, domain, and mode from the allowed sets…"</div>
+                    </div>
+                    <div class="logic-field">
+                      <div class="logic-field-label">Input payload</div>
+                      <div class="logic-field-box" style="font-size:.78rem;"><code>{ prompt, clone_from, clone_yaml, existing_report_types, allowed_families, allowed_domains, allowed_modes, source_profile, classification_hints }</code></div>
+                    </div>
+                    <div class="logic-field">
+                      <div class="logic-field-label">Response format</div>
+                      <div class="logic-field-box"><code>json_schema</code> · schema name: <code>report_type_agent_draft</code> · strict: false</div>
+                    </div>
+                    <div class="logic-field">
+                      <div class="logic-field-label">Auth</div>
+                      <div class="logic-field-box"><code>OPENAI_API_KEY</code> env var (required)</div>
+                    </div>
+                  </section>
+
+                  <section class="logic-inspector-pane" id="pane-condition">
+                    <h3 class="logic-pane-title">Condition</h3>
+                    <p class="logic-pane-subtitle">Routes the flow based on the intent string from the Classification agent.</p>
+                    <div class="logic-field">
+                      <div class="logic-field-label">Type</div>
+                      <div class="logic-field-box">Code — Python switch on the <code>intent</code> field. No AI involved.</div>
+                    </div>
+                    <div class="logic-field">
+                      <div class="logic-field-label">Routing rules</div>
+                      <div class="logic-field-box">
+                        <code>upload_sample</code> → Sample Source<br>
+                        <code>write_prompt</code> → Prompt writer<br>
+                        <code>preview_and_review</code> → Review + preview<br>
+                        <em>Else</em> → End (blocked)
+                      </div>
+                    </div>
+                    <div class="logic-chip-row">
+                      <span class="logic-chip" style="background:#fef3c7;color:#b45309;">Code · routing</span>
+                      <span class="logic-chip" style="background:#f1f5f9;color:#475569;">Not an agent</span>
+                    </div>
+                  </section>
+
+                  <section class="logic-inspector-pane" id="pane-upload">
+                    <h3 class="logic-pane-title">Sample Source</h3>
+                    <p class="logic-pane-subtitle">Captures the example data file for the new report type.</p>
+                    <div class="logic-field">
+                      <div class="logic-field-label">Type</div>
+                      <div class="logic-field-box">Form handler (no AI) — saves the uploaded file to <code>uploads/</code> and stores the path in the session.</div>
+                    </div>
+                    <div class="logic-field">
+                      <div class="logic-field-label">Trigger</div>
+                      <div class="logic-field-box">Reached when <code>intent == "upload_sample"</code>. User attaches a CSV, Excel (.xlsx/.xls), or PCAP file.</div>
+                    </div>
+                    <div class="logic-field">
+                      <div class="logic-field-label">Output</div>
+                      <div class="logic-field-box">File path stored in session. Column list extracted via pandas. Form loops back to Classification agent for the next intent decision.</div>
+                    </div>
+                    <div class="logic-chip-row">
+                      <span class="logic-chip" style="background:#fef3c7;color:#b45309;">Code · file ingest</span>
+                      <span class="logic-chip" style="background:#f1f5f9;color:#475569;">Not an agent</span>
+                      <span class="logic-chip" style="background:#f0fdf4;color:#15803d;">CSV · Excel · PCAP</span>
+                    </div>
+                  </section>
+
+                  <section class="logic-inspector-pane" id="pane-prompt">
+                    <h3 class="logic-pane-title">Prompt writer</h3>
+                    <p class="logic-pane-subtitle">Generates the full report type YAML, plugin, and smoke tests via AI.</p>
+                    <div class="logic-field">
+                      <div class="logic-field-label">Trigger</div>
+                      <div class="logic-field-box">Reached when <code>intent == "write_prompt"</code>. Receives the prompt text plus the column profile from the sample source.</div>
+                    </div>
+                    <div class="logic-field">
+                      <div class="logic-field-label">Output</div>
+                      <div class="logic-field-box">Draft files written to <code>report_type_plugins/&lt;id&gt;/</code>: YAML config, <code>plugin.py</code>, <code>manifest.yaml</code>, and <code>test_smoke.py</code>. Redirects to Review &amp; Edit step.</div>
+                    </div>
+                    <div class="logic-chip-row">
+                      <span class="logic-chip" style="background:#eef2ff;color:#4338ca;">Agent</span>
+                      <span class="logic-chip" style="background:#eef2ff;color:#4338ca;">OpenAI Responses API</span>
+                      <span class="logic-chip" style="background:#f0fdf4;color:#15803d;">YAML · plugin · tests</span>
+                    </div>
+                    <h4 style="font-size:.82rem;font-weight:700;color:#334155;margin:1rem 0 .5rem;">API call parameters</h4>
+                    <div class="logic-field">
+                      <div class="logic-field-label">Endpoint</div>
+                      <div class="logic-field-box"><code>client.responses.create()</code></div>
+                    </div>
+                    <div class="logic-field">
+                      <div class="logic-field-label">Model</div>
+                      <div class="logic-field-box"><code>gpt-4o</code> (default) · configurable via <code>REPORT_TYPE_AGENT_MODEL</code> env var</div>
+                    </div>
+                    <div class="logic-field">
+                      <div class="logic-field-label">Instructions (system)</div>
+                      <div class="logic-field-box" style="font-size:.78rem;line-height:1.45;">"You are drafting a new report type… Choose family, domain, mode from allowed sets. Generate plugin.py with get_spec() and build(df, prefs, ctx). Generate smoke_test_code as a pytest file…"</div>
+                    </div>
+                    <div class="logic-field">
+                      <div class="logic-field-label">Input payload</div>
+                      <div class="logic-field-box" style="font-size:.78rem;"><code>{ prompt, clone_from, clone_yaml, existing_report_types, allowed_families, allowed_domains, allowed_modes, source_profile, classification_hints }</code></div>
+                    </div>
+                    <div class="logic-field">
+                      <div class="logic-field-label">Response format</div>
+                      <div class="logic-field-box"><code>json_schema</code> · schema name: <code>report_type_agent_draft</code> · strict: false</div>
+                    </div>
+                    <div class="logic-field">
+                      <div class="logic-field-label">Response schema fields</div>
+                      <div class="logic-field-box" style="font-size:.78rem;"><code>report_type_id</code>, <code>title</code>, <code>family</code>, <code>domain</code>, <code>mode</code>, <code>description</code>, <code>required_columns</code>, <code>default_prefs</code>, <code>prompt_instructions</code>, <code>plugin_code</code>, <code>smoke_test_code</code>, <code>manifest_extensions</code></div>
+                    </div>
+                    <div class="logic-field">
+                      <div class="logic-field-label">Auth</div>
+                      <div class="logic-field-box"><code>OPENAI_API_KEY</code> env var (required)</div>
+                    </div>
+                  </section>
+
+                  <section class="logic-inspector-pane" id="pane-review">
+                    <h3 class="logic-pane-title">Review + preview</h3>
+                    <p class="logic-pane-subtitle">Runs the full report pipeline against the sample source — no API cost.</p>
+                    <div class="logic-field">
+                      <div class="logic-field-label">Type</div>
+                      <div class="logic-field-box">Code — calls <code>run_pipeline()</code> with <code>MockProvider</code>. Deterministic local metrics. No AI callout.</div>
+                    </div>
+                    <div class="logic-field">
+                      <div class="logic-field-label">Model</div>
+                      <div class="logic-field-box"><strong>MockProvider</strong> (local) — uses the plugin's <code>build()</code> function directly. Zero token cost.</div>
+                    </div>
+                    <div class="logic-field">
+                      <div class="logic-field-label">Trigger</div>
+                      <div class="logic-field-box">Reached when <code>intent == "preview_and_review"</code>. The draft plugin files must already exist.</div>
+                    </div>
+                    <div class="logic-field">
+                      <div class="logic-field-label">Pipeline steps</div>
+                      <div class="logic-field-box">Ingest → Profile → Metrics (plugin) → MockProvider → Validate schema → Render HTML + JSON artifacts</div>
+                    </div>
+                    <div class="logic-chip-row">
+                      <span class="logic-chip" style="background:#fef3c7;color:#b45309;">Code · local pipeline</span>
+                      <span class="logic-chip" style="background:#f5f5f5;color:#52525b;">MockProvider</span>
+                      <span class="logic-chip" style="background:#f0fdf4;color:#15803d;">No AI cost</span>
+                    </div>
+                  </section>
+
+                  <section class="logic-inspector-pane" id="pane-approval">
+                    <h3 class="logic-pane-title">User approval</h3>
+                    <p class="logic-pane-subtitle">Human decision checkpoint after the preview report is shown.</p>
+                    <div class="logic-field">
+                      <div class="logic-field-label">Type</div>
+                      <div class="logic-field-box">Human decision — the user reviews the rendered HTML report and chooses to publish or iterate.</div>
+                    </div>
+                    <div class="logic-field">
+                      <div class="logic-field-label">Trigger</div>
+                      <div class="logic-field-box">After the preview report is rendered and the result page is shown.</div>
+                    </div>
+                    <div class="logic-field">
+                      <div class="logic-field-label">Approve path</div>
+                      <div class="logic-field-box">Click <strong>Publish Report Type</strong> → manifest set to <code>active</code> → type appears in Generate menu.</div>
+                    </div>
+                    <div class="logic-field">
+                      <div class="logic-field-label">Reject path</div>
+                      <div class="logic-field-box">Edit YAML / plugin in the Review &amp; Edit step → re-submit → flow loops back through the Condition block.</div>
+                    </div>
+                    <div class="logic-chip-row">
+                      <span class="logic-chip" style="background:#fdf4ff;color:#7e22ce;">Human</span>
+                      <span class="logic-chip" style="background:#f1f5f9;color:#475569;">Not an agent</span>
+                    </div>
+                  </section>
+
+                  <section class="logic-inspector-pane" id="pane-end-blocked">
+                    <h3 class="logic-pane-title">Blocked end</h3>
+                    <p class="logic-pane-subtitle">Early termination — source failed guardrail checks or condition had no matching branch.</p>
+                    <div class="logic-field">
+                      <div class="logic-field-label">Trigger</div>
+                      <div class="logic-field-box">Guardrail returns issues (unparseable file, missing columns, repeated headers) — or Condition receives an unrecognised intent value.</div>
+                    </div>
+                    <div class="logic-field">
+                      <div class="logic-field-label">Result</div>
+                      <div class="logic-field-box">Authoring flow terminates. User is shown the issue list and can fix the source file or adjust the prompt before resubmitting.</div>
+                    </div>
+                    <div class="logic-chip-row">
+                      <span class="logic-chip" style="background:#fef2f2;color:#b91c1c;">Terminal · blocked</span>
+                      <span class="logic-chip" style="background:#f1f5f9;color:#475569;">Not an agent</span>
+                    </div>
+                  </section>
+
+                  <section class="logic-inspector-pane" id="pane-end-published">
+                    <h3 class="logic-pane-title">Published end</h3>
+                    <p class="logic-pane-subtitle">Report type is now active and available in the Generate menu.</p>
+                    <div class="logic-field">
+                      <div class="logic-field-label">Trigger</div>
+                      <div class="logic-field-box">User clicks Publish Report Type on the Review &amp; Edit page. Smoke test runs automatically before activation.</div>
+                    </div>
+                    <div class="logic-field">
+                      <div class="logic-field-label">Result</div>
+                      <div class="logic-field-box">Manifest status set to <code>active</code>. Type is registered in plugin discovery. Future runs use the standard Generate path — this authoring canvas is no longer needed.</div>
+                    </div>
+                    <div class="logic-chip-row">
+                      <span class="logic-chip" style="background:#f0fdf4;color:#15803d;">Terminal · published</span>
+                      <span class="logic-chip" style="background:#f1f5f9;color:#475569;">Not an agent</span>
+                    </div>
+                  </section>
+                </div>
+
+              <div class="logic-node-layer">
+          <!-- SVG connector overlay (paths drawn by JS) -->
+          <svg class="logic-svg-connectors" id="logic-svg-connectors" xmlns="http://www.w3.org/2000/svg">
+            <defs>
+              <marker id="arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+                <polygon points="0 0, 8 3, 0 6" class="connector-arrow"/>
+              </marker>
+            </defs>
+          </svg>
+
+          <div class="logic-node-start logic-node-start is-active" data-pane="pane-start">
+            <button type="button">
+              <span class="logic-node-icon start">▶</span>
+              <span class="logic-node-copy">
+                <span class="logic-node-title">Start</span>
+              </span>
+            </button>
+          </div>
+
+          <div class="logic-node logic-node-guard" data-pane="pane-guardrail">
+            <button type="button">
+              <span class="logic-node-icon guard">◌</span>
+              <span class="logic-node-copy">
+                <span class="logic-node-title">Sample guardrail</span>
+                <span class="logic-node-sub">Pass or block</span>
+              </span>
+            </button>
+          </div>
+
+          <div class="logic-node logic-node-classify" data-pane="pane-classify">
+            <button type="button">
+              <span class="logic-node-icon agent">⌁</span>
+              <span class="logic-node-copy">
+                <span class="logic-node-title">Classification agent</span>
+                <span class="logic-node-sub">Agent · gpt-4o</span>
+              </span>
+            </button>
+          </div>
+
+          <div class="logic-node-end logic-node-end-left" data-pane="pane-end-blocked">
+            <button type="button">
+              <span class="logic-node-icon end">□</span>
+              <span class="logic-node-copy">
+                <span class="logic-node-title">End</span>
+              </span>
+            </button>
+          </div>
+
+          <div class="logic-condition" data-pane="pane-condition">
+            <button type="button">
+              <div style="width:100%;">
+                <div class="logic-condition-head">
+                  <span class="logic-node-icon guard">⇢</span>
+                  <span class="logic-node-title">Condition</span>
+                </div>
+                <div class="logic-condition-body">
+                  <div class="logic-rule">intent == "upload_sample"</div>
+                  <div class="logic-rule">intent == "write_prompt"</div>
+                  <div class="logic-rule">intent == "preview_and_review"</div>
+                  <div class="logic-rule is-else">Else</div>
+                </div>
+              </div>
+            </button>
+          </div>
+
+          <div class="logic-node logic-node-return" data-pane="pane-upload">
+            <button type="button">
+              <span class="logic-node-icon guard">↗</span>
+              <span class="logic-node-copy">
+                <span class="logic-node-title">Sample Source</span>
+                <span class="logic-node-sub">Code · file ingest</span>
+              </span>
+            </button>
+          </div>
+
+          <div class="logic-node logic-node-retain" data-pane="pane-prompt">
+            <button type="button">
+              <span class="logic-node-icon agent">↗</span>
+              <span class="logic-node-copy">
+                <span class="logic-node-title">Prompt writer</span>
+                <span class="logic-node-sub">Agent · gpt-4o</span>
+              </span>
+            </button>
+          </div>
+
+          <div class="logic-node logic-node-info" data-pane="pane-review">
+            <button type="button">
+              <span class="logic-node-icon guard">↗</span>
+              <span class="logic-node-copy">
+                <span class="logic-node-title">Review + preview</span>
+                <span class="logic-node-sub">Code · MockProvider</span>
+              </span>
+            </button>
+          </div>
+
+          <div class="logic-node-end logic-node-end-right" data-pane="pane-end-published">
+            <button type="button">
+              <span class="logic-node-icon end">□</span>
+              <span class="logic-node-copy">
+                <span class="logic-node-title">End</span>
+              </span>
+            </button>
+          </div>
+
+          <div class="logic-approval" data-pane="pane-approval">
+            <button type="button" style="all:unset; width:100%; display:block;">
+              <div class="logic-approval-head">
+                <span class="logic-node-icon guard">✣</span>
+                <div>
+                  <div class="logic-node-title">User approval</div>
+                  <div class="logic-node-sub">Does this preview work for you?</div>
+                </div>
+              </div>
+              <div class="logic-approval-choice">Approve</div>
+              <div class="logic-approval-choice">Reject</div>
+            </button>
+          </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <p class="logic-select-hint">Select any block to view its workflow summary.</p>
+      </div>
+      <aside class="logic-summary-panel" id="logic-summary-panel" aria-live="polite">
+        <div class="logic-summary-toolbar">
+          <div class="logic-summary-title" id="logic-summary-title">Workflow summary</div>
+          <div class="logic-summary-actions">
+            <button type="button" class="logic-summary-close" id="logic-summary-close" aria-label="Close summary">×</button>
+          </div>
+        </div>
+      </aside>
+    </div><!-- /.logic-workbench -->
+  </section>
+
+  <section class="logic-panel" role="tabpanel" id="panel-generate" aria-labelledby="tab-generate" hidden>
+    <div class="logic-runtime-grid">
+      <article class="logic-runtime-card"><span class="logic-runtime-step">1</span><h3>Resolve Source</h3><p>Use upload or existing source selection and normalize sheet/file details.</p></article>
+      <article class="logic-runtime-card"><span class="logic-runtime-step">2</span><h3>Preflight</h3><p>Block sources with missing required columns, repeated headers, or unsafe metadata leakage.</p></article>
+      <article class="logic-runtime-card"><span class="logic-runtime-step">3</span><h3>Compute</h3><p>Prepare pipeline inputs, profile rows, and compute report-specific metrics.</p></article>
+      <article class="logic-runtime-card"><span class="logic-runtime-step">4</span><h3>Render</h3><p>Generate structured output, validate schema, and write JSON, HTML, and PDF artifacts.</p></article>
+    </div>
+  </section>
+
+  <section class="logic-panel" role="tabpanel" id="panel-lifecycle" aria-labelledby="tab-lifecycle" hidden>
+    <div class="logic-lifecycle-track">
+      <article class="logic-lifecycle-item">
+        <div class="logic-lifecycle-state is-draft">Draft</div>
+        <div>
+          <h3>Draft assets exist</h3>
+          <p>YAML, manifest, plugin, and smoke test can be edited. Preview is still part of authoring and approval has not happened yet.</p>
+        </div>
+      </article>
+      <article class="logic-lifecycle-item">
+        <div class="logic-lifecycle-state is-planned">Planned</div>
+        <div>
+          <h3>Preview checkpoint</h3>
+          <p>The type can generate a sample preview from the stored source, but publishing is still gated by review quality.</p>
+        </div>
+      </article>
+      <article class="logic-lifecycle-item">
+        <div class="logic-lifecycle-state is-active">Active</div>
+        <div>
+          <h3>Reusable in Generate</h3>
+          <p>The custom type is now shown in the main Generate flow and no longer depends on the authoring canvas.</p>
+        </div>
+      </article>
+    </div>
+  </section>
+</section>
+
+<script>
+  (function () {
+    const tabs = Array.from(document.querySelectorAll('.logic-tab'));
+    const panels = Array.from(document.querySelectorAll('.logic-panel'));
+    const flowNodes = Array.from(document.querySelectorAll('[data-pane]'));
+    const inspectorPanes = Array.from(document.querySelectorAll('.logic-inspector-pane'));
+    const summaryPanel = document.getElementById('logic-summary-panel');
+    const summaryClose = document.getElementById('logic-summary-close');
+    const summaryTitle = document.getElementById('logic-summary-title');
+    const inspectorBody = document.getElementById('logic-inspector-body');
+    const zoomSurface = document.getElementById('logic-zoom-surface');
+    const zoomStage = document.getElementById('logic-zoom-stage');
+    const zoomLabel = document.getElementById('logic-zoom-label');
+    const zoomInButton = document.getElementById('logic-zoom-in');
+    const zoomOutButton = document.getElementById('logic-zoom-out');
+    const zoomResetButton = document.getElementById('logic-zoom-reset');
+    if (!tabs.length || !panels.length) return;
+    let activePaneId = null;
+    let zoomLevel = 1;
+    const baseWidth = 1480;
+    const baseHeight = 900;
+
+    // Move inspector body from the zoom-surface into the right-side panel
+    if (summaryPanel && inspectorBody) {
+      summaryPanel.appendChild(inspectorBody);
+      inspectorBody.removeAttribute('style');
+      inspectorBody.removeAttribute('aria-hidden');
+    }
+
+    const activate = (tab) => {
+      const targetId = tab.getAttribute('aria-controls');
+      tabs.forEach((item) => {
+        item.setAttribute('aria-selected', item === tab ? 'true' : 'false');
+      });
+      panels.forEach((panel) => {
+        panel.hidden = panel.id !== targetId;
+      });
+    };
+
+    tabs.forEach((tab) => {
+      tab.addEventListener('click', () => activate(tab));
+    });
+
+    const activatePane = (paneId) => {
+      activePaneId = paneId;
+      flowNodes.forEach((node) => {
+        node.classList.toggle('is-active', node.getAttribute('data-pane') === paneId);
+      });
+      inspectorPanes.forEach((pane) => {
+        pane.classList.toggle('is-active', pane.id === paneId);
+      });
+      const activePane = inspectorPanes.find((pane) => pane.id === paneId);
+      if (activePane && summaryTitle) {
+        const heading = activePane.querySelector('.logic-pane-title');
+        summaryTitle.textContent = heading ? heading.textContent : 'Workflow summary';
+      }
+      if (summaryPanel) summaryPanel.classList.add('is-visible');
+    };
+
+    const clearPane = () => {
+      activePaneId = null;
+      flowNodes.forEach((node) => node.classList.remove('is-active'));
+      inspectorPanes.forEach((pane) => pane.classList.remove('is-active'));
+      if (summaryTitle) summaryTitle.textContent = 'Workflow summary';
+      if (summaryPanel) summaryPanel.classList.remove('is-visible');
+    };
+
+    const applyZoom = () => {
+      if (!zoomSurface || !zoomStage || !zoomLabel) return;
+      zoomSurface.style.transform = `scale(${zoomLevel})`;
+      zoomStage.style.width = `${Math.round(baseWidth * zoomLevel)}px`;
+      zoomStage.style.height = `${Math.round(baseHeight * zoomLevel)}px`;
+      zoomLabel.textContent = `${Math.round(zoomLevel * 100)}%`;
+    };
+
+    // --- Connector dynamics: map connectors to node pairs ---
+    const connectorEdges = [
+      { from: 'logic-node-start', to: 'logic-node-guard' },
+      { from: 'logic-node-guard', to: 'logic-node-classify' },
+      { from: 'logic-node-guard', to: 'logic-node-end-left', side: 'bottom-bottom' },
+      { from: 'logic-node-classify', to: 'logic-condition' },
+      { from: 'logic-condition', to: 'logic-node-return' },
+      { from: 'logic-condition', to: 'logic-node-retain' },
+      { from: 'logic-condition', to: 'logic-node-info' },
+      { from: 'logic-node-return', to: 'logic-approval' },
+      { from: 'logic-node-retain', to: 'logic-approval' },
+      { from: 'logic-node-info', to: 'logic-approval' },
+      { from: 'logic-approval', to: 'logic-node-end-right', side: 'bottom-top' },
+    ];
+
+    const svgEl = document.getElementById('logic-svg-connectors');
+
+    const getNodeByClass = (className) => {
+      return document.querySelector(`.${className}`);
+    };
+
+    const recalculateConnectors = () => {
+      if (!svgEl) return;
+      // Remove old paths (keep <defs>)
+      svgEl.querySelectorAll('path').forEach(p => p.remove());
+
+      connectorEdges.forEach((edge) => {
+        const fromNode = getNodeByClass(edge.from);
+        const toNode = getNodeByClass(edge.to);
+        if (!fromNode || !toNode) return;
+
+        let x1, y1, x2, y2, d;
+        const side = edge.side || 'right-left';
+
+        if (side === 'bottom-bottom') {
+          // From bottom-center of source to bottom-center of target (downward arc)
+          x1 = fromNode.offsetLeft + fromNode.offsetWidth / 2;
+          y1 = fromNode.offsetTop + fromNode.offsetHeight;
+          x2 = toNode.offsetLeft + toNode.offsetWidth / 2;
+          y2 = toNode.offsetTop + toNode.offsetHeight / 2;
+          const dy = Math.abs(y2 - y1);
+          const cpOff = Math.max(50, dy * 0.8);
+          d = `M ${x1},${y1} C ${x1},${y1 + cpOff} ${x2},${y2 + cpOff} ${x2},${y2}`;
+        } else if (side === 'bottom-top') {
+          // From bottom-center of source to top-center of target
+          x1 = fromNode.offsetLeft + fromNode.offsetWidth / 2;
+          y1 = fromNode.offsetTop + fromNode.offsetHeight;
+          x2 = toNode.offsetLeft + toNode.offsetWidth / 2;
+          y2 = toNode.offsetTop;
+          const dy = Math.abs(y2 - y1);
+          const cpOff = Math.max(30, dy * 0.5);
+          d = `M ${x1},${y1} C ${x1},${y1 + cpOff} ${x2},${y2 - cpOff} ${x2},${y2}`;
+        } else {
+          // Default: right edge → left edge
+          x1 = fromNode.offsetLeft + fromNode.offsetWidth;
+          y1 = fromNode.offsetTop + fromNode.offsetHeight / 2;
+          x2 = toNode.offsetLeft;
+          y2 = toNode.offsetTop + toNode.offsetHeight / 2;
+          const dx = Math.abs(x2 - x1);
+          const cpOff = Math.max(40, dx * 0.45);
+          d = `M ${x1},${y1} C ${x1 + cpOff},${y1} ${x2 - cpOff},${y2} ${x2},${y2}`;
+        }
+
+        // Background line (thicker, gray)
+        const bgPath = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+        bgPath.setAttribute('d', d);
+        bgPath.setAttribute('class', 'connector-line');
+        bgPath.setAttribute('marker-end', 'url(#arrow)');
+        svgEl.appendChild(bgPath);
+
+        // Animated flow line (blue dashes)
+        const flowPath = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+        flowPath.setAttribute('d', d);
+        flowPath.setAttribute('class', 'connector-flow');
+        svgEl.appendChild(flowPath);
+      });
+    };
+
+    // --- Drag support for workflow nodes ---
+    let dragState = null;
+
+    const onMouseMove = (e) => {
+      if (!dragState) return;
+      const dx = (e.clientX - dragState.startX) / zoomLevel;
+      const dy = (e.clientY - dragState.startY) / zoomLevel;
+      if (Math.abs(dx) > 3 || Math.abs(dy) > 3) dragState.moved = true;
+      dragState.el.style.left = `${dragState.origLeft + dx}px`;
+      dragState.el.style.top = `${dragState.origTop + dy}px`;
+    };
+
+    const onMouseUp = () => {
+      if (!dragState) return;
+      const { el, moved } = dragState;
+      dragState = null;
+      document.removeEventListener('mousemove', onMouseMove);
+      document.removeEventListener('mouseup', onMouseUp);
+      el.classList.remove('is-dragging');
+      if (moved) {
+        el.addEventListener('click', (ev) => { ev.stopPropagation(); }, { capture: true, once: true });
+      }
+      // Recalculate all connectors after drag ends
+      recalculateConnectors();
+    };
+
+    flowNodes.forEach((node) => {
+      node.addEventListener('mousedown', (e) => {
+        if (e.button !== 0) return;
+        e.preventDefault();
+        const cs = window.getComputedStyle(node);
+        dragState = {
+          el: node,
+          startX: e.clientX,
+          startY: e.clientY,
+          origLeft: parseFloat(cs.left) || 0,
+          origTop: parseFloat(cs.top) || 0,
+          moved: false,
+        };
+        node.classList.add('is-dragging');
+        document.addEventListener('mousemove', onMouseMove);
+        document.addEventListener('mouseup', onMouseUp);
+      });
+
+      node.addEventListener('click', (event) => {
+        event.stopPropagation();
+        const paneId = node.getAttribute('data-pane');
+        if (!paneId) return;
+        if (activePaneId === paneId) {
+          clearPane();
+          return;
+        }
+        activatePane(paneId);
+      });
+    });
+
+    if (zoomInButton) {
+      zoomInButton.addEventListener('click', () => {
+        zoomLevel = Math.min(1.8, Number((zoomLevel + 0.1).toFixed(2)));
+        applyZoom();
+      });
+    }
+    if (zoomOutButton) {
+      zoomOutButton.addEventListener('click', () => {
+        zoomLevel = Math.max(0.6, Number((zoomLevel - 0.1).toFixed(2)));
+        applyZoom();
+      });
+    }
+    if (zoomResetButton) {
+      zoomResetButton.addEventListener('click', () => {
+        zoomLevel = 1;
+        applyZoom();
+      });
+    }
+
+    if (summaryClose) {
+      summaryClose.addEventListener('click', clearPane);
+    }
+
+    if (zoomStage) {
+      zoomStage.addEventListener('click', (event) => {
+        if (!event.target.closest('[data-pane]') && !event.target.closest('#logic-summary-panel')) {
+          clearPane();
+        }
+      });
+    }
+
+    applyZoom();
+    recalculateConnectors();
+    clearPane();
+
+    // --- Replay flow animation ---
+    const replayBtn = document.getElementById('logic-replay-btn');
+    const flowOrder = [
+      'logic-node-start',
+      'logic-node-guard',
+      'logic-node-classify',
+      'logic-condition',
+      'logic-node-return',
+      'logic-node-retain',
+      'logic-node-info',
+      'logic-approval',
+      'logic-node-end-right',
+    ];
+
+    const replayFlow = () => {
+      // Clear any previous highlights
+      flowNodes.forEach(n => n.classList.remove('is-flowing'));
+      let i = 0;
+      const step = () => {
+        if (i > 0) {
+          const prevNode = getNodeByClass(flowOrder[i - 1]);
+          if (prevNode) prevNode.classList.remove('is-flowing');
+        }
+        if (i >= flowOrder.length) return;
+        const node = getNodeByClass(flowOrder[i]);
+        if (node) node.classList.add('is-flowing');
+        i++;
+        setTimeout(step, 420);
+      };
+      step();
+    };
+
+    if (replayBtn) {
+      replayBtn.addEventListener('click', replayFlow);
+      // Auto-play once on first load
+      setTimeout(replayFlow, 600);
+    }
+  })();
+</script>
+{% endblock %}

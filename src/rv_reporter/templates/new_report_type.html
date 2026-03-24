@@ -1,60 +1,260 @@
 {% extends "layout.html" %}
+{% from "macros.html" import workflow_pipeline %}
 {% block title %}New Report Type | RV Reporter{% endblock %}
 {% block content %}
-<section class="panel hero">
-  <h1>Create Report Type</h1>
-  <p>Create a new report type config from UI by pasting YAML.</p>
-</section>
 
+{# Pipeline: steps 1-3 are wizard-controlled; starts at step 1 active #}
+{{ workflow_pipeline(1) }}
+
+{# ── Main wizard form ─────────────────────────────────────────────── #}
 <section class="panel">
-  <p class="muted">Supported <code>metrics_profile</code>: {{ supported_metrics_profiles|join(", ") }}</p>
-  <p class="muted"><code>report_type_id</code> can be omitted; it will be auto-generated from <code>title</code>.</p>
-  <div class="actions" style="margin-bottom: .8rem;">
-    <label>
-      <span>Clone From Existing Type</span>
-      <select id="clone_source_type">
-        <option value="">Choose report type...</option>
-        {% for rid in report_types %}
-          <option value="{{ rid }}">{{ {
-            'network_queue_congestion': 'network',
-            'twamp_session_health': 'twamp',
-            'ms_biomarker_registry_health': 'biomarkers',
-            'pm_export_health': 'performance',
-            'jira_issue_portfolio': 'jira',
-            'wireshark_capture_health': 'wireshark'
-          }.get(rid, rid) }}</option>
+  <h1 style="margin-bottom:.3rem;">Create Report Type With AI</h1>
+  <p class="muted" style="margin-bottom:1.1rem;">Complete the steps below. The AI will generate YAML config, plugin code, and smoke tests — all validated before publishing.</p>
+
+  <form method="post" action="{{ url_for('create_report_type') }}" enctype="multipart/form-data" id="new_rt_form">
+    <input type="hidden" name="existing_csv_path" id="existing_csv_path" value="{{ existing_csv_path or '' }}" />
+    <input type="hidden" name="hint_domain" id="hint_domain" value="" />
+    <input type="hidden" name="hint_family" id="hint_family" value="" />
+    <input type="hidden" name="hint_mode"   id="hint_mode"   value="" />
+
+    {# ── STEP 1: Upload Data ──────────────────────────────────────── #}
+    <div class="wizard-step" id="step-1">
+      <div class="wizard-step-header">
+        <span class="wizard-step-num">1</span>
+        <div>
+          <div class="wizard-step-title">Upload Source Data <span class="badge-optional">optional</span></div>
+          <div class="wizard-step-sub">Add a CSV or Excel file so the AI can infer columns and structure. Skip if you'll describe them in the prompt.</div>
+        </div>
+      </div>
+
+      <div class="form-row form-row-2" style="margin-top:.75rem;">
+        <label class="upload-field">
+          <span>Source File</span>
+          <div style="display:flex; gap:.5rem; align-items:center; flex-wrap:nowrap; width:100%;">
+            <select id="upload_mode" style="width: 8.75rem; flex: 0 0 8.75rem;">
+              <option value="new">New file</option>
+              <option value="recent" {% if existing_csv_path %}selected{% endif %}>Recent file</option>
+            </select>
+            <div id="new_upload_row" style="flex:1 1 auto; min-width: 0;">
+              <input type="file" name="csv_upload" id="csv_upload" accept=".csv,.xlsx,.xls" style="width:100%; max-width:24rem;" />
+            </div>
+            <div id="recent_upload_row" class="hidden" style="flex:1 1 auto; min-width: 0;">
+              <select id="recent_upload_select" style="width:100%; max-width:24rem; min-width:0;">
+                <option value="">Choose recent upload...</option>
+                {% for recent in recent_uploads %}
+                  <option value="{{ recent }}" {% if recent == existing_csv_path %}selected{% endif %}>{{ recent.split('\\')[-1].split('/')[-1] }}</option>
+                {% endfor %}
+              </select>
+            </div>
+          </div>
+        </label>
+        <label id="sheet_wrap">
+          <span>Sheet (for .xlsx/.xls)</span>
+          <select name="sheet_name" id="sheet_name">
+            {% if not sheet_options %}<option value="">Auto / not needed</option>{% endif %}
+            {% for sheet in sheet_options %}
+              <option value="{{ sheet }}" {% if selected_sheet == sheet %}selected{% endif %}>{{ sheet }}</option>
+            {% endfor %}
+          </select>
+        </label>
+      </div>
+      <div id="source_summary" class="small muted" style="margin-top:.35rem; white-space:pre-line;">
+        {% if source_summary %}{{ source_summary.file_type|upper }}{% if source_summary.row_count is not none %} • {{ source_summary.row_count }} rows{% endif %}{% if source_summary.columns %} • {{ source_summary.columns|length }} columns{% endif %}{% if source_summary.selected_sheet %} • sheet: {{ source_summary.selected_sheet }}{% endif %}{% endif %}
+      </div>
+      <div style="margin-top:.9rem; padding:.8rem 1rem; border:1px solid var(--border); border-radius:10px; background:var(--surface);">
+        <div style="font-size:.82rem; font-weight:700; color:var(--text); margin-bottom:.25rem;">Source Sampling For AI Drafting</div>
+        <div class="small muted" style="margin-bottom:.55rem;">Show the total lines in the source file and choose how much of it to use while creating the new report type.</div>
+        <div style="display:flex; flex-wrap:wrap; gap:1rem; align-items:center; margin-bottom:.65rem;">
+          <div>
+            <div style="font-size:.74rem; text-transform:uppercase; letter-spacing:.04em; color:var(--muted);">Total Lines</div>
+            <div id="source_total_lines" style="font-size:1rem; font-weight:800; color:var(--text);">{% if source_summary and source_summary.row_count is not none %}{{ source_summary.row_count }}{% else %}-{% endif %}</div>
+          </div>
+          <div id="sample_percent_summary" class="small muted">Using {{ source_sample_percent or 100 }}% of the source for AI drafting.</div>
+        </div>
+        <div style="display:flex; flex-wrap:wrap; gap:.55rem;">
+          {% for pct in [10, 20, 30, 40, 50, 60, 70, 80, 90, 100] %}
+          <label style="display:inline-flex; align-items:center; gap:.35rem; padding:.35rem .55rem; border:1px solid var(--border); border-radius:999px; background:#fff; cursor:pointer;">
+            <input type="radio" name="source_sample_percent" value="{{ pct }}" {% if (source_sample_percent or 100) == pct %}checked{% endif %} />
+            <span>{{ pct }}%</span>
+          </label>
+          {% endfor %}
+        </div>
+      </div>
+
+      <div style="margin-top:1rem; display:flex; gap:.6rem; align-items:center;">
+        <button type="button" class="btn-primary" id="step1-next">Next: Classify Report →</button>
+        <button type="button" class="btn-link" id="step1-skip" style="font-size:.82rem;">Skip</button>
+      </div>
+    </div>
+
+    {# ── STEP 2: Classify ─────────────────────────────────────────── #}
+    <div class="wizard-step hidden" id="step-2">
+      <div class="wizard-step-header">
+        <span class="wizard-step-num">2</span>
+        <div>
+          <div class="wizard-step-title">Classify Your Report</div>
+          <div class="wizard-step-sub">Choose a category, domain, and analysis mode. These become hints for the AI and narrow the schema.</div>
+        </div>
+      </div>
+
+      {# AI recommendation banner (populated by JS after source upload) #}
+      <div id="classification-recommendation" class="hidden" style="margin-bottom:.9rem; padding:.6rem .9rem; background:rgba(24,67,146,.06); border:1.5px solid rgba(24,67,146,.18); border-radius:12px; font-size:.84rem; color:var(--text); display:flex; align-items:center; gap:.6rem; flex-wrap:wrap;">
+        <span style="font-weight:700; color:#184392;">✨ Recommended</span>
+        <span id="rec-chips" style="display:flex; gap:.35rem; flex-wrap:wrap; align-items:center;"></span>
+        <button type="button" id="rec-apply-btn" class="btn-secondary" style="padding:.3rem .7rem; font-size:.78rem; border-radius:8px;">Apply</button>
+        <span style="flex:1;"></span>
+        <button type="button" id="rec-dismiss-btn" style="background:none; border:none; cursor:pointer; color:var(--muted); font-size:.82rem; padding:.2rem;">✕</button>
+      </div>
+
+      {# Category tiles #}
+      <div style="margin-top:.9rem; margin-bottom:.5rem; font-size:.8rem; font-weight:700; color:var(--muted); text-transform:uppercase; letter-spacing:.06em;">Category</div>
+      <div id="category-tiles" style="display:flex; flex-wrap:wrap; gap:.5rem; margin-bottom:.9rem;">
+        {% set categories = [
+          ("engineering", "🌐", "Networking & Telecom", "networking,telecom,observability"),
+          ("security",    "🔒", "Security",             "security"),
+          ("operations",  "⚙️", "Operations",          "operations,manufacturing,supply_chain,energy"),
+          ("business",    "📊", "Business & Finance",   "finance,sales,product,customer_support"),
+          ("research",    "🔬", "Research & Health",    "healthcare,research,education,government"),
+          ("generic",     "🗂️", "General / Other",     "generic,project_management"),
+        ] %}
+        {% for cid, icon, label, domains_csv in categories %}
+        <button type="button" class="cat-tile" data-cat="{{ cid }}" data-domains="{{ domains_csv }}"
+          style="display:flex; flex-direction:column; align-items:center; gap:.3rem; padding:.6rem 1rem; border-radius:12px; border:1.5px solid var(--border); background:var(--surface); cursor:pointer; min-width:100px; font-size:.8rem; font-weight:600; color:var(--text); transition: border-color .15s, background .15s;">
+          <span style="font-size:1.4rem;">{{ icon }}</span>
+          <span>{{ label }}</span>
+        </button>
         {% endfor %}
-      </select>
-    </label>
-    <button type="button" class="btn-link" id="load_clone_btn">Load YAML</button>
-  </div>
-  <form method="post" action="{{ url_for('create_report_type') }}">
-    <label>
-      <span>Report Type YAML</span>
-      <textarea name="report_type_yaml" rows="28" class="code-area" id="report_type_yaml">{{ starter_yaml }}</textarea>
-    </label>
-    <button type="submit" class="btn-primary">Save Report Type</button>
+      </div>
+
+      {# Domain row #}
+      <div id="domain-row" class="hidden" style="margin-bottom:.9rem;">
+        <div style="font-size:.8rem; font-weight:700; color:var(--muted); text-transform:uppercase; letter-spacing:.06em; margin-bottom:.45rem;">Domain</div>
+        <div id="domain-tiles" style="display:flex; flex-wrap:wrap; gap:.4rem;"></div>
+      </div>
+
+      {# Family row #}
+      <div id="family-row" class="hidden" style="margin-bottom:.9rem;">
+        <div style="font-size:.8rem; font-weight:700; color:var(--muted); text-transform:uppercase; letter-spacing:.06em; margin-bottom:.45rem;">Data Shape (Family)</div>
+        <div id="family-tiles" style="display:flex; flex-wrap:wrap; gap:.4rem;"></div>
+      </div>
+
+      {# Mode row #}
+      <div id="mode-row" class="hidden" style="margin-bottom:.9rem;">
+        <div style="font-size:.8rem; font-weight:700; color:var(--muted); text-transform:uppercase; letter-spacing:.06em; margin-bottom:.45rem;">Analysis Mode</div>
+        <div id="mode-tiles" style="display:flex; flex-wrap:wrap; gap:.4rem;"></div>
+      </div>
+
+      {# Clone row #}
+      <div style="margin-top:.8rem;">
+        <label>
+          <span style="font-size:.82rem; font-weight:600; color:var(--muted);">Clone From Existing Type <span class="badge-optional">optional</span></span>
+          <select id="clone_source_type" name="clone_source_type" style="max-width:22rem;">
+            <option value="">Start fresh</option>
+            {% for rid in report_types %}
+              <option value="{{ rid }}" {% if rid == selected_clone_type %}selected{% endif %}>{{ rid }}</option>
+            {% endfor %}
+          </select>
+        </label>
+      </div>
+
+      <div style="margin-top:1rem; display:flex; gap:.6rem; align-items:center;">
+        <button type="button" class="btn-link" id="step2-back" style="font-size:.82rem;">← Back</button>
+        <button type="button" class="btn-primary" id="step2-next">Next: Write Prompt →</button>
+      </div>
+    </div>
+
+    {# ── STEP 3: Prompt & Guardrail ───────────────────────────────── #}
+    <div class="wizard-step hidden" id="step-3">
+      <div class="wizard-step-header">
+        <span class="wizard-step-num">3</span>
+        <div>
+          <div class="wizard-step-title">Write & Validate Prompt</div>
+          <div class="wizard-step-sub">Describe the report. Click "Check Prompt" to run guardrail validation before sending to AI.</div>
+        </div>
+      </div>
+
+      {# Classification summary badge #}
+      <div id="classification-summary" style="display:none; margin-top:.75rem; margin-bottom:.75rem; padding:.5rem .85rem; background:rgba(15,118,110,.07); border:1px solid rgba(15,118,110,.2); border-radius:10px; font-size:.8rem; color:var(--text); display:flex; flex-wrap:wrap; gap:.4rem; align-items:center;">
+        <span style="font-weight:700; color:var(--brand); margin-right:.3rem;">Classification:</span>
+        <span id="cs-domain" class="cs-chip" style="display:none;"></span>
+        <span id="cs-family" class="cs-chip" style="display:none;"></span>
+        <span id="cs-mode"   class="cs-chip" style="display:none;"></span>
+      </div>
+
+      <label style="margin-top:.75rem; display:block;">
+        <span>Prompt</span>
+        <textarea name="prompt_text" rows="12" class="code-area" id="prompt_text" style="font-family:inherit; white-space:normal; font-size:.88rem;">{{ prompt_text }}</textarea>
+      </label>
+
+      <div id="prompt-template-hint" style="margin-top:.4rem; font-size:.78rem; color:var(--muted);">
+        Example: <em>"Create a latency trend report for networking CSVs with device_id, timestamp, avg_latency_ms, p95_latency_ms, and packet_loss_pct. Detect SLA breaches and provide per-device trend analysis."</em>
+      </div>
+
+      {# Guardrail result #}
+      <div id="guardrail-panel" style="display:none; margin-top:.75rem; padding:.75rem 1rem; border-radius:10px; border:1px solid var(--border); background:var(--surface);">
+        <div style="font-weight:700; font-size:.82rem; margin-bottom:.4rem;" id="guardrail-header">Prompt Quality</div>
+        <div id="guardrail-score-bar" style="height:6px; border-radius:3px; background:#e5edf5; margin-bottom:.6rem; overflow:hidden;">
+          <div id="guardrail-score-fill" style="height:100%; border-radius:3px; background:var(--brand); width:0%; transition:width .4s;"></div>
+        </div>
+        <div id="guardrail-issues" style="display:none;"></div>
+        <div id="guardrail-warnings" style="display:none;"></div>
+        <div id="guardrail-suggestions" style="display:none;"></div>
+      </div>
+
+      <div style="margin-top:1rem; display:flex; gap:.6rem; align-items:center; flex-wrap:wrap;">
+        <button type="button" class="btn-link" id="step3-back" style="font-size:.82rem;">← Back</button>
+        <button type="button" class="btn-primary" id="check-prompt-btn" style="background: var(--brand-2);">🛡 Check Prompt</button>
+        <button type="button" class="btn-secondary" id="improve-prompt-btn">What Needs To Be Done Better?</button>
+        <button type="submit" class="btn-primary" id="generate-btn">🤖 Generate Draft With AI</button>
+      </div>
+      <div id="prompt-improve-panel" style="display:none; margin-top:.75rem; padding:.75rem 1rem; border-radius:10px; border:1px solid #bfdbfe; background:#f8fbff;">
+        <div style="font-weight:700; font-size:.82rem; margin-bottom:.45rem; color:#184392;">AI Prompt Improvements Applied</div>
+        <div id="prompt-improve-changes" class="small" style="display:flex; flex-direction:column; gap:.3rem;"></div>
+      </div>
+      <p class="muted" style="font-size:.76rem; margin-top:.5rem;">Model: {{ report_type_agent_model }} · Creates a draft only — review before publishing.</p>
+    </div>
+
   </form>
 </section>
 
+<style>
+.wizard-step-header { display:flex; gap:.75rem; align-items:flex-start; }
+.wizard-step-num { display:flex; align-items:center; justify-content:center; width:2rem; height:2rem; border-radius:50%; background:var(--brand); color:#fff; font-weight:800; font-size:.9rem; flex-shrink:0; margin-top:.1rem; }
+.wizard-step-title { font-size:1.05rem; font-weight:700; margin-bottom:.2rem; }
+.wizard-step-sub { font-size:.82rem; color:var(--muted); }
+.badge-optional { font-size:.68rem; font-weight:700; background:#e5edf5; color:var(--muted); padding:.1rem .35rem; border-radius:6px; vertical-align:middle; margin-left:.3rem; }
+.cat-tile.active, .domain-tile.active, .family-tile.active, .mode-tile.active {
+  border-color: var(--brand) !important;
+  background: rgba(15,118,110,.08) !important;
+  color: var(--brand) !important;
+}
+.domain-tile, .family-tile, .mode-tile {
+  padding:.4rem .8rem; border-radius:8px; border:1.5px solid var(--border);
+  background:var(--surface); cursor:pointer; font-size:.78rem; font-weight:600;
+  color:var(--text); transition: border-color .15s, background .15s;
+}
+.cs-chip { background:rgba(15,118,110,.1); color:var(--brand); padding:.15rem .5rem; border-radius:6px; font-weight:700; font-size:.76rem; }
+.guardrail-issue  { color:#b91c1c; font-size:.8rem; padding:.2rem 0; }
+.guardrail-warn   { color:#92400e; font-size:.8rem; padding:.2rem 0; }
+.guardrail-sugg   { color:#1d4ed8; font-size:.8rem; padding:.2rem 0; }
+</style>
+
 <script>
-  (function () {
-    const source = document.getElementById("clone_source_type");
-    const loadBtn = document.getElementById("load_clone_btn");
-    const yamlBox = document.getElementById("report_type_yaml");
-    if (!source || !loadBtn || !yamlBox) return;
-    loadBtn.addEventListener("click", async () => {
-      const rid = source.value;
-      if (!rid) return;
-      try {
-        const response = await fetch(`{{ url_for('report_type_yaml') }}?report_type_id=${encodeURIComponent(rid)}`);
-        if (!response.ok) return;
-        const payload = await response.json();
-        if (payload && payload.yaml) {
-          yamlBox.value = payload.yaml;
-        }
-      } catch (e) {}
-    });
-  })();
+/* Server-side config — Jinja2 values only. All logic lives in static/js/wizard/. */
+window.WIZARD_CONFIG = {
+  sourceMetadataUrl: "{{ url_for('source_metadata') }}",
+  validatePromptUrl: "{{ url_for('validate_prompt_api') }}",
+  improvePromptUrl:  "{{ url_for('improve_prompt_api') }}",
+  modes:             {{ modes|tojson }},
+  sheetOptions:      {{ sheet_options|tojson }},
+  selectedSheet:     {{ selected_sheet|tojson }},
+};
 </script>
+<script src="{{ url_for('static', filename='js/wizard/data.js') }}"></script>
+<script src="{{ url_for('static', filename='js/wizard/state.js') }}"></script>
+<script src="{{ url_for('static', filename='js/wizard/step1_upload.js') }}"></script>
+<script src="{{ url_for('static', filename='js/wizard/step2_classify.js') }}"></script>
+<script src="{{ url_for('static', filename='js/wizard/step3_prompt.js') }}"></script>
+<script src="{{ url_for('static', filename='js/wizard/init.js') }}"></script>
 {% endblock %}
+

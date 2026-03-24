@@ -1,0 +1,14 @@
+plugin_id: telecom_session_health_report_v3
+metrics_profile: telecom_session_health_report_v3
+api_version: 1
+version: 1.0.0
+title: Telecom Session Health Report v3
+description: Comprehensive telecom session health analysis with SLA compliance,
+  signal quality, and SNR metrics for network performance monitoring.
+family: time_series
+domain: telecom
+mode: health_score
+entrypoint: plugin.py
+owner: ai-agent
+generator: openai_sdk
+status: active
