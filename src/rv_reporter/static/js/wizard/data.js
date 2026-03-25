@@ -8,6 +8,28 @@ window.RVWizard = window.RVWizard || {};
 
 RVWizard.data = {
 
+  /* Human-readable labels for domain keys */
+  DOMAIN_LABELS: {
+    networking:        "Networking",
+    telecom:           "Telecom",
+    observability:     "Observability",
+    security:          "Security",
+    operations:        "Operations",
+    manufacturing:     "Manufacturing",
+    supply_chain:      "Supply Chain",
+    energy:            "Energy",
+    finance:           "Finance",
+    sales:             "Sales",
+    product:           "Product",
+    customer_support:  "Customer Support",
+    healthcare:        "Healthcare",
+    research:          "Research",
+    education:         "Education",
+    government:        "Government",
+    project_management:"Project Management",
+    generic:           "General / Other",
+  },
+
   /* Which data-shape families are valid for each domain */
   DOMAIN_FAMILY_MAP: {
     networking:        ["time_series", "event", "hybrid"],
@@ -158,6 +180,40 @@ RVWizard.data = {
     research:     "Create a research dataset summary for CSVs with sample_id, condition, value, and group. Apply statistical summary, distribution analysis, and correlation checks.",
     generic:      "Create a general summary report for the uploaded CSV. Identify key patterns, outliers, and produce actionable insights.",
   },
+
+  /* Schema presets for the Reshape Source Structure panel */
+  SCHEMA_PRESETS: [
+    {
+      id: "assisted_living",
+      label: "Assisted Living Care Calls",
+      domain: "healthcare",
+      columns: "timestamp\nincident_id\nevent_type: Call Button Pressed, Call Accepted, or Resolution Confirmed\nactor_type: patient or caregiver\nactor_name\nroom_id\npatient_name\ncaregiver_name",
+    },
+    {
+      id: "iot_event_log",
+      label: "IoT Event Log",
+      domain: "operations",
+      columns: "timestamp\ndevice_id\ndevice_name\nlocation\nevent_type\nseverity: info, warning, critical\npayload\nsession_id",
+    },
+    {
+      id: "support_ticket",
+      label: "Support / Helpdesk Tickets",
+      domain: "customer_support",
+      columns: "ticket_id\ncreated_at\nupdated_at\nclosed_at\nagent_name\ncustomer_id\npriority: low, medium, high, critical\ncategory\nstatus: open, in_progress, resolved, closed\nresolution_time_min",
+    },
+    {
+      id: "network_session",
+      label: "Network Session Events",
+      domain: "networking",
+      columns: "timestamp\nsession_id\nsrc_ip\ndst_ip\nprotocol\nbytes_sent\nbytes_received\nlatency_ms\npacket_loss_pct\nstatus: active, completed, terminated",
+    },
+    {
+      id: "twamp_session",
+      label: "TWAMP Session Health",
+      domain: "telecom",
+      columns: "timestamp\nsession_id\nnode_id\npdv_ms\nipdv_ms\nlatency_ms\npacket_loss_pct\nrtt_ms\nthreshold_pdv_ms\nthreshold_loss_pct",
+    },
+  ],
 
   /* Domain-specific clarifying questions embedded in the rich prompt */
   DOMAIN_CONTEXT_QUESTIONS: {

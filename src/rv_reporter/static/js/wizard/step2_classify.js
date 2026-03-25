@@ -17,6 +17,10 @@ RVWizard.step2 = (function () {
   const data  = RVWizard.data;
   const state = RVWizard.state;
 
+  function domainLabel(domain) {
+    return (data.DOMAIN_LABELS || {})[domain] || domain.replace(/_/g, " ");
+  }
+
   /* ── Tile factory ────────────────────────────────────────────────── */
   function makeTile(value, label, cssClass) {
     const btn = document.createElement("button");
@@ -63,7 +67,7 @@ RVWizard.step2 = (function () {
     const domainTilesEl = document.getElementById("domain-tiles");
     domainTilesEl.innerHTML = "";
     domains.forEach(d => {
-      domainTilesEl.appendChild(makeTile(d, d.replace(/_/g, " "), "domain-tile"));
+      domainTilesEl.appendChild(makeTile(d, domainLabel(d), "domain-tile"));
     });
     document.getElementById("domain-row").classList.remove("hidden");
   });
@@ -137,7 +141,7 @@ RVWizard.step2 = (function () {
       const domainTilesEl = document.getElementById("domain-tiles");
       domainTilesEl.innerHTML = "";
       domains.forEach(d => {
-        domainTilesEl.appendChild(makeTile(d, d.replace(/_/g, " "), "domain-tile"));
+        domainTilesEl.appendChild(makeTile(d, domainLabel(d), "domain-tile"));
       });
       document.getElementById("domain-row").classList.remove("hidden");
     }

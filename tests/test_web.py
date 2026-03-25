@@ -4,7 +4,7 @@ import json
 import os
 from urllib.parse import urlencode
 
-from rv_reporter.web import create_app, _build_report_type_source_profile, _parse_source_labels_text, _prepare_pipeline_source, _resolve_source_label
+from rv_reporter.web import create_app, _build_report_type_source_profile, _parse_source_labels_text, _parse_source_structure_text, _prepare_pipeline_source, _resolve_source_label
 
 
 def test_index_renders() -> None:
@@ -72,6 +72,30 @@ def test_report_type_yaml_api_returns_yaml(tmp_path: Path) -> None:
     assert response.status_code == 200
     assert "yaml" in response.json
     assert "report_type_id: demo_type" in response.json["yaml"]
+
+
+def test_recommend_classification_constrains_mode_to_domain_allowed_set() -> None:
+    app = create_app({"TESTING": True})
+    client = app.test_client()
+
+    response = client.post(
+        "/api/recommend-classification",
+        json={
+            "columns": ["timestamp", "device_name", "property"],
+            "filename": "assisted_living_demo_v2.csv",
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload["domain"] == "healthcare"
+    assert payload["mode"] in {
+        "statistical_summary",
+        "overview_summary",
+        "distribution_analysis",
+        "correlation_analysis",
+    }
+    assert payload["mode"] != "trend_analysis"
 
 
 def test_generate_from_sample(tmp_path: Path) -> None:
@@ -492,6 +516,7 @@ def test_create_report_type_from_ui(tmp_path: Path) -> None:
     assert b"Create Report Type With AI" in get_resp.data
     assert b"Preview Sample" in get_resp.data
     assert b"Source Sampling For AI Drafting" in get_resp.data
+    assert b"Reshape Source Structure" in get_resp.data
     assert b'value="100" checked' in get_resp.data
 
     def _fake_agent_draft(**_: object) -> dict[str, object]:
@@ -549,6 +574,19 @@ def test_create_report_type_from_ui(tmp_path: Path) -> None:
     assert b"Preview Sample Report" in post_resp.data
     assert b"Publish Report Type" not in post_resp.data
     assert b"automatically be marked as planned" in post_resp.data
+
+
+def test_parse_source_structure_text_extracts_columns_and_notes() -> None:
+    parsed = _parse_source_structure_text(
+        "timestamp\n"
+        "actor_type: caregiver or patient\n"
+        "actor_name\n"
+        "room_id\n"
+    )
+
+    assert parsed is not None
+    assert parsed["columns"] == ["timestamp", "actor_type", "actor_name", "room_id"]
+    assert parsed["notes"]["actor_type"] == "caregiver or patient"
 
 
 def test_improve_prompt_api_uses_ai_helper(tmp_path: Path, monkeypatch) -> None:
@@ -730,6 +768,90 @@ def test_create_report_type_filters_required_columns_to_uploaded_source(tmp_path
     assert "Device ID" in yaml_text
     assert "InOctets" in yaml_text
     assert "Date And Time (UTC)" not in yaml_text
+
+
+def test_create_report_type_allows_proposed_source_structure_as_target_schema(tmp_path: Path) -> None:
+    report_types_dir = tmp_path / "report_types"
+    plugin_root = tmp_path / "report_type_plugins"
+    upload_dir = tmp_path / "uploads"
+    plugin_root.mkdir(parents=True, exist_ok=True)
+    upload_dir.mkdir(parents=True, exist_ok=True)
+    (plugin_root / "manifest.schema.yaml").write_text(
+        Path("report_type_plugins/manifest.schema.yaml").read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    source_csv = upload_dir / "assisted.csv"
+    source_csv.write_text(
+        "timestamp,device_name,property\n2026-03-01T06:51:00Z,Rm 103 Mary Johnson,Call Button Pressed\n",
+        encoding="utf-8",
+    )
+    app = create_app(
+        {
+            "TESTING": True,
+            "REPORT_TYPES_DIR": str(report_types_dir),
+            "PLUGIN_ROOT": str(plugin_root),
+            "UPLOAD_FOLDER": str(upload_dir),
+            "OUTPUT_FOLDER": str(tmp_path / "outputs"),
+        }
+    )
+    client = app.test_client()
+    captured: dict[str, object] = {}
+
+    def _fake_agent_draft(**kwargs: object) -> dict[str, object]:
+        captured.update(kwargs)
+        return {
+            "report_type_id": "assisted_living_events",
+            "title": "Assisted Living Events",
+            "family": "event",
+            "domain": "healthcare",
+            "mode": "issue_detection",
+            "description": "Assisted Living Events plugin.",
+            "required_columns": ["timestamp", "incident_id", "event_type", "actor_type", "actor_name", "room_id", "patient_name", "caregiver_name"],
+            "default_prefs": {},
+            "prompt_instructions": "Analyze assisted-living call workflow events.",
+            "plugin_code": (
+                "def get_spec():\n"
+                "    return {'metrics_profile': 'assisted_living_events', 'api_version': 1, 'title': 'Assisted Living Events'}\n\n"
+                "def build(df, prefs, ctx):\n"
+                "    return {'columns': list(df.columns)}\n"
+            ),
+            "smoke_test_code": "def test_smoke():\n    assert True\n",
+            "manifest_extensions": {},
+        }
+
+    from rv_reporter import web as web_module
+
+    original = web_module._generate_report_type_agent_draft
+    web_module._generate_report_type_agent_draft = _fake_agent_draft
+    try:
+        post_resp = client.post(
+            "/report-types/new",
+            data={
+                "prompt_text": "Create an assisted-living response report.",
+                "existing_csv_path": str(source_csv),
+                "source_structure_text": "timestamp\nincident_id\nevent_type\nactor_type: patient or caregiver\nactor_name\nroom_id\npatient_name\ncaregiver_name",
+            },
+            follow_redirects=True,
+        )
+    finally:
+        web_module._generate_report_type_agent_draft = original
+
+    assert post_resp.status_code == 200
+    assert isinstance(captured.get("source_structure_plan"), dict)
+    assert captured["source_structure_plan"]["columns"] == [
+        "timestamp",
+        "incident_id",
+        "event_type",
+        "actor_type",
+        "actor_name",
+        "room_id",
+        "patient_name",
+        "caregiver_name",
+    ]
+    yaml_text = (report_types_dir / "assisted_living_events.yaml").read_text(encoding="utf-8")
+    assert "incident_id" in yaml_text
+    assert "actor_type" in yaml_text
+    assert "device_name" not in yaml_text
 
 
 def test_create_report_type_replaces_bad_ai_smoke_test_with_canonical_template(tmp_path: Path) -> None:
@@ -1627,3 +1749,156 @@ def test_upload_excel_sheets_api_returns_sheets(tmp_path: Path, monkeypatch) -> 
     assert response.status_code == 200
     assert response.json["sheets"] == ["Main", "Summary"]
     assert response.json["path"]
+
+
+def test_wizard_includes_step_1b_reshape_panel() -> None:
+    app = create_app({"TESTING": True})
+    client = app.test_client()
+    response = client.get("/report-types/new")
+    assert response.status_code == 200
+    assert b'id="step-1b"' in response.data
+    assert b"id=\"step1b-back\"" in response.data
+    assert b"id=\"step1b-next\"" in response.data
+    assert b"id=\"step1b-skip\"" in response.data
+    assert b"Reshape Source Structure" in response.data
+
+
+def test_workflow_pipeline_includes_reshape_step() -> None:
+    app = create_app({"TESTING": True})
+    client = app.test_client()
+    response = client.get("/report-types/new")
+    assert response.status_code == 200
+    # Check that the pipeline workflow includes 1b as a separate box
+    assert b'id="wf-node-1b"' in response.data
+    assert b'id="wf-badge-1b"' in response.data
+    # Verify 1b label appears in the pipeline
+    assert b"Reshape Source" in response.data
+
+
+def test_recommend_preset_api_suggests_assisted_living() -> None:
+    app = create_app({"TESTING": True})
+    client = app.test_client()
+    
+    response = client.post(
+        "/api/recommend-preset",
+        json={
+            "columns": ["timestamp", "device_name", "property"],
+        },
+        content_type="application/json",
+    )
+    
+    assert response.status_code == 200
+    data = response.get_json()
+    assert "presets" in data
+    presets = data["presets"]
+    
+    # Should have at least one recommendation
+    assert len(presets) > 0
+    
+    # Check preset structure
+    top_preset = presets[0]
+    assert "id" in top_preset
+    assert "label" in top_preset
+    assert "confidence" in top_preset
+    assert top_preset["confidence"] in ["high", "medium", "low"]
+
+
+def test_recommend_preset_api_for_assisted_living_columns() -> None:
+    app = create_app({"TESTING": True})
+    client = app.test_client()
+    
+    # Columns that strongly match assisted living schema
+    response = client.post(
+        "/api/recommend-preset",
+        json={
+            "columns": ["timestamp", "incident_id", "actor_type", "caregiver_name", "patient_name"],
+        },
+        content_type="application/json",
+    )
+    
+    assert response.status_code == 200
+    data = response.get_json()
+    presets = data["presets"]
+    
+    # assisted_living should be recommended
+    assert len(presets) > 0
+    preset_ids = [p["id"] for p in presets]
+    assert "assisted_living" in preset_ids
+    
+    # It should be high confidence
+    assisted_living_preset = next((p for p in presets if p["id"] == "assisted_living"), None)
+    assert assisted_living_preset is not None
+    assert assisted_living_preset["confidence"] == "high"
+
+
+def test_recommend_preset_api_empty_columns() -> None:
+    app = create_app({"TESTING": True})
+    client = app.test_client()
+    
+    response = client.post(
+        "/api/recommend-preset",
+        json={"columns": []},
+        content_type="application/json",
+    )
+    
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data["presets"] == []
+
+
+def test_transform_source_api_normalizes_assisted_living_csv(tmp_path: Path) -> None:
+    upload_dir = tmp_path / "uploads"
+    upload_dir.mkdir(parents=True, exist_ok=True)
+    source_csv = upload_dir / "assisted_living.csv"
+    source_csv.write_text(
+        "timestamp,device_name,property\n"
+        "2026-03-01T06:51:00Z,Rm 103 Mary Johnson,Call Button Pressed\n"
+        "2026-03-01T06:57:00Z,Caregiver Maria Lopez,Call Accepted\n"
+        "2026-03-01T07:04:00Z,Rm 103 Mary Johnson,Resolution Confirmed\n"
+        "2026-03-01T07:05:00Z,Caregiver Maria Lopez,Resolution Confirmed\n",
+        encoding="utf-8",
+    )
+    app = create_app(
+        {
+            "TESTING": True,
+            "UPLOAD_FOLDER": str(upload_dir),
+            "OUTPUT_FOLDER": str(tmp_path / "outputs"),
+        }
+    )
+    client = app.test_client()
+
+    plan = {
+        "columns": ["timestamp", "incident_id", "event_type", "actor_type", "actor_name", "room_id", "patient_name", "caregiver_name"],
+        "notes": {"actor_type": "patient or caregiver"},
+        "raw_text": "timestamp\nincident_id\nevent_type\nactor_type: patient or caregiver\nactor_name\nroom_id\npatient_name\ncaregiver_name",
+    }
+
+    response = client.post(
+        "/api/transform-source",
+        json={"source_path": str(source_csv), "source_structure_plan": plan},
+        content_type="application/json",
+    )
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data["columns"] == plan["columns"]
+    assert data["row_count"] == 4
+    assert len(data["preview_rows"]) == 4
+
+    # actor_type was correctly derived
+    actor_types = [row["actor_type"] for row in data["preview_rows"]]
+    assert "patient" in actor_types
+    assert "caregiver" in actor_types
+
+    # incident_id was assigned
+    incident_ids = [row["incident_id"] for row in data["preview_rows"]]
+    assert any(iid.startswith("INC-") for iid in incident_ids)
+
+    # room_id extracted from "Rm 103 Mary Johnson"
+    room_ids = [row["room_id"] for row in data["preview_rows"] if row["room_id"]]
+    assert "103" in room_ids
+
+    # transformed file can be downloaded (path-safety check still holds)
+    transformed_path = data["transformed_path"]
+    download_resp = client.get(f"/api/download-transformed?path={transformed_path}")
+    assert download_resp.status_code == 200
+    assert b"actor_type" in download_resp.data

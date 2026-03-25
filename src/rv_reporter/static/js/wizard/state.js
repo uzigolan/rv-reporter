@@ -17,21 +17,24 @@ RVWizard.state = {
 };
 
 /* ── Pipeline highlight ──────────────────────────────────────────────── */
-RVWizard.highlightPipelineStep = function (n) {
-  for (let i = 1; i <= 7; i++) {
-    const node  = document.getElementById("wf-node-" + i);
-    const badge = document.getElementById("wf-badge-" + i);
-    const arr   = document.getElementById("wf-arrow-" + i);
-    if (!node || !badge) continue;
+RVWizard.highlightPipelineStep = function (stepId) {
+  /* stepId can be: 1, "1b", 2, "2b", 3, "3b", etc. */
+  const stepList = ["1", "1b", "2", "3", "4", "5", "6", "7"];
+  const activeIdx = stepList.indexOf(stepId.toString());
+  
+  stepList.forEach((step, idx) => {
+    const node  = document.getElementById("wf-node-" + step);
+    const badge = document.getElementById("wf-badge-" + step);
+    const arr   = document.getElementById("wf-arrow-" + step);
+    if (!node || !badge) return;
 
-    const active = (i === n);
-    const done   = (i < n);
+    const active = (idx === activeIdx);
+    const done   = (idx < activeIdx);
 
-    /* toggle CSS classes defined in macros.html */
     node.classList.toggle("is-active", active);
     node.classList.toggle("is-done", done);
 
-    badge.textContent = done ? "✓" : String(i);
+    badge.textContent = done ? "✓" : step;
 
     if (arr) {
       const col = done ? "#15803d" : "#dbe5f0";
@@ -39,7 +42,7 @@ RVWizard.highlightPipelineStep = function (n) {
       arr.querySelector("polygon").setAttribute("fill", col);
       arr.querySelector("path").setAttribute("stroke-dasharray", done ? "0" : "4 2");
     }
-  }
+  });
 };
 
 /* ── Wizard step navigation ──────────────────────────────────────────── */
@@ -48,8 +51,11 @@ RVWizard.showStep = function (n) {
   const el = document.getElementById("step-" + n);
   if (el) el.classList.remove("hidden");
   RVWizard.state.currentStep = n;
-  RVWizard.highlightPipelineStep(n);
-  if (n === 3 && RVWizard.step3) {
+  /* Map sub-steps to parent pipeline step for highlight */
+  const pipelineMap = { "1b": 1, "2b": 2, "3b": 3 };
+  const pipelineStep = pipelineMap[n] || (typeof n === "number" ? n : parseInt(n, 10) || 1);
+  RVWizard.highlightPipelineStep(pipelineStep);
+  if ((n === 3 || n === "3" || n === "3b") && RVWizard.step3) {
     RVWizard.step3.refreshClassificationSummary();
   }
 };

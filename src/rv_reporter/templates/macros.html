@@ -1,11 +1,12 @@
 {% macro workflow_pipeline(active_step) %}
 {#
-  active_step: integer 1-7
-  Steps: 1=Upload, 2=Classify, 3=Prompt, 4=AI Draft, 5=Review & Edit, 6=Preview Sample, 7=Publish
+  active_step: integer 1-7 or "1b"
+  Steps: 1=Upload, 1b=Reshape, 2=Classify, 3=Prompt, 4=AI Draft, 5=Review & Edit, 6=Preview Sample, 7=Publish
   Review & Edit (step 5) can loop back to Prompt (step 3) or forward to Preview Sample (step 6)
 #}
 {% set steps = [
   ("1", "Upload Data",      "CSV / Excel source"),
+  ("1b", "Reshape Source",  "Target schema"),
   ("2", "Classify",         "Domain · Family · Mode"),
   ("3", "Write Prompt",     "Validated by guardrail"),
   ("4", "AI Draft",         "YAML · plugin · tests"),
@@ -76,9 +77,10 @@
   <div style="font-size:.7rem; font-weight:700; text-transform:uppercase; letter-spacing:.1em; color:var(--muted); margin-bottom:.65rem;">Report Type Workflow</div>
   <div class="wf-bar">
     {% for num, label, desc in steps %}
-      {% set n = num|int %}
-      {% set is_active = (n == active_step) %}
-      {% set is_done   = (n < active_step) %}
+      {# Convert "1b" to 1.5 for sorting, regular numbers stay as is #}
+      {% set sort_key = 1.5 if num == "1b" else (num|int) %}
+      {% set is_active = (num == active_step or (active_step|string == num)) %}
+      {% set is_done   = (sort_key < (1.5 if active_step|string == "1b" else (active_step|int))) %}
       <div style="display:flex; align-items:center; gap:0; flex-shrink:0;">
         <div class="wf-box{{ ' is-active' if is_active else (' is-done' if is_done else '') }}" id="wf-node-{{ num }}">
           <div class="wf-badge" id="wf-badge-{{ num }}">{{ '✓' if is_done else num }}</div>
@@ -88,8 +90,8 @@
         {% if not loop.last %}
         <div style="flex-shrink:0; margin:0 1px; margin-bottom:1rem;">
           <svg id="wf-arrow-{{ num }}" width="26" height="14" viewBox="0 0 26 14" fill="none">
-            <path d="M2 7 L20 7" stroke="{{ '#15803d' if (loop.index < active_step) else '#dbe5f0' }}" stroke-width="1.6" stroke-dasharray="{{ '0' if (loop.index < active_step) else '4 2' }}"/>
-            <polygon points="20,3 25,7 20,11" fill="{{ '#15803d' if (loop.index < active_step) else '#dbe5f0' }}"/>
+            <path d="M2 7 L20 7" stroke="{{ '#15803d' if is_done else '#dbe5f0' }}" stroke-width="1.6" stroke-dasharray="{{ '0' if is_done else '4 2' }}"/>
+            <polygon points="20,3 25,7 20,11" fill="{{ '#15803d' if is_done else '#dbe5f0' }}"/>
           </svg>
         </div>
         {% endif %}

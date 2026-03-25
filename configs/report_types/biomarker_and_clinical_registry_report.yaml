@@ -1,0 +1,89 @@
+report_type_id: biomarker_and_clinical_registry_report
+version: 1.0.0
+title: Biomarker and Clinical Registry Data Report
+required_columns:
+- timestamp
+- device_name
+- property
+metrics_profile: biomarker_and_clinical_registry_report
+default_prefs:
+  timestamp_format: '%Y-%m-%dT%H:%M:%SZ'
+  tone: concise
+  audience: leadership
+  focus: trends
+prompt_instructions: Ensure that all timestamps are in the correct format (YYYY-MM-DDTHH:mm:ssZ)
+  and assess the completeness, validity, and consistency of the data. Calculate mean,
+  median, and standard deviation for numerical properties, and perform frequency analysis
+  for devices. Use histogram plots to analyze the distribution of 'property'.
+output_schema:
+  type: object
+  additionalProperties: false
+  required:
+  - report_type_id
+  - report_title
+  - summary
+  - sections
+  - alerts
+  - recommendations
+  - tables
+  - charts
+  - metadata
+  properties:
+    report_type_id:
+      type: string
+    report_title:
+      type: string
+    summary:
+      type: string
+    sections:
+      type: array
+      items:
+        type: object
+        additionalProperties: false
+        required:
+        - title
+        - body
+        properties:
+          title:
+            type: string
+          body:
+            type: string
+    alerts:
+      type: array
+      items:
+        type: object
+        additionalProperties: false
+        required:
+        - severity
+        - message
+        properties:
+          severity:
+            type: string
+          message:
+            type: string
+    recommendations:
+      type: array
+      items:
+        type: object
+        additionalProperties: false
+        required:
+        - priority
+        - action
+        properties:
+          priority:
+            type: string
+          action:
+            type: string
+    tables:
+      type: array
+      items:
+        type: object
+        additionalProperties: true
+    charts:
+      type: array
+      items:
+        type: object
+        additionalProperties: true
+    metadata:
+      type: object
+      additionalProperties: true

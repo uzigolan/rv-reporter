@@ -134,7 +134,7 @@ RVWizard.step1 = (function () {
       if (rec.domain) {
         const c = document.createElement("span");
         c.className = "cs-chip";
-        c.textContent = rec.domain.replace(/_/g, " ");
+        c.textContent = (labels.DOMAIN_LABELS || {})[rec.domain] || rec.domain.replace(/_/g, " ");
         c.style.cssText = "background:#e0edff;color:#184392;padding:.15rem .5rem;border-radius:6px;font-weight:600;font-size:.78rem;";
         chips.appendChild(c);
       }
@@ -219,6 +219,193 @@ RVWizard.step1 = (function () {
     input.addEventListener("change", refreshSamplePercentSummary);
   });
 
+  /* ── Reshape: parse columns from textarea text ───────────────── */
+  function parseSourceStructureText(text) {
+    const raw = (text || "").trim();
+    if (!raw) return null;
+    let lines = raw.split(/\n/).map((l) => l.trim()).filter(Boolean);
+    if (lines.length === 1 && lines[0].includes(",")) {
+      lines = lines[0].split(",").map((l) => l.trim()).filter(Boolean);
+    }
+    const columns = [];
+    const notes = {};
+    for (const rawLine of lines) {
+      const line = rawLine.replace(/^[-*\u2022\d.)\s]+/, "").trim();
+      if (!line) continue;
+      const colonIdx = line.indexOf(":");
+      const col = colonIdx !== -1 ? line.slice(0, colonIdx).trim() : line;
+      const note = colonIdx !== -1 ? line.slice(colonIdx + 1).trim() : "";
+      if (!col || columns.includes(col)) continue;
+      columns.push(col);
+      if (note) notes[col] = note;
+    }
+    return columns.length ? { raw_text: raw, columns, notes } : null;
+  }
+
+  /* ── Task 2: Re-classify when reshape columns change ─────────── */
+  const sourceStructureTextarea = document.getElementById("source_structure_text");
+  let reshapeDebounceTimer = null;
+  sourceStructureTextarea && sourceStructureTextarea.addEventListener("input", () => {
+    clearTimeout(reshapeDebounceTimer);
+    reshapeDebounceTimer = setTimeout(() => {
+      const plan = parseSourceStructureText(sourceStructureTextarea.value);
+      if (!plan || plan.columns.length < 2) return;
+      const proposedCols = plan.columns.map((c) => c.toLowerCase());
+      const fname = existingInput.value ? (existingInput.value.split(/[\\/]/).pop() || "") : "";
+      fetchClassificationRecommendation(proposedCols, fname);
+    }, 800);
+  });
+
+  /* ── Task 3: Preset schema buttons ───────────────────────────── */
+  document.querySelectorAll(".schema-preset-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const presetId = btn.dataset.preset;
+      const presets = ((RVWizard.data || {}).SCHEMA_PRESETS) || [];
+      const preset = presets.find((p) => p.id === presetId);
+      if (!preset || !sourceStructureTextarea) return;
+      sourceStructureTextarea.value = preset.columns;
+      // Trigger debounced classification
+      clearTimeout(reshapeDebounceTimer);
+      const proposedCols = preset.columns.split(/\n/).map((line) =>
+        line.replace(/^[-*\u2022\d.)\s]+/, "").split(":")[0].trim().toLowerCase()
+      ).filter(Boolean);
+      if (proposedCols.length >= 2) {
+        const fname = existingInput.value ? (existingInput.value.split(/[\\/]/).pop() || "") : "";
+        fetchClassificationRecommendation(proposedCols, fname);
+      }
+    });
+  });
+
+  /* ── Task 1: Transform Preview ───────────────────────────────── */
+  const previewTransformBtn = document.getElementById("btn-preview-transform");
+  const transformPreviewWrap = document.getElementById("transform-preview-wrap");
+  const transformPreviewStatus = document.getElementById("transform-preview-status");
+
+  previewTransformBtn && previewTransformBtn.addEventListener("click", async () => {
+    const sourcePath = existingInput.value;
+    const structText = sourceStructureTextarea ? sourceStructureTextarea.value.trim() : "";
+    if (!sourcePath) {
+      if (transformPreviewStatus) transformPreviewStatus.textContent = "Upload a source file first.";
+      return;
+    }
+    if (!structText) {
+      if (transformPreviewStatus) transformPreviewStatus.textContent = "Enter columns in the Reshape panel first.";
+      return;
+    }
+    const plan = parseSourceStructureText(structText);
+    if (!plan) {
+      if (transformPreviewStatus) transformPreviewStatus.textContent = "Could not parse any columns.";
+      return;
+    }
+    if (transformPreviewStatus) transformPreviewStatus.textContent = "Transforming…";
+    previewTransformBtn.disabled = true;
+    try {
+      const resp = await fetch("/api/transform-source", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ source_path: sourcePath, source_structure_plan: plan }),
+      });
+      const result = await resp.json();
+      if (!resp.ok || result.error) {
+        if (transformPreviewStatus) transformPreviewStatus.textContent = "Error: " + (result.error || resp.statusText);
+        return;
+      }
+      if (transformPreviewStatus) transformPreviewStatus.textContent =
+        result.row_count.toLocaleString() + " rows → " + result.columns.length + " columns";
+      _renderTransformPreview(result);
+    } catch (_) {
+      if (transformPreviewStatus) transformPreviewStatus.textContent = "Request failed.";
+    } finally {
+      previewTransformBtn.disabled = false;
+    }
+  });
+
+  function _renderTransformPreview(result) {
+    if (!transformPreviewWrap) return;
+    const cols = result.columns || [];
+    const rows = result.preview_rows || [];
+    const conf = result.column_confidence || {};
+    const badgeStyle = {
+      direct:  "background:#d1fae5;color:#065f46;",
+      derived: "background:#e0edff;color:#184392;",
+      missing: "background:#fee2e2;color:#7f1d1d;",
+    };
+    let html = `<div style="overflow-x:auto;border:1px solid var(--border);border-radius:8px;background:#fff;">`;
+    html += `<div style="padding:.45rem .75rem;background:#f8f9fa;border-bottom:1px solid var(--border);display:flex;gap:.4rem;flex-wrap:wrap;align-items:center;font-size:.76rem;">`;
+    for (const col of cols) {
+      const c = conf[col] || "missing";
+      html += `<span style="${badgeStyle[c] || ""}padding:.15rem .45rem;border-radius:4px;font-weight:600;" title="${c}">${col}</span>`;
+    }
+    html += `</div>`;
+    if (rows.length) {
+      html += `<table style="border-collapse:collapse;font-size:.78rem;min-width:100%;">`;
+      html += `<thead><tr>` + cols.map((c) =>
+        `<th style="padding:.35rem .6rem;border-bottom:1px solid var(--border);white-space:nowrap;text-align:left;color:var(--muted);font-size:.75rem;">${c}</th>`
+      ).join("") + `</tr></thead><tbody>`;
+      for (const row of rows.slice(0, 8)) {
+        html += `<tr>` + cols.map((c) => {
+          const v = row[c];
+          return `<td style="padding:.3rem .6rem;border-bottom:1px solid #f0f0f0;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${v != null ? String(v) : ""}</td>`;
+        }).join("") + `</tr>`;
+      }
+      html += `</tbody></table>`;
+    }
+    html += `<div style="padding:.45rem .75rem;border-top:1px solid var(--border);font-size:.76rem;display:flex;gap:1rem;align-items:center;color:var(--muted);">`;
+    html += `Showing ${Math.min(rows.length, 8)} of ${result.row_count.toLocaleString()} rows`;
+    html += ` &nbsp;·&nbsp; <a href="/api/download-transformed?path=${encodeURIComponent(result.transformed_path)}" download style="color:#184392;font-weight:600;">⬇ Download transformed CSV</a>`;
+    html += `</div></div>`;
+    transformPreviewWrap.innerHTML = html;
+    transformPreviewWrap.style.display = "";
+  }
+
+  /* ── Preset Recommendations ──────────────────────────────────────── */
+  async function fetchPresetRecommendations() {
+    const cols = RVWizard.state.sourceColumns || [];
+    if (!cols.length) return;
+    const container = document.getElementById("preset-recommendations-wrap");
+    if (!container) return;
+
+    try {
+      const resp = await fetch("/api/recommend-preset", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ columns: cols }),
+      });
+      if (!resp.ok) return;
+      const data = await resp.json();
+      const presets = data.presets || [];
+      if (!presets.length) {
+        container.innerHTML = `<div class="small muted">No preset matched your columns. Browse all presets below.</div>`;
+        return;
+      }
+
+      let html = `<div style="margin-bottom:.75rem;"><div class="small" style="font-weight:700;margin-bottom:.35rem;color:var(--brand);">✨ AI-Recommended Presets</div>`;
+      for (const preset of presets) {
+        const confColor = preset.confidence === "high" ? "#059669" : preset.confidence === "medium" ? "#d97706" : "#6b7280";
+        html += `<button type="button" class="schema-preset-btn" data-preset="${preset.id}" `;
+        html += `style="font-size:.76rem; padding:.4rem .7rem; margin-right:.4rem; margin-bottom:.4rem; border:2px solid ${confColor}; border-radius:6px; background:#fff; cursor:pointer; color:var(--text); font-weight:600;">`;
+        html += `${preset.label} `;
+        html += `<span style="opacity:.6; padding-left:.3rem;">(${preset.confidence})</span>`;
+        html += `</button>`;
+      }
+      html += `</div>`;
+      container.innerHTML = html;
+      container.style.display = "";
+
+      // Re-wire preset buttons
+      container.querySelectorAll(".schema-preset-btn").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const presetId = btn.dataset.preset;
+          const presets_data = ((RVWizard.data || {}).SCHEMA_PRESETS) || [];
+          const preset = presets_data.find((p) => p.id === presetId);
+          if (!preset || !sourceStructureTextarea) return;
+          sourceStructureTextarea.value = preset.columns;
+          sourceStructureTextarea.focus();
+        });
+      });
+    } catch (_) { /* non-fatal */ }
+  }
+
   /* ── Init ────────────────────────────────────────────────────────── */
   syncUploadModeUi();
   if (existingInput.value) {
@@ -231,5 +418,5 @@ RVWizard.step1 = (function () {
   }
   refreshSamplePercentSummary();
 
-  return { loadSourceMetadata };
+  return { loadSourceMetadata, fetchPresetRecommendations };
 })();

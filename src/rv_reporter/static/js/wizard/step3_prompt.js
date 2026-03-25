@@ -54,21 +54,21 @@ RVWizard.step3 = (function () {
     let any = false;
 
     if (state.selectedDomain) {
-      dEl.textContent = "domain: " + state.selectedDomain;
+      dEl.textContent = "domain: " + ((data.DOMAIN_LABELS || {})[state.selectedDomain] || state.selectedDomain.replace(/_/g, " "));
       dEl.style.display = "";
       any = true;
     } else {
       dEl.style.display = "none";
     }
     if (state.selectedFamily) {
-      fEl.textContent = "family: " + state.selectedFamily;
+      fEl.textContent = "family: " + ((data.FAMILY_LABELS || {})[state.selectedFamily] || state.selectedFamily.replace(/_/g, " "));
       fEl.style.display = "";
       any = true;
     } else {
       fEl.style.display = "none";
     }
     if (state.selectedMode) {
-      mEl.textContent = "mode: " + state.selectedMode;
+      mEl.textContent = "mode: " + ((data.MODE_LABELS || {})[state.selectedMode] || state.selectedMode.replace(/_/g, " "));
       mEl.style.display = "";
       any = true;
     } else {

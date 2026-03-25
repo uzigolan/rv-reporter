@@ -82,8 +82,70 @@
       </div>
 
       <div style="margin-top:1rem; display:flex; gap:.6rem; align-items:center;">
-        <button type="button" class="btn-primary" id="step1-next">Next: Classify Report →</button>
-        <button type="button" class="btn-link" id="step1-skip" style="font-size:.82rem;">Skip</button>
+        <button type="button" class="btn-primary" id="step1-next">Next: Reshape Source →</button>
+        <button type="button" class="btn-link" id="step1-skip" style="font-size:.82rem;">Skip to Classification</button>
+      </div>
+    </div>
+
+    {# ── STEP 1b: Reshape Source Structure ────────────────────────── #}
+    <div class="wizard-step hidden" id="step-1b">
+      <div class="wizard-step-header">
+        <span class="wizard-step-num">1b</span>
+        <div>
+          <div class="wizard-step-title">Reshape Source Structure <span class="badge-optional">optional</span></div>
+          <div class="wizard-step-sub">Describe the target column structure you want to normalize the source into. The AI will use this as the target schema.</div>
+        </div>
+      </div>
+
+      <div style="padding:.8rem 1rem; border:1px solid var(--border); border-radius:10px; background:var(--surface);">
+        <div class="small muted" style="margin-bottom:.55rem;">If you plan to normalize the uploaded source before reporting, describe the target columns here. The AI draft will use this proposed structure as the target schema instead of the raw file layout.</div>
+        
+        {# AI-recommended presets (will be populated by JavaScript) #}
+        <div id="preset-recommendations-wrap" style="display:none; margin-bottom:.75rem; padding:.6rem; background:rgba(15,118,110,.05); border:1px solid rgba(15,118,110,.15); border-radius:8px;"></div>
+
+        {# Manual preset browser #}
+        <div style="display:flex; gap:.4rem; flex-wrap:wrap; align-items:center; margin-bottom:.55rem;">
+          <span class="small muted">Or browse presets:</span>
+          <button type="button" class="schema-preset-btn" data-preset="assisted_living" style="font-size:.76rem; padding:.2rem .55rem; border:1px solid var(--border); border-radius:6px; background:#fff; cursor:pointer; color:var(--text);">Assisted Living Care Calls</button>
+          <button type="button" class="schema-preset-btn" data-preset="iot_event_log" style="font-size:.76rem; padding:.2rem .55rem; border:1px solid var(--border); border-radius:6px; background:#fff; cursor:pointer; color:var(--text);">IoT Event Log</button>
+          <button type="button" class="schema-preset-btn" data-preset="support_ticket" style="font-size:.76rem; padding:.2rem .55rem; border:1px solid var(--border); border-radius:6px; background:#fff; cursor:pointer; color:var(--text);">Support Tickets</button>
+          <button type="button" class="schema-preset-btn" data-preset="network_session" style="font-size:.76rem; padding:.2rem .55rem; border:1px solid var(--border); border-radius:6px; background:#fff; cursor:pointer; color:var(--text);">Network Session</button>
+          <button type="button" class="schema-preset-btn" data-preset="twamp_session" style="font-size:.76rem; padding:.2rem .55rem; border:1px solid var(--border); border-radius:6px; background:#fff; cursor:pointer; color:var(--text);">TWAMP Session</button>
+        </div>
+        <label style="display:block; margin-top:.25rem;">
+          <span class="small muted" style="display:block; margin-bottom:.35rem;">One column per line. You can add notes after a colon, for example <em>actor_type: patient or caregiver</em>.</span>
+          <textarea name="source_structure_text" id="source_structure_text" rows="8" class="code-area" style="font-family:inherit; white-space:pre-wrap; font-size:.84rem;">{{ source_structure_text or '' }}</textarea>
+        </label>
+        <div style="margin-top:.6rem; display:flex; gap:.6rem; align-items:center;">
+          <button type="button" id="btn-preview-transform" class="btn-secondary" style="font-size:.8rem; padding:.3rem .7rem;">Preview Transform</button>
+          <span id="transform-preview-status" class="small muted"></span>
+        </div>
+        <div id="transform-preview-wrap" style="display:none; margin-top:.7rem;"></div>
+      </div>
+
+      {# ── AI-Powered Transform Chat ───────────────────────────────── #}
+      <div style="margin-top:1rem;">
+        <div style="font-size:.85rem; font-weight:700; margin-bottom:.5rem; color:#6d28d9;">🧠 AI Transform Assistant</div>
+        <div class="small muted" style="margin-bottom:.5rem;">Let AI analyze your raw data and suggest column renames, computed fields, parsing, and restructuring. Chat to refine, then apply to create a transformed CSV used in all further steps.</div>
+        <div id="transform-reasoning-chat" class="rc-panel">
+          <div class="rc-messages" style="min-height:180px; max-height:420px; overflow-y:auto;"></div>
+          <div class="rc-status"></div>
+          <div class="rc-input-row">
+            <input type="text" class="rc-input" placeholder="E.g. 'Split device_name into room_id and person_name', 'Add response_time column'…" />
+            <button type="button" class="btn-primary rc-send-btn">Send</button>
+          </div>
+        </div>
+        <div style="margin-top:.6rem; display:flex; gap:.6rem; align-items:center; flex-wrap:wrap;">
+          <button type="button" class="btn-primary" id="btn-apply-ai-transform" style="display:none;">✅ Apply AI Transform</button>
+          <span id="ai-transform-status" class="small muted"></span>
+        </div>
+        <div id="ai-transform-preview-wrap" style="display:none; margin-top:.7rem;"></div>
+      </div>
+
+      <div style="margin-top:1rem; display:flex; gap:.6rem; align-items:center;">
+        <button type="button" class="btn-link" id="step1b-back" style="font-size:.82rem;">← Back to Upload</button>
+        <button type="button" class="btn-primary" id="step1b-next">Next: Classify Report →</button>
+        <button type="button" class="btn-link" id="step1b-skip" style="font-size:.82rem;">Skip to Classification</button>
       </div>
     </div>
 
@@ -114,7 +176,7 @@
           ("security",    "🔒", "Security",             "security"),
           ("operations",  "⚙️", "Operations",          "operations,manufacturing,supply_chain,energy"),
           ("business",    "📊", "Business & Finance",   "finance,sales,product,customer_support"),
-          ("research",    "🔬", "Research & Health",    "healthcare,research,education,government"),
+          ("research",    "🔬", "Health / Research / Public", "healthcare,research,education,government"),
           ("generic",     "🗂️", "General / Other",     "generic,project_management"),
         ] %}
         {% for cid, icon, label, domains_csv in categories %}
@@ -160,6 +222,33 @@
       <div style="margin-top:1rem; display:flex; gap:.6rem; align-items:center;">
         <button type="button" class="btn-link" id="step2-back" style="font-size:.82rem;">← Back</button>
         <button type="button" class="btn-primary" id="step2-next">Next: Write Prompt →</button>
+        <button type="button" class="btn-secondary" id="step2-reason-btn" style="margin-left:auto;">🧠 AI Classification Reasoning</button>
+      </div>
+    </div>
+
+    {# ── STEP 2b: Classification Reasoning Chat ───────────────────── #}
+    <div class="wizard-step hidden" id="step-2b">
+      <div class="wizard-step-header">
+        <span class="wizard-step-num" style="background:#6d28d9;">🧠</span>
+        <div>
+          <div class="wizard-step-title">AI Classification Reasoning</div>
+          <div class="wizard-step-sub">The AI explains why it classified your data this way. Give feedback to refine — loop as many times as you want.</div>
+        </div>
+      </div>
+
+      <div id="classify-reasoning-chat" class="rc-panel">
+        <div class="rc-messages" style="min-height:200px; max-height:450px; overflow-y:auto;"></div>
+        <div class="rc-status"></div>
+        <div class="rc-input-row">
+          <input type="text" class="rc-input" placeholder="Give feedback: 'I think this is more healthcare than operations…'" />
+          <button type="button" class="btn-primary rc-send-btn">Send</button>
+        </div>
+      </div>
+
+      <div style="margin-top:1rem; display:flex; gap:.6rem; align-items:center;">
+        <button type="button" class="btn-link" id="step2b-back" style="font-size:.82rem;">← Back to Classify</button>
+        <button type="button" class="btn-secondary" id="step2b-apply-btn">✓ Apply AI Classification</button>
+        <button type="button" class="btn-primary" id="step2b-next">Next: Write Prompt →</button>
       </div>
     </div>
 
@@ -205,13 +294,40 @@
         <button type="button" class="btn-link" id="step3-back" style="font-size:.82rem;">← Back</button>
         <button type="button" class="btn-primary" id="check-prompt-btn" style="background: var(--brand-2);">🛡 Check Prompt</button>
         <button type="button" class="btn-secondary" id="improve-prompt-btn">What Needs To Be Done Better?</button>
-        <button type="submit" class="btn-primary" id="generate-btn">🤖 Generate Draft With AI</button>
+        <button type="button" class="btn-primary" id="step3-next">📝 Preview Blueprint →</button>
+        <button type="submit" class="btn-primary" id="generate-btn" style="display:none;">🤖 Generate Draft With AI</button>
       </div>
       <div id="prompt-improve-panel" style="display:none; margin-top:.75rem; padding:.75rem 1rem; border-radius:10px; border:1px solid #bfdbfe; background:#f8fbff;">
         <div style="font-weight:700; font-size:.82rem; margin-bottom:.45rem; color:#184392;">AI Prompt Improvements Applied</div>
         <div id="prompt-improve-changes" class="small" style="display:flex; flex-direction:column; gap:.3rem;"></div>
       </div>
       <p class="muted" style="font-size:.76rem; margin-top:.5rem;">Model: {{ report_type_agent_model }} · Creates a draft only — review before publishing.</p>
+    </div>
+
+    {# ── STEP 3b: Report Blueprint Chat ───────────────────────────── #}
+    <div class="wizard-step hidden" id="step-3b">
+      <div class="wizard-step-header">
+        <span class="wizard-step-num" style="background:#6d28d9;">📝</span>
+        <div>
+          <div class="wizard-step-title">Report Blueprint</div>
+          <div class="wizard-step-sub">Review a text-only preview of the report: sections, charts, tables, alerts. Refine as many times as you want before generating code.</div>
+        </div>
+      </div>
+
+      <div id="blueprint-reasoning-chat" class="rc-panel">
+        <div class="rc-messages" style="min-height:200px; max-height:500px; overflow-y:auto;"></div>
+        <div class="rc-status"></div>
+        <div class="rc-input-row">
+          <input type="text" class="rc-input" placeholder="Give feedback: 'Add a chart for hourly trend', 'Remove the severity table'…" />
+          <button type="button" class="btn-primary rc-send-btn">Send</button>
+        </div>
+      </div>
+
+      <div style="margin-top:1rem; display:flex; gap:.6rem; align-items:center;">
+        <button type="button" class="btn-link" id="step3b-back" style="font-size:.82rem;">← Back to Prompt</button>
+        <button type="submit" class="btn-primary" id="step3b-generate">✅ Approve Blueprint & Generate Draft</button>
+      </div>
+      <p class="muted" style="font-size:.76rem; margin-top:.5rem;">Model: {{ report_type_agent_model }} · The approved blueprint guides the AI code generation.</p>
     </div>
 
   </form>
@@ -237,17 +353,67 @@
 .guardrail-issue  { color:#b91c1c; font-size:.8rem; padding:.2rem 0; }
 .guardrail-warn   { color:#92400e; font-size:.8rem; padding:.2rem 0; }
 .guardrail-sugg   { color:#1d4ed8; font-size:.8rem; padding:.2rem 0; }
+
+/* ── Reasoning Chat Panel ─────────────────────────────────────── */
+.rc-panel { margin-top:.75rem; border:1px solid var(--border); border-radius:12px; background:var(--surface); padding:.75rem; }
+.rc-messages { display:flex; flex-direction:column; gap:.6rem; padding:.5rem; }
+.rc-msg { padding:.6rem .85rem; border-radius:10px; font-size:.82rem; line-height:1.5; max-width:88%; word-wrap:break-word; }
+.rc-msg.ai { background:linear-gradient(135deg,rgba(109,40,217,.06),rgba(15,118,110,.06)); border:1px solid rgba(109,40,217,.15); align-self:flex-start; }
+.rc-msg.user { background:rgba(15,118,110,.08); border:1px solid rgba(15,118,110,.18); align-self:flex-end; }
+.rc-msg.system { background:#fef3c7; border:1px solid #fde68a; align-self:center; text-align:center; font-size:.78rem; color:#92400e; }
+.rc-input-row { display:flex; gap:.5rem; margin-top:.65rem; }
+.rc-input { flex:1; padding:.45rem .7rem; border:1.5px solid var(--border); border-radius:8px; font-size:.82rem; background:var(--bg); color:var(--text); }
+.rc-input:focus { outline:none; border-color:var(--brand); }
+.rc-send-btn { padding:.45rem .9rem; font-size:.8rem; white-space:nowrap; }
+.rc-status { font-size:.76rem; color:var(--muted); min-height:1.2rem; margin-top:.3rem; }
+.rc-status.busy { color:#6d28d9; }
+
+/* Reasoning result sub-components */
+.rc-reasoning { white-space:pre-wrap; font-size:.82rem; color:var(--text); margin-bottom:.5rem; }
+.rc-chip-row { display:flex; flex-wrap:wrap; gap:.35rem; margin:.4rem 0; }
+.rc-chip { padding:.2rem .6rem; border-radius:6px; font-size:.74rem; font-weight:700; }
+.rc-chip.domain { background:rgba(15,118,110,.1); color:var(--brand); }
+.rc-chip.family { background:rgba(29,78,216,.1); color:#1d4ed8; }
+.rc-chip.mode   { background:rgba(109,40,217,.1); color:#6d28d9; }
+.rc-chip.conf   { background:#fef3c7; color:#92400e; }
+.rc-section-title { font-weight:700; font-size:.84rem; margin:.6rem 0 .25rem; color:var(--brand); }
+.rc-alternatives { list-style:none; padding:0; margin:.3rem 0; }
+.rc-alternatives li { padding:.3rem 0; font-size:.8rem; border-bottom:1px solid rgba(0,0,0,.05); }
+.rc-alternatives li strong { color:#6d28d9; }
+.rc-suggestions { list-style:disc; padding-left:1.2rem; margin:.3rem 0; }
+.rc-suggestions li { font-size:.8rem; color:var(--muted); padding:.15rem 0; }
+
+/* Blueprint sub-components */
+.rc-bp-header { font-size:1rem; font-weight:800; margin-bottom:.3rem; }
+.rc-bp-summary { font-size:.84rem; color:var(--muted); margin-bottom:.6rem; font-style:italic; }
+.rc-bp-sections { display:flex; flex-direction:column; gap:.5rem; }
+.rc-bp-section { padding:.5rem .7rem; background:rgba(15,118,110,.03); border:1px solid rgba(15,118,110,.1); border-radius:8px; }
+.rc-bp-section-num { font-weight:800; color:var(--brand); margin-right:.3rem; }
+.rc-bp-section-title { font-weight:700; font-size:.84rem; }
+.rc-bp-section-purpose { font-size:.78rem; color:var(--muted); margin-top:.2rem; }
+.rc-bp-charts, .rc-bp-tables, .rc-bp-alerts, .rc-bp-recs, .rc-bp-gaps { margin-top:.4rem; }
+.rc-bp-item { font-size:.8rem; padding:.2rem 0; }
+.rc-bp-item strong { color:#1d4ed8; }
+.rc-bp-alert { font-size:.8rem; padding:.2rem 0; }
+.rc-bp-alert .sev { font-weight:700; }
+.rc-bp-alert .sev.critical { color:#b91c1c; }
+.rc-bp-alert .sev.warning { color:#92400e; }
+.rc-bp-alert .sev.info { color:#1d4ed8; }
 </style>
 
 <script>
 /* Server-side config — Jinja2 values only. All logic lives in static/js/wizard/. */
 window.WIZARD_CONFIG = {
-  sourceMetadataUrl: "{{ url_for('source_metadata') }}",
-  validatePromptUrl: "{{ url_for('validate_prompt_api') }}",
-  improvePromptUrl:  "{{ url_for('improve_prompt_api') }}",
-  modes:             {{ modes|tojson }},
-  sheetOptions:      {{ sheet_options|tojson }},
-  selectedSheet:     {{ selected_sheet|tojson }},
+  sourceMetadataUrl:      "{{ url_for('source_metadata') }}",
+  validatePromptUrl:      "{{ url_for('validate_prompt_api') }}",
+  improvePromptUrl:       "{{ url_for('improve_prompt_api') }}",
+  classifyReasoningUrl:   "{{ url_for('reasoning_classify_api') }}",
+  blueprintUrl:           "{{ url_for('reasoning_blueprint_api') }}",
+  transformReasoningUrl:  "{{ url_for('reasoning_transform_api') }}",
+  transformApplyUrl:      "{{ url_for('reasoning_transform_apply_api') }}",
+  modes:                  {{ modes|tojson }},
+  sheetOptions:           {{ sheet_options|tojson }},
+  selectedSheet:          {{ selected_sheet|tojson }},
 };
 </script>
 <script src="{{ url_for('static', filename='js/wizard/data.js') }}"></script>
@@ -255,6 +421,7 @@ window.WIZARD_CONFIG = {
 <script src="{{ url_for('static', filename='js/wizard/step1_upload.js') }}"></script>
 <script src="{{ url_for('static', filename='js/wizard/step2_classify.js') }}"></script>
 <script src="{{ url_for('static', filename='js/wizard/step3_prompt.js') }}"></script>
+<script src="{{ url_for('static', filename='js/wizard/reasoning_chat.js') }}"></script>
 <script src="{{ url_for('static', filename='js/wizard/init.js') }}"></script>
 {% endblock %}
 

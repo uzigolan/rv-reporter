@@ -1,0 +1,18 @@
+plugin_id: biomarker_and_clinical_registry_report
+metrics_profile: biomarker_and_clinical_registry_report
+api_version: 1
+version: 1.0.0
+title: Biomarker and Clinical Registry Data Report
+description: This report evaluates biomarker and clinical device data. It includes
+  descriptive statistics, distribution analyses, and data quality assessments to support
+  healthcare data management.
+family: tabular_statistical
+domain: healthcare
+mode: statistical_summary
+entrypoint: plugin.py
+owner: ai-agent
+generator: openai_sdk
+status: planned
+extensions:
+  sample_source: C:\Users\uzi_g\Downloads\ai-projects\rv-reporter\uploads\assisted_living_demo_v2_d70b86a3.csv
+updated_at: '2026-03-24T13:45:11.938169+00:00'

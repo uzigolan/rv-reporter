@@ -381,6 +381,60 @@ def create_app(config_overrides: dict[str, Any] | None = None) -> Flask:
         metadata = describe_tabular_source(destination)
         return jsonify({"path": str(destination), **metadata})
 
+    @app.post("/api/transform-source")
+    def transform_source_api() -> Any:
+        """Preview and apply a source structure plan to produce a normalized CSV."""
+        data = request.get_json(silent=True) or {}
+        source_path = str(data.get("source_path", "")).strip()
+        plan_raw = data.get("source_structure_plan", {})
+
+        if not source_path:
+            return jsonify({"error": "source_path is required"}), 400
+        p = Path(source_path)
+        if not p.is_file():
+            return jsonify({"error": "File not found"}), 404
+        if not plan_raw or not isinstance(plan_raw, dict) or not plan_raw.get("columns"):
+            return jsonify({"error": "source_structure_plan with columns is required"}), 400
+
+        try:
+            df = load_csv_with_limit(p, row_limit=None)
+        except Exception as exc:  # noqa: BLE001
+            return jsonify({"error": str(exc)}), 400
+
+        transformed_df, confidence = _apply_source_structure_transform(df, plan_raw)
+
+        out_dir = Path(app.config["UPLOAD_FOLDER"]).parent / "temp_uploads"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        out_name = f"{p.stem}_transformed_{uuid4().hex[:8]}.csv"
+        out_path = out_dir / out_name
+        transformed_df.to_csv(out_path, index=False)
+
+        preview_rows: list[dict[str, Any]] = []
+        for _, row in transformed_df.head(10).iterrows():
+            preview_rows.append({k: _json_safe_value(v) for k, v in row.items()})
+
+        return jsonify({
+            "transformed_path": str(out_path),
+            "columns": list(transformed_df.columns),
+            "column_confidence": confidence,
+            "row_count": len(transformed_df),
+            "preview_rows": preview_rows,
+        })
+
+    @app.get("/api/download-transformed")
+    def download_transformed_api() -> Any:
+        """Download a previously transformed CSV (restricted to temp_uploads dir)."""
+        path_str = request.args.get("path", "").strip()
+        if not path_str:
+            return jsonify({"error": "path is required"}), 400
+        p = Path(path_str).resolve()
+        allowed_dir = (Path(app.config["UPLOAD_FOLDER"]).parent / "temp_uploads").resolve()
+        if not str(p).startswith(str(allowed_dir)):
+            return jsonify({"error": "Forbidden"}), 403
+        if not p.is_file():
+            return jsonify({"error": "File not found"}), 404
+        return send_file(p, as_attachment=True, download_name=p.name, mimetype="text/csv")
+
     @app.get("/about")
     def about() -> str:
         return render_template(
@@ -486,6 +540,7 @@ def create_app(config_overrides: dict[str, Any] | None = None) -> Flask:
             sheet_options=[],
             source_summary=None,
             source_sample_percent=100,
+            source_structure_text="",
             families=sorted(FAMILIES),
             domains=sorted(DOMAINS),
             modes=sorted(MODES),
@@ -556,7 +611,7 @@ def create_app(config_overrides: dict[str, Any] | None = None) -> Flask:
             best_family = "tabular_statistical"
 
         # Refine with domain-family map
-        from rv_reporter.report_types.scaffold import FAMILIES as _ALL_FAMILIES  # noqa: F811
+        from rv_reporter.report_types.scaffold import FAMILIES as _ALL_FAMILIES, MODES as _ALL_MODES  # noqa: F811
         domain_family_map = {
             "networking": ["time_series", "event", "hybrid"],
             "telecom": ["time_series", "event"],
@@ -580,6 +635,26 @@ def create_app(config_overrides: dict[str, Any] | None = None) -> Flask:
         if best_family not in valid_families and valid_families:
             best_family = valid_families[0]
 
+        domain_mode_map = {
+            "networking": ["trend_analysis", "anomaly_detection", "flow_bottleneck", "issue_detection", "threshold_sla", "health_score", "root_cause_triage", "top_n_hotspots"],
+            "telecom": ["trend_analysis", "anomaly_detection", "issue_detection", "threshold_sla", "health_score", "burst_detection"],
+            "observability": ["trend_analysis", "anomaly_detection", "statistical_summary", "health_score", "top_n_hotspots"],
+            "security": ["issue_detection", "anomaly_detection", "burst_detection", "root_cause_triage", "change_detection", "overview_summary"],
+            "operations": ["health_score", "issue_detection", "overview_summary", "root_cause_triage", "trend_analysis", "threshold_sla"],
+            "manufacturing": ["health_score", "issue_detection", "trend_analysis", "burst_detection", "variance_analysis"],
+            "supply_chain": ["overview_summary", "trend_analysis", "variance_analysis", "ranking_prioritization"],
+            "energy": ["trend_analysis", "anomaly_detection", "threshold_sla", "statistical_summary"],
+            "finance": ["variance_analysis", "overview_summary", "statistical_summary", "forecast_outlook", "ranking_prioritization"],
+            "sales": ["trend_analysis", "forecast_outlook", "ranking_prioritization", "overview_summary"],
+            "product": ["trend_analysis", "statistical_summary", "segmentation_analysis", "change_detection"],
+            "customer_support": ["overview_summary", "trend_analysis", "ranking_prioritization", "statistical_summary"],
+            "healthcare": ["statistical_summary", "overview_summary", "distribution_analysis", "correlation_analysis"],
+            "research": ["statistical_summary", "distribution_analysis", "correlation_analysis", "change_detection"],
+            "education": ["overview_summary", "statistical_summary", "ranking_prioritization"],
+            "government": ["overview_summary", "statistical_summary"],
+            "project_management": ["overview_summary", "ranking_prioritization", "trend_analysis", "issue_detection"],
+        }
+
         # ── Mode inference ───────────────────────────────────────────
         has_threshold = any(kw in joined for kw in ["threshold", "sla", "limit", "max", "min", "critical", "violation"])
         has_anomaly = any(kw in joined for kw in ["anomaly", "outlier", "deviation", "abnormal"])
@@ -599,6 +674,10 @@ def create_app(config_overrides: dict[str, Any] | None = None) -> Flask:
         else:
             best_mode = "overview_summary"
 
+        valid_modes = domain_mode_map.get(best_domain, list(_ALL_MODES))
+        if best_mode not in valid_modes and valid_modes:
+            best_mode = valid_modes[0]
+
         total_hits = sum(domain_scores.values()) if domain_scores else 0
         if total_hits >= 4:
             confidence = "high"
@@ -615,6 +694,99 @@ def create_app(config_overrides: dict[str, Any] | None = None) -> Flask:
             "mode": best_mode,
             "confidence": confidence,
         })
+
+    @app.post("/api/recommend-preset")
+    def recommend_preset_api() -> Any:
+        """Recommend schema presets based on uploaded column names."""
+        data = request.get_json(silent=True) or {}
+        columns = [str(c).strip().lower() for c in data.get("columns", []) if str(c).strip()]
+        if not columns:
+            return jsonify({"presets": []})
+
+        joined = " ".join(columns)
+
+        # Preset definitions (must match SCHEMA_PRESETS in data.js)
+        presets = [
+            {
+                "id": "assisted_living",
+                "label": "Assisted Living Care Calls",
+                "keywords": ["assisted", "living", "call", "caregiver", "patient", "room", "incident", "resolved"],
+                "key_columns": ["timestamp", "incident_id", "event_type", "actor_type", "actor_name", "room_id", "patient_name", "caregiver_name"],
+            },
+            {
+                "id": "iot_event_log",
+                "label": "IoT Event Log",
+                "keywords": ["device", "event", "location", "severity", "payload", "session"],
+                "key_columns": ["timestamp", "device_id", "device_name", "location", "event_type", "severity", "payload", "session_id"],
+            },
+            {
+                "id": "support_ticket",
+                "label": "Support / Helpdesk Tickets",
+                "keywords": ["ticket", "case", "agent", "customer", "priority", "resolution", "status"],
+                "key_columns": ["ticket_id", "created_at", "updated_at", "closed_at", "agent_name", "customer_id", "priority", "category", "status", "resolution_time_min"],
+            },
+            {
+                "id": "network_session",
+                "label": "Network Session Events",
+                "keywords": ["session", "ip", "protocol", "bytes", "latency", "packet", "loss", "src", "dst"],
+                "key_columns": ["timestamp", "session_id", "src_ip", "dst_ip", "protocol", "bytes_sent", "bytes_received", "latency_ms", "packet_loss_pct", "status"],
+            },
+            {
+                "id": "twamp_session",
+                "label": "TWAMP Session Health",
+                "keywords": ["twamp", "session", "pdv", "ipdv", "latency", "packet", "loss", "rtt", "node"],
+                "key_columns": ["timestamp", "session_id", "node_id", "pdv_ms", "ipdv_ms", "latency_ms", "packet_loss_pct", "rtt_ms", "threshold_pdv_ms", "threshold_loss_pct"],
+            },
+        ]
+
+        # Score each preset
+        scored_presets = []
+        for preset in presets:
+            # Match keywords in joined column string
+            keyword_hits = sum(1 for kw in preset["keywords"] if kw in joined)
+            
+            # Match key columns (higher weight for exact matches)
+            def _score_column(col: str) -> int:
+                if col in columns:
+                    return 2
+                if any(col.startswith(c.split("_")[0]) for c in columns):
+                    return 1
+                return 0
+            
+            key_col_hits = sum(_score_column(col) for col in preset["key_columns"])
+            
+            total_score = keyword_hits + key_col_hits
+            if total_score > 0:
+                scored_presets.append({
+                    "id": preset["id"],
+                    "label": preset["label"],
+                    "score": total_score,
+                    "matched_keywords": [kw for kw in preset["keywords"] if kw in joined],
+                    "matched_columns": [col for col in preset["key_columns"] if col in columns],
+                })
+
+        # Sort by score descending
+        scored_presets.sort(key=lambda p: p["score"], reverse=True)
+
+        # Return top 3 with confidence levels
+        result = []
+        for i, p in enumerate(scored_presets[:3]):
+            if p["score"] >= 5:
+                confidence = "high"
+            elif p["score"] >= 3:
+                confidence = "medium"
+            else:
+                confidence = "low"
+            result.append({
+                "id": p["id"],
+                "label": p["label"],
+                "confidence": confidence,
+                "score": p["score"],
+                "matched_keywords": p["matched_keywords"][:3],
+                "matched_columns": p["matched_columns"][:3],
+            })
+
+        return jsonify({"presets": result})
 
     @app.post("/api/validate-prompt")
     def validate_prompt_api() -> Any:
@@ -760,6 +932,369 @@ def create_app(config_overrides: dict[str, Any] | None = None) -> Flask:
         except Exception as exc:  # noqa: BLE001
             return jsonify({"error": str(exc)}), 400
         return jsonify(result)
+
+    # ── Reasoning Chat APIs ──────────────────────────────────────────
+
+    @app.post("/api/reasoning/classify")
+    def reasoning_classify_api() -> Any:
+        """AI-powered classification reasoning with conversational refinement."""
+        data = request.get_json(silent=True) or {}
+        columns = [str(c).strip() for c in data.get("columns", []) if str(c).strip()]
+        filename = str(data.get("filename", "")).strip()
+        user_feedback = str(data.get("feedback", "")).strip()
+        previous_reasoning = str(data.get("previous_reasoning", "")).strip()
+
+        if not columns and not filename:
+            return jsonify({"error": "Provide columns or filename."}), 400
+
+        api_key = os.getenv("OPENAI_API_KEY", "").strip()
+        if not api_key:
+            return jsonify({"error": "OPENAI_API_KEY is required for reasoning."}), 400
+        try:
+            from openai import OpenAI
+        except ImportError:
+            return jsonify({"error": "Install openai extra: pip install -e '.[openai]'"}), 500
+
+        messages: list[dict] = []
+        if previous_reasoning and user_feedback:
+            messages.append({"role": "user", "content": [{"type": "input_text", "text": json.dumps({
+                "columns": columns, "filename": filename,
+                "task": "Classify this data source for a reporting system."
+            })}]})
+            messages.append({"role": "assistant", "content": [{"type": "output_text", "text": previous_reasoning}]})
+            messages.append({"role": "user", "content": [{"type": "input_text", "text":
+                f"User feedback: {user_feedback}\n\nPlease revise your classification reasoning based on this feedback. Return updated JSON."}]})
+        else:
+            messages.append({"role": "user", "content": [{"type": "input_text", "text": json.dumps({
+                "columns": columns, "filename": filename,
+                "task": "Classify this data source for a reporting system."
+            })}]})
+
+        client = OpenAI(api_key=api_key)
+        try:
+            resp = client.responses.create(
+                model=str(app.config.get("REPORT_TYPE_AGENT_MODEL", "gpt-4o-mini")),
+                instructions=(
+                    "You are a data classification expert for a reporting system.\n"
+                    "Given CSV column names and filename, reason about what domain, family, and analysis mode fit best.\n\n"
+                    "Think step-by-step:\n"
+                    "1. What do these column names suggest about the data domain?\n"
+                    "2. What data patterns do you see? (time-series, events, snapshots, etc.)\n"
+                    "3. What analysis mode makes most sense?\n"
+                    "4. What alternative classifications could work, and why is your pick better?\n"
+                    "5. What suggestions would improve the data or prompt for better reports?\n\n"
+                    f"Allowed domains: {', '.join(sorted(DOMAINS))}\n"
+                    f"Allowed families: {', '.join(sorted(FAMILIES))}\n"
+                    f"Allowed modes: {', '.join(sorted(MODES))}\n\n"
+                    "Return JSON only."
+                ),
+                input=messages,
+                text={"format": {"type": "json_schema", "name": "classification_reasoning", "schema": {
+                    "type": "object", "additionalProperties": False,
+                    "required": ["reasoning", "domain", "family", "mode", "confidence", "alternatives", "suggestions"],
+                    "properties": {
+                        "reasoning": {"type": "string", "description": "Step-by-step reasoning explaining the classification (3-6 paragraphs)."},
+                        "domain": {"type": "string"},
+                        "family": {"type": "string"},
+                        "mode": {"type": "string"},
+                        "confidence": {"type": "string", "enum": ["high", "medium", "low"]},
+                        "alternatives": {"type": "array", "items": {"type": "object", "properties": {
+                            "domain": {"type": "string"}, "family": {"type": "string"},
+                            "mode": {"type": "string"}, "why": {"type": "string"}
+                        }, "required": ["domain", "family", "mode", "why"], "additionalProperties": False}},
+                        "suggestions": {"type": "array", "items": {"type": "string"},
+                                        "description": "Suggestions for improving columns, naming, or data structure."},
+                    }
+                }}},
+            )
+            result = json.loads(resp.output_text)
+        except Exception as exc:
+            return jsonify({"error": f"AI reasoning failed: {exc}"}), 500
+
+        return jsonify(result)
+
+    @app.post("/api/reasoning/blueprint")
+    def reasoning_blueprint_api() -> Any:
+        """AI-generated text-only report blueprint with conversational refinement."""
+        data = request.get_json(silent=True) or {}
+        prompt_text = str(data.get("prompt_text", "")).strip()
+        columns = [str(c).strip() for c in data.get("columns", []) if str(c).strip()]
+        domain = str(data.get("domain", "")).strip()
+        family = str(data.get("family", "")).strip()
+        mode = str(data.get("mode", "")).strip()
+        user_feedback = str(data.get("feedback", "")).strip()
+        previous_blueprint = str(data.get("previous_blueprint", "")).strip()
+
+        if not prompt_text:
+            return jsonify({"error": "Prompt text is required."}), 400
+
+        api_key = os.getenv("OPENAI_API_KEY", "").strip()
+        if not api_key:
+            return jsonify({"error": "OPENAI_API_KEY is required for reasoning."}), 400
+        try:
+            from openai import OpenAI
+        except ImportError:
+            return jsonify({"error": "Install openai extra: pip install -e '.[openai]'"}), 500
+
+        messages: list[dict] = []
+        if previous_blueprint and user_feedback:
+            messages.append({"role": "user", "content": [{"type": "input_text", "text": json.dumps({
+                "prompt": prompt_text, "columns": columns,
+                "domain": domain, "family": family, "mode": mode,
+                "task": "Design a text-only report blueprint."
+            })}]})
+            messages.append({"role": "assistant", "content": [{"type": "output_text", "text": previous_blueprint}]})
+            messages.append({"role": "user", "content": [{"type": "input_text", "text":
+                f"User feedback: {user_feedback}\n\nPlease revise the report blueprint based on this feedback. Return updated JSON."}]})
+        else:
+            messages.append({"role": "user", "content": [{"type": "input_text", "text": json.dumps({
+                "prompt": prompt_text, "columns": columns,
+                "domain": domain, "family": family, "mode": mode,
+                "task": "Design a text-only report blueprint."
+            })}]})
+
+        client = OpenAI(api_key=api_key)
+        try:
+            resp = client.responses.create(
+                model=str(app.config.get("REPORT_TYPE_AGENT_MODEL", "gpt-4o-mini")),
+                instructions=(
+                    "You are a report design expert. Generate a DETAILED text-only blueprint of a data report.\n"
+                    "The blueprint should be a complete textual mockup showing EVERY section, chart, table, and alert "
+                    "the final report will contain — described in words, not code.\n\n"
+                    "For each section, describe:\n"
+                    "- Title and purpose\n"
+                    "- What text/narrative will appear\n"
+                    "- Charts: type (bar/line/pie), axes, what data they show\n"
+                    "- Tables: column headers and what each row represents\n"
+                    "- Alerts: trigger conditions and severity\n\n"
+                    "Also include:\n"
+                    "- An 'Overall Assessment' summary section\n"
+                    "- Recommendations section with actionable items\n"
+                    "- A 'Gaps & Missing Data' section: what the data DOESN'T cover\n"
+                    "- Suggestions for additional charts, analyses, or data columns\n\n"
+                    "Think about what makes this report USEFUL for the reader.\n"
+                    "Return JSON only."
+                ),
+                input=messages,
+                text={"format": {"type": "json_schema", "name": "report_blueprint", "schema": {
+                    "type": "object", "additionalProperties": False,
+                    "required": ["title", "summary_description", "sections", "charts", "tables", "alerts", "recommendations", "gaps", "suggestions"],
+                    "properties": {
+                        "title": {"type": "string"},
+                        "summary_description": {"type": "string", "description": "2-3 sentence description of the overall report purpose and audience."},
+                        "sections": {"type": "array", "items": {"type": "object", "properties": {
+                            "title": {"type": "string"}, "purpose": {"type": "string"},
+                            "narrative_preview": {"type": "string", "description": "Example text showing what the narrative would say."},
+                        }, "required": ["title", "purpose", "narrative_preview"], "additionalProperties": False}},
+                        "charts": {"type": "array", "items": {"type": "object", "properties": {
+                            "title": {"type": "string"}, "chart_type": {"type": "string"},
+                            "x_axis": {"type": "string"}, "y_axis": {"type": "string"},
+                            "description": {"type": "string"},
+                        }, "required": ["title", "chart_type", "x_axis", "y_axis", "description"], "additionalProperties": False}},
+                        "tables": {"type": "array", "items": {"type": "object", "properties": {
+                            "title": {"type": "string"},
+                            "columns": {"type": "array", "items": {"type": "string"}},
+                            "row_description": {"type": "string"},
+                        }, "required": ["title", "columns", "row_description"], "additionalProperties": False}},
+                        "alerts": {"type": "array", "items": {"type": "object", "properties": {
+                            "severity": {"type": "string"}, "condition": {"type": "string"}, "message_template": {"type": "string"},
+                        }, "required": ["severity", "condition", "message_template"], "additionalProperties": False}},
+                        "recommendations": {"type": "array", "items": {"type": "object", "properties": {
+                            "priority": {"type": "string"}, "action": {"type": "string"},
+                        }, "required": ["priority", "action"], "additionalProperties": False}},
+                        "gaps": {"type": "array", "items": {"type": "string"}, "description": "What the data doesn't cover."},
+                        "suggestions": {"type": "array", "items": {"type": "string"}, "description": "Ideas for additional analyses or data columns."},
+                    }
+                }}},
+            )
+            result = json.loads(resp.output_text)
+        except Exception as exc:
+            return jsonify({"error": f"AI blueprint generation failed: {exc}"}), 500
+
+        return jsonify(result)
+
+    # ── Data Transformation Reasoning APIs ───────────────────────────
+
+    @app.post("/api/reasoning/transform")
+    def reasoning_transform_api() -> Any:
+        """AI-powered data transformation suggestions with conversational refinement."""
+        data = request.get_json(silent=True) or {}
+        csv_path = str(data.get("csv_path", "")).strip()
+        sheet_name = str(data.get("sheet_name", "")).strip() or None
+        user_feedback = str(data.get("feedback", "")).strip()
+        previous_plan = str(data.get("previous_plan", "")).strip()
+
+        if not csv_path:
+            return jsonify({"error": "Provide csv_path."}), 400
+
+        resolved = _absolute_path(csv_path)
+        if not Path(resolved).exists():
+            return jsonify({"error": f"File not found: {csv_path}"}), 404
+
+        api_key = os.getenv("OPENAI_API_KEY", "").strip()
+        if not api_key:
+            return jsonify({"error": "OPENAI_API_KEY is required for reasoning."}), 400
+        try:
+            from openai import OpenAI  # pylint: disable=import-outside-toplevel
+        except ImportError:
+            return jsonify({"error": "Install openai extra."}), 500
+
+        # Load sample data for AI analysis
+        try:
+            frame = load_csv_with_limit(resolved, row_limit=50, sheet_name=sheet_name)
+            columns = [str(c) for c in frame.columns]
+            dtypes = {str(c): str(frame[c].dtype) for c in frame.columns}
+            sample_rows = frame.head(8).to_dict(orient="records")
+            null_rates = {str(c): float(frame[c].isna().mean()) for c in frame.columns}
+        except Exception as exc:
+            return jsonify({"error": f"Failed to load source: {exc}"}), 400
+
+        messages: list[dict] = []
+        system_msg = (
+            "You are a data transformation advisor for a reporting system. "
+            "The user has uploaded a CSV/Excel file. Analyze the raw data and suggest transformations "
+            "that will make it more useful for automated report generation.\n\n"
+            "Consider these transformation types:\n"
+            "- **rename**: Rename columns to clearer snake_case names\n"
+            "- **parse_datetime**: Parse string columns into proper datetime\n"
+            "- **split_column**: Split composite columns (e.g. 'Rm 103 Mary Johnson' → room_id + resident_name)\n"
+            "- **extract**: Extract values using regex (e.g. room number from device name)\n"
+            "- **compute**: Add computed columns (e.g. duration between events, time differences)\n"
+            "- **categorize**: Turn free-text into categorical columns\n"
+            "- **fill_missing**: Fill or impute missing values\n"
+            "- **cast_type**: Change column data types\n"
+            "- **filter_rows**: Remove irrelevant rows\n"
+            "- **pivot**: Restructure event-based rows into per-entity columns\n\n"
+            "For each transformation, provide:\n"
+            "1. The type (from the list above)\n"
+            "2. Which column(s) it applies to\n"
+            "3. Clear reasoning for WHY this improves the data\n"
+            "4. The specific parameters (new name, regex pattern, formula description, etc.)\n\n"
+            "Also provide:\n"
+            "- A pandas code snippet that implements ALL transformations together\n"
+            "- A list of the new column names after transformation\n"
+            "- A description of what the transformed data will look like\n\n"
+            "The pandas code must be a SINGLE function `def transform(df)` that takes "
+            "the raw DataFrame and returns the transformed DataFrame. "
+            "Use only pandas and standard library. No external packages. "
+            "Do NOT import pandas inside the function — it is already imported as pd. "
+            "Handle edge cases (missing values, unexpected formats) gracefully."
+        )
+
+        user_content = json.dumps({
+            "columns": columns,
+            "dtypes": dtypes,
+            "sample_rows": sample_rows,
+            "null_rates": null_rates,
+            "row_count": int(len(frame.index)),
+            "filename": Path(resolved).name,
+        })
+
+        if previous_plan and user_feedback:
+            messages = [
+                {"role": "user", "content": user_content},
+                {"role": "assistant", "content": previous_plan},
+                {"role": "user", "content": f"User feedback: {user_feedback}\n\nPlease revise your transformation plan based on this feedback."},
+            ]
+        else:
+            messages = [{"role": "user", "content": user_content}]
+
+        try:
+            client = OpenAI(api_key=api_key)
+            resp = client.responses.create(
+                model=str(app.config.get("REPORT_TYPE_AGENT_MODEL", "gpt-4.1")),
+                instructions=system_msg,
+                input=messages,
+                text={"format": {"type": "json_schema", "name": "transform_plan", "strict": False, "schema": {
+                    "type": "object",
+                    "required": ["reasoning", "transformations", "pandas_code", "new_columns", "result_description", "suggestions"],
+                    "additionalProperties": False,
+                    "properties": {
+                        "reasoning": {"type": "string", "description": "Step-by-step explanation of data analysis and why these transforms help."},
+                        "transformations": {"type": "array", "items": {"type": "object", "properties": {
+                            "type": {"type": "string"}, "columns": {"type": "array", "items": {"type": "string"}},
+                            "reason": {"type": "string"}, "params": {"type": "object"},
+                        }, "required": ["type", "columns", "reason"], "additionalProperties": False}},
+                        "pandas_code": {"type": "string", "description": "Complete def transform(df) function."},
+                        "new_columns": {"type": "array", "items": {"type": "string"}, "description": "Column names after transformation."},
+                        "result_description": {"type": "string", "description": "What the transformed data looks like."},
+                        "suggestions": {"type": "array", "items": {"type": "string"}, "description": "Ideas for further improvements."},
+                    },
+                }}},
+            )
+            result = json.loads(resp.output_text)
+        except Exception as exc:
+            return jsonify({"error": f"AI transform analysis failed: {exc}"}), 500
+
+        return jsonify(result)
+
+    @app.post("/api/reasoning/transform/apply")
+    def reasoning_transform_apply_api() -> Any:
+        """Execute an approved transformation plan and save the new CSV."""
+        data = request.get_json(silent=True) or {}
+        csv_path = str(data.get("csv_path", "")).strip()
+        sheet_name = str(data.get("sheet_name", "")).strip() or None
+        pandas_code = str(data.get("pandas_code", "")).strip()
+
+        if not csv_path:
+            return jsonify({"error": "Provide csv_path."}), 400
+        if not pandas_code:
+            return jsonify({"error": "Provide pandas_code."}), 400
+
+        resolved = _absolute_path(csv_path)
+        if not Path(resolved).exists():
+            return jsonify({"error": f"File not found: {csv_path}"}), 404
+
+        # Security: validate the code doesn't do anything dangerous
+        code_lower = pandas_code.lower()
+        forbidden = ["import os", "import sys", "import subprocess", "import shutil",
+                      "os.system", "os.popen", "subprocess.", "eval(", "exec(",
+                      "__import__", "open(", "pathlib", "shutil.", "rmdir", "unlink",
+                      "requests.", "urllib.", "socket."]
+        for pattern in forbidden:
+            if pattern in code_lower:
+                return jsonify({"error": f"Forbidden operation in transform code: '{pattern}'"}), 400
+
+        try:
+            frame = load_csv_with_limit(resolved, row_limit=None, sheet_name=sheet_name)
+        except Exception as exc:
+            return jsonify({"error": f"Failed to load source: {exc}"}), 400
+
+        # Execute the transform function in a restricted namespace
+        namespace: dict[str, Any] = {"pd": pd, "np": __import__("numpy"), "re": re, "datetime": __import__("datetime")}
+        try:
+            exec(pandas_code, namespace)  # noqa: S102 — user-approved AI code
+            transform_fn = namespace.get("transform")
+            if not callable(transform_fn):
+                return jsonify({"error": "pandas_code must define a 'transform(df)' function."}), 400
+            transformed = transform_fn(frame)
+            if not isinstance(transformed, pd.DataFrame):
+                return jsonify({"error": "transform(df) must return a pandas DataFrame."}), 400
+        except Exception as exc:
+            return jsonify({"error": f"Transform execution failed: {exc}"}), 400
+
+        # Save transformed CSV next to the original
+        original_path = Path(resolved)
+        stem = original_path.stem
+        # Remove any previous _transformed suffix to avoid stacking
+        if stem.endswith("_transformed"):
+            stem = stem[: -len("_transformed")]
+        transformed_name = f"{stem}_transformed.csv"
+        transformed_path = original_path.parent / transformed_name
+        try:
+            transformed.to_csv(transformed_path, index=False)
+        except Exception as exc:
+            return jsonify({"error": f"Failed to save transformed CSV: {exc}"}), 500
+
+        # Return preview + new path
+        sample_rows = transformed.head(8).to_dict(orient="records")
+        return jsonify({
+            "transformed_path": str(transformed_path),
+            "columns": [str(c) for c in transformed.columns],
+            "row_count": int(len(transformed.index)),
+            "sample_rows": sample_rows,
+            "original_path": str(resolved),
+        })
 
     @app.get("/api/report-type-yaml")
     def report_type_yaml() -> Any:
@@ -1166,6 +1701,8 @@ def create_app(config_overrides: dict[str, Any] | None = None) -> Flask:
         hint_domain = request.form.get("hint_domain", "").strip()
         hint_family = request.form.get("hint_family", "").strip()
         hint_mode = request.form.get("hint_mode", "").strip()
+        source_structure_text = request.form.get("source_structure_text", "").strip()
+        blueprint_json_raw = request.form.get("blueprint_json", "").strip()
         source_sample_percent_raw = request.form.get("source_sample_percent", "100").strip()
         uploaded_files = [f for f in request.files.getlist("csv_upload") if f and f.filename]
         existing_csv_path = request.form.get("existing_csv_path", "").strip()
@@ -1194,9 +1731,21 @@ def create_app(config_overrides: dict[str, Any] | None = None) -> Flask:
                         "hint_family": hint_family,
                         "hint_mode": hint_mode,
                         "source_sample_percent": source_sample_percent,
+                        "source_structure_text": source_structure_text,
                     },
                 }
             )
+
+            source_structure_plan = _parse_source_structure_text(source_structure_text)
+            if source_structure_plan:
+                draft_workflow.append(
+                    {
+                        "agent": "report_type_source_reshape",
+                        "status": "completed",
+                        "summary": "Captured a proposed normalized source structure to use as the draft target schema.",
+                        "details": source_structure_plan,
+                    }
+                )
 
             clone_yaml = ""
             if clone_from:
@@ -1269,9 +1818,11 @@ def create_app(config_overrides: dict[str, Any] | None = None) -> Flask:
                 report_types=available_types,
                 model=str(app.config["REPORT_TYPE_AGENT_MODEL"]),
                 source_profile=source_profile,
+                source_structure_plan=source_structure_plan,
                 hint_domain=hint_domain or None,
                 hint_family=hint_family or None,
                 hint_mode=hint_mode or None,
+                blueprint_json=blueprint_json_raw or None,
             )
             draft_workflow.append(
                 {
@@ -1293,6 +1844,7 @@ def create_app(config_overrides: dict[str, Any] | None = None) -> Flask:
                 plugin_root=Path(app.config["PLUGIN_ROOT"]),
                 clone_from=clone_from or None,
                 source_profile=source_profile,
+                source_structure_plan=source_structure_plan,
             )
             draft_workflow.append(
                 {
@@ -1316,6 +1868,7 @@ def create_app(config_overrides: dict[str, Any] | None = None) -> Flask:
                 sheet_options=list_excel_sheets(existing_csv_path) if existing_csv_path and Path(existing_csv_path).exists() and Path(existing_csv_path).suffix.lower() in {".xlsx", ".xls"} else [],
                 source_summary=_safe_describe_source(existing_csv_path, sheet_name=sheet_name or None),
                 source_sample_percent=int(source_sample_percent_raw or "100"),
+                source_structure_text=source_structure_text,
                 families=sorted(FAMILIES),
                 domains=sorted(DOMAINS),
                 modes=sorted(MODES),
@@ -3978,9 +4531,11 @@ def _generate_report_type_agent_draft(
     report_types: list[str],
     model: str,
     source_profile: dict[str, Any] | None,
+    source_structure_plan: dict[str, Any] | None = None,
     hint_domain: str | None = None,
     hint_family: str | None = None,
     hint_mode: str | None = None,
+    blueprint_json: str | None = None,
 ) -> dict[str, Any]:
     api_key = os.getenv("OPENAI_API_KEY", "").strip()
     if not api_key:
@@ -4017,11 +4572,13 @@ def _generate_report_type_agent_draft(
                                 "allowed_domains": sorted(DOMAINS),
                                 "allowed_modes": sorted(MODES),
                                 "source_profile": source_profile,
+                                "source_structure_plan": source_structure_plan,
                                 "classification_hints": {
                                     "domain": hint_domain or "",
                                     "family": hint_family or "",
                                     "mode": hint_mode or "",
                                 },
+                                "approved_blueprint": json.loads(blueprint_json) if blueprint_json else None,
                             }
                         ),
                     }
@@ -4050,6 +4607,7 @@ def _materialize_report_type_agent_draft(
     plugin_root: Path,
     clone_from: str | None,
     source_profile: dict[str, Any] | None,
+    source_structure_plan: dict[str, Any] | None,
 ) -> str:
     report_type_id = _normalize_generated_report_type_id(
         str(draft.get("report_type_id", "")).strip() or str(draft.get("title", "")).strip(),
@@ -4068,11 +4626,11 @@ def _materialize_report_type_agent_draft(
     description = str(draft.get("description", "")).strip() or f"{title} plugin."
     prompt_instructions = str(draft.get("prompt_instructions", "")).strip()
     required_columns = [str(item).strip() for item in draft.get("required_columns", []) if str(item).strip()]
-    required_columns = _sanitize_required_columns_for_source_profile(required_columns, source_profile)
+    required_columns = _sanitize_required_columns_for_source_profile(required_columns, source_profile, source_structure_plan)
     if not prompt_instructions:
         raise ValueError("AI draft is missing prompt_instructions.")
     if not required_columns:
-        raise ValueError("AI draft required_columns did not match the uploaded source columns.")
+        raise ValueError("AI draft required_columns did not match the allowed source columns for the selected workflow.")
 
     default_prefs = draft.get("default_prefs", {})
     if not isinstance(default_prefs, dict):
@@ -4170,13 +4728,20 @@ def _report_type_agent_instructions() -> str:
         "Use mode=issue_detection for problem-finding, anomaly_detection for unusual outliers, statistical_summary for descriptive stats, "
         "overview_summary for broad status reports, trend_analysis for time movement, and root_cause_triage when likely drivers matter. "
         "If source_profile is present, use it to infer family, domain, mode, required_columns, and likely metrics. "
-        "When source_profile is present, required_columns must be copied only from source_profile.source_metadata.columns. "
-        "Never invent missing columns, never paraphrase header names, and never rename them. "
-        "Copy column names exactly, including spaces, punctuation, case, and parentheses. "
-        "If a field is not present in source_profile.source_metadata.columns, do not include it in required_columns. "
+        "If source_structure_plan is present, treat it as the target normalized schema the user wants to create before reporting. "
+        "When source_structure_plan is present, required_columns must come only from source_structure_plan.columns. "
+        "When source_structure_plan is absent and source_profile is present, required_columns must be copied only from source_profile.source_metadata.columns. "
+        "Never invent missing columns outside the allowed target schema, never paraphrase header names, and never rename them beyond the user-provided target structure. "
+        "Copy allowed column names exactly, including spaces, punctuation, case, and parentheses. "
+        "If a field is not present in the active allowed column list, do not include it in required_columns. "
         "If the prompt contains domain-specific clarifying questions (e.g., 'What are your SLA thresholds?', 'How do you define degraded performance?'), "
         "read those carefully and use them to guide your understanding of the report's purpose. Answer these questions in your mind as you design the metrics and plugin. "
         "Ensure default_prefs and prompt_instructions reflect the answers to these clarifying questions. "
+        "If approved_blueprint is present, treat it as the USER-APPROVED specification for the report. "
+        "The blueprint describes exact sections, charts, tables, alerts, and recommendations the user wants. "
+        "Your generated plugin.py MUST implement all blueprint sections, produce all described charts and tables, "
+        "trigger alerts for the specified conditions, and include the listed recommendations. "
+        "The blueprint is the source of truth — do not omit or reinterpret any element from it. "
         "Generate plugin.py code that defines get_spec() and build(df, prefs, ctx). "
         "The build function should compute deterministic metrics from the dataframe and return a dict. "
         "Generate smoke_test_code as a pytest file that loads the plugin through ReportPluginManager. "
@@ -4332,15 +4897,16 @@ def _improve_report_type_prompt(
 def _sanitize_required_columns_for_source_profile(
     required_columns: list[str],
     source_profile: dict[str, Any] | None,
+    source_structure_plan: dict[str, Any] | None = None,
 ) -> list[str]:
-    if not source_profile or not isinstance(source_profile, dict):
-        return required_columns
+    available_columns: list[str] = []
+    if source_structure_plan and isinstance(source_structure_plan, dict):
+        available_columns = [str(item).strip() for item in source_structure_plan.get("columns", []) if str(item).strip()]
+    elif source_profile and isinstance(source_profile, dict):
+        source_metadata = source_profile.get("source_metadata", {})
+        if isinstance(source_metadata, dict):
+            available_columns = [str(item).strip() for item in source_metadata.get("columns", []) if str(item).strip()]
 
-    source_metadata = source_profile.get("source_metadata", {})
-    if not isinstance(source_metadata, dict):
-        return required_columns
-
-    available_columns = [str(item).strip() for item in source_metadata.get("columns", []) if str(item).strip()]
     if not available_columns:
         return required_columns
 
@@ -4358,6 +4924,166 @@ def _sanitize_required_columns_for_source_profile(
         if mapped and mapped not in sanitized:
             sanitized.append(mapped)
     return sanitized
+
+
+def _apply_source_structure_transform(
+    df: "pd.DataFrame", plan: dict
+) -> "tuple[pd.DataFrame, dict[str, str]]":
+    """Map a raw DataFrame into the column shape described by plan.
+
+    Returns (transformed_df, confidence_map) where confidence values are
+    'direct' (exact column match), 'derived' (pattern extraction), or
+    'missing' (could not extract).
+    """
+    target_cols: list[str] = plan.get("columns", [])
+    notes: dict[str, str] = plan.get("notes", {})
+    src_col_map = {c.lower(): c for c in df.columns}
+
+    result: dict[str, Any] = {}
+    confidence: dict[str, str] = {}
+
+    for col in target_cols:
+        if col in df.columns:
+            result[col] = df[col].tolist()
+            confidence[col] = "direct"
+            continue
+        if col.lower() in src_col_map:
+            result[col] = df[src_col_map[col.lower()]].tolist()
+            confidence[col] = "direct"
+            continue
+        extracted = _try_extract_column_from_df(df, col, notes.get(col, ""))
+        if extracted is not None:
+            result[col] = extracted
+            confidence[col] = "derived"
+        else:
+            result[col] = [""] * len(df)
+            confidence[col] = "missing"
+
+    out_df = pd.DataFrame(result, index=df.index)
+    return out_df, confidence
+
+
+def _try_extract_column_from_df(
+    df: "pd.DataFrame", col_name: str, note: str
+) -> list | None:
+    """Attempt to derive a single new column from source DataFrame columns.
+
+    Recognises common assisted-living / event-log patterns:
+    actor_type, actor_name, room_id, patient_name, caregiver_name, event_type,
+    incident_id.
+    """
+    col_lower = col_name.lower()
+
+    for src_col in df.columns:
+        sample = df[src_col].dropna().head(20).astype(str).tolist()
+        sample_lower = [v.lower() for v in sample]
+        has_caregiver_prefix = any(v.startswith("caregiver") for v in sample_lower)
+        has_room_prefix = any(re.search(r"\brm\s+\d+", v) for v in sample_lower)
+
+        if col_lower == "actor_type" and has_caregiver_prefix and has_room_prefix:
+            def _at(val: Any) -> str:
+                v = str(val).strip()
+                if v.lower().startswith("caregiver"):
+                    return "caregiver"
+                if re.match(r"^Rm\s+\d+", v, re.IGNORECASE):
+                    return "patient"
+                return ""
+            return df[src_col].map(_at).tolist()
+
+        if col_lower == "actor_name" and has_caregiver_prefix and has_room_prefix:
+            def _an(val: Any) -> str:
+                v = str(val).strip()
+                if v.lower().startswith("caregiver "):
+                    return v[10:].strip()
+                m = re.match(r"^Rm\s+\d+\s+(.*)", v, re.IGNORECASE)
+                return m.group(1).strip() if m else v
+            return df[src_col].map(_an).tolist()
+
+        if col_lower == "room_id" and has_room_prefix:
+            def _ri(val: Any) -> str:
+                m = re.match(r"^Rm\s+(\d+)", str(val).strip(), re.IGNORECASE)
+                return m.group(1) if m else ""
+            return df[src_col].map(_ri).tolist()
+
+        if col_lower == "patient_name" and has_room_prefix:
+            def _pn(val: Any) -> str:
+                m = re.match(r"^Rm\s+\d+\s+(.*)", str(val).strip(), re.IGNORECASE)
+                return m.group(1).strip() if m else ""
+            return df[src_col].map(_pn).tolist()
+
+        if col_lower == "caregiver_name" and has_caregiver_prefix:
+            def _cn(val: Any) -> str:
+                v = str(val).strip()
+                return v[10:].strip() if v.lower().startswith("caregiver ") else ""
+            return df[src_col].map(_cn).tolist()
+
+        if col_lower in ("event_type", "event") and src_col.lower() in (
+            "property", "event_type", "event", "type", "action"
+        ):
+            return df[src_col].tolist()
+
+    # incident_id: assign incrementing IDs grouped by trigger events
+    if col_lower == "incident_id":
+        event_col = next(
+            (c for c in df.columns if c.lower() in ("property", "event_type", "event", "type")),
+            None,
+        )
+        time_col = next(
+            (c for c in df.columns if "time" in c.lower() or "date" in c.lower()),
+            None,
+        )
+        if event_col:
+            sorted_df = df.sort_values(time_col) if time_col else df.copy()
+            ids: list[str] = []
+            counter = 0
+            current_id = "INC-0000"
+            for val in sorted_df[event_col]:
+                v = str(val).lower()
+                if any(kw in v for kw in ("pressed", "start", "open", "initiat", "created", "raised")):
+                    counter += 1
+                    current_id = f"INC-{counter:04d}"
+                ids.append(current_id)
+            series = pd.Series(ids, index=sorted_df.index)
+            return [series[i] for i in df.index]
+
+    return None
+
+
+def _parse_source_structure_text(text: str) -> dict[str, Any] | None:
+    raw_text = str(text or "").strip()
+    if not raw_text:
+        return None
+
+    raw_lines = [line.strip() for line in raw_text.splitlines() if line.strip()]
+    if len(raw_lines) == 1 and "," in raw_lines[0]:
+        raw_lines = [part.strip() for part in raw_lines[0].split(",") if part.strip()]
+
+    columns: list[str] = []
+    notes: dict[str, str] = {}
+    for raw_line in raw_lines:
+        line = re.sub(r"^[-*\u2022\d.)\s]+", "", raw_line).strip()
+        if not line:
+            continue
+        if ":" in line:
+            column_name, note = line.split(":", 1)
+        else:
+            column_name, note = line, ""
+        column_name = column_name.strip()
+        note = note.strip()
+        if not column_name or column_name in columns:
+            continue
+        columns.append(column_name)
+        if note:
+            notes[column_name] = note
+
+    if not columns:
+        return None
+
+    return {
+        "raw_text": raw_text,
+        "columns": columns,
+        "notes": notes,
+    }
 
 
 def _dataframe_sample_rows(frame: pd.DataFrame, limit: int = 5) -> list[dict[str, Any]]:
